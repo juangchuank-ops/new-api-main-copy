@@ -1,0 +1,172 @@
+/*
+Copyright (C) 2025 QuantumNous
+Enhanced StatsCards Styles - 使用设计 Token
+*/
+
+/* Card Group Container */
+.stat-card-group {
+  transition: all var(--transition-base);
+  overflow: hidden;
+}
+
+.stat-card-group:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Card Group Title */
+.stat-card-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: var(--semi-color-text-0);
+}
+
+/* Card Item */
+.stat-card-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-fast);
+}
+
+.stat-card-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+html.dark .stat-card-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Card Item Main (Icon + Content) */
+.stat-card-item-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Avatar Enhancement */
+.stat-card-avatar {
+  flex-shrink: 0;
+  transition: transform var(--transition-base);
+}
+
+.stat-card-item:hover .stat-card-avatar {
+  transform: scale(1.05);
+}
+
+/* Card Content */
+.stat-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Card Label */
+.stat-card-label {
+  font-size: var(--text-xs);
+  color: var(--semi-color-text-2);
+  line-height: var(--leading-tight);
+  font-weight: var(--font-medium);
+}
+
+/* Card Value */
+.stat-card-value-wrapper {
+  display: flex;
+  align-items: baseline;
+}
+
+.stat-card-value {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--semi-color-text-0);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-tight);
+}
+
+/* Card Item Aside (Chart or Action) */
+.stat-card-item-aside {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+}
+
+/* Action Tag */
+.stat-card-action-tag {
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.stat-card-action-tag:hover {
+  transform: scale(1.05);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Chart Container */
+.stat-card-chart {
+  width: 96px;
+  height: 40px;
+  opacity: 0.9;
+  transition: opacity var(--transition-fast);
+}
+
+.stat-card-item:hover .stat-card-chart {
+  opacity: 1;
+}
+
+/* Loading State */
+.stat-card-item .semi-skeleton {
+  width: 100%;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 767px) {
+  .stat-card-chart {
+    width: 80px;
+    height: 36px;
+  }
+
+  .stat-card-value {
+    font-size: var(--text-base);
+  }
+}
+
+/* Background Colors (Warm Editorial Tones) */
+.bg-blue-50 {
+  background-color: rgba(196, 97, 47, 0.05);
+}
+
+.bg-green-50 {
+  background-color: rgba(122, 158, 109, 0.05);
+}
+
+.bg-yellow-50 {
+  background-color: rgba(212, 154, 79, 0.05);
+}
+
+.bg-purple-50 {
+  background-color: rgba(140, 130, 121, 0.05);
+}
+
+html.dark .bg-blue-50 {
+  background-color: rgba(212, 122, 79, 0.1);
+}
+
+html.dark .bg-green-50 {
+  background-color: rgba(148, 181, 135, 0.1);
+}
+
+html.dark .bg-yellow-50 {
+  background-color: rgba(224, 176, 106, 0.1);
+}
+
+html.dark .bg-purple-50 {
+  background-color: rgba(160, 151, 142, 0.1);
+}

@@ -1,0 +1,218 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+*/
+
+/* ==================== Design Tokens ==================== */
+
+:root {
+  /* ---- Spacing System (4px base) ---- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem;  /* 2px */
+  --space-1: 0.25rem;     /* 4px */
+  --space-1-5: 0.375rem;  /* 6px */
+  --space-2: 0.5rem;      /* 8px */
+  --space-2-5: 0.625rem;  /* 10px */
+  --space-3: 0.75rem;     /* 12px */
+  --space-4: 1rem;        /* 16px */
+  --space-5: 1.25rem;     /* 20px */
+  --space-6: 1.5rem;      /* 24px */
+  --space-8: 2rem;        /* 32px */
+  --space-10: 2.5rem;     /* 40px */
+  --space-12: 3rem;       /* 48px */
+  --space-16: 4rem;       /* 64px */
+
+  /* ---- Typography Scale (Major Third - 1.25) ---- */
+  --text-xs: 0.64rem;     /* 10px - 次要信息 */
+  --text-sm: 0.8rem;      /* 13px - 表格内容 */
+  --text-base: 1rem;      /* 16px - 正文 */
+  --text-lg: 1.25rem;     /* 20px - 小标题 */
+  --text-xl: 1.563rem;    /* 25px - 卡片标题 */
+  --text-2xl: 1.953rem;   /* 31px - 页面标题 */
+
+  /* ---- Line Heights ---- */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* ---- Font Weights ---- */
+  --font-normal: 300;
+  --font-medium: 400;
+  --font-semibold: 500;
+  --font-bold: 600;
+
+  /* ---- Border Radius (editorial pill style) ---- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+  
+  /* ---- Font Family (editorial serif + sans) ---- */
+  --font-display: 'Fraunces', 'DM Serif Display', 'Playfair Display', 'Lora', Georgia, serif;
+  --font-serif: 'Lora', 'Source Serif Pro', Georgia, serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ── Retro Vintage Colors ───────────────────── */
+  /* Override Semi Design color variables */
+  --semi-color-primary: #8b4513;
+  --semi-color-primary-hover: #a0531a;
+  --semi-color-primary-active: #6f3610;
+  --semi-color-primary-disabled: #c9a885;
+  --semi-color-primary-light-default: rgba(139, 69, 19, 0.08);
+  --semi-color-primary-light-hover: rgba(139, 69, 19, 0.15);
+  --semi-color-primary-light-active: rgba(139, 69, 19, 0.22);
+
+  --semi-color-secondary: #d4a373;
+  --semi-color-secondary-hover: #e0b589;
+  --semi-color-secondary-active: #c08f5d;
+  --semi-color-secondary-disabled: #e8d5c0;
+
+  --semi-color-tertiary: #c9a885;
+  --semi-color-tertiary-hover: #d9ba9b;
+  --semi-color-tertiary-active: #b5936f;
+  --semi-color-tertiary-light-default: rgba(201, 168, 133, 0.08);
+  --semi-color-tertiary-light-hover: rgba(201, 168, 133, 0.15);
+  --semi-color-tertiary-light-active: rgba(201, 168, 133, 0.22);
+
+  --semi-color-info: #816904;
+  --semi-color-info-hover: #9a7d05;
+  --semi-color-info-active: #685503;
+  --semi-color-info-disabled: #c9b76f;
+
+  --semi-color-success: #2e4a3f;
+  --semi-color-success-hover: #3d5f51;
+  --semi-color-success-active: #1f3229;
+  --semi-color-success-disabled: #8fa398;
+
+  --semi-color-danger: #c94c4c;
+  --semi-color-danger-hover: #d66060;
+  --semi-color-danger-active: #b33838;
+  --semi-color-danger-disabled: #e8a5a5;
+
+  --semi-color-warning: #d4a373;
+  --semi-color-warning-hover: #e0b589;
+  --semi-color-warning-active: #c08f5d;
+
+  --semi-color-bg-0: #f5e6d3;
+  --semi-color-bg-1: #f9f0e3;
+  --semi-color-bg-2: #fdf8f0;
+  --semi-color-bg-3: #fffcf7;
+
+  --semi-color-fill-0: #e8d5c0;
+  --semi-color-fill-1: #dcc7ad;
+  --semi-color-fill-2: #d0b99a;
+
+  --semi-color-border: #8b4513;
+  --semi-color-nav-bg: rgba(245, 230, 211, 1);
+
+  --semi-color-text-0: #8b4513;
+  --semi-color-text-1: #6f3610;
+  --semi-color-text-2: #a0531a;
+  --semi-color-text-3: #c9a885;
+
+  --semi-color-shadow: rgba(139, 69, 19, 0.15);
+  --semi-color-overlay-bg: rgba(139, 69, 19, 0.4);
+
+  /* ---- Status Colors ---- */
+  --status-active: var(--semi-color-success);
+  --status-inactive: var(--semi-color-text-3);
+  --status-error: var(--semi-color-danger);
+  --status-warning: var(--semi-color-warning);
+  --status-pending: var(--semi-color-info);
+
+  /* Data Visualization */
+  --chart-positive: #7A9E6D;
+  --chart-negative: #C44A3F;
+  --chart-neutral: #C4612F;
+
+  /* Functional Area Colors */
+  --area-channel: #C4612F;
+  --area-token: #D49A4F;
+  --area-log: #8FA8B5;
+  --area-user: #7A9E6D;
+  --area-setting: #8C8279;
+
+  /* ---- Shadows ---- */
+  --shadow-sm: 0 1px 2px 0 rgba(44, 36, 32, 0.04);
+  --shadow-md: 0 4px 8px -2px rgba(44, 36, 32, 0.06);
+  --shadow-lg: 0 8px 20px -4px rgba(44, 36, 32, 0.08);
+  --shadow-xl: 0 16px 32px -8px rgba(44, 36, 32, 0.1);
+
+  /* ---- Transitions ---- */
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-slow: 300ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---- Z-index Scale ---- */
+  --z-base: 0;
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-fixed: 30;
+  --z-modal: 40;
+  --z-popover: 50;
+  --z-tooltip: 60;
+}
+
+/* ---- Dark Mode Overrides ---- */
+html.dark {
+  --semi-color-primary: #D47A4F;
+  --semi-color-primary-hover: #E08A5F;
+  --semi-color-primary-active: #C06838;
+  --semi-color-primary-disabled: #5A3D2E;
+  --semi-color-primary-light-default: rgba(212, 122, 79, 0.12);
+  --semi-color-primary-light-hover: rgba(212, 122, 79, 0.2);
+  --semi-color-primary-light-active: rgba(212, 122, 79, 0.28);
+
+  --semi-color-secondary: #A0978E;
+  --semi-color-secondary-hover: #B8AFA6;
+  --semi-color-secondary-active: #8C8279;
+
+  --semi-color-tertiary: #6B635C;
+  --semi-color-tertiary-hover: #8C8279;
+  --semi-color-tertiary-active: #5A534D;
+
+  --semi-color-info: #7A929E;
+
+  --semi-color-success: #94B587;
+  --semi-color-success-hover: #A8C69B;
+  --semi-color-success-active: #7A9E6D;
+
+  --semi-color-danger: #D66A60;
+  --semi-color-danger-hover: #E88076;
+  --semi-color-danger-active: #C44A3F;
+
+  --semi-color-warning: #E0B06A;
+  --semi-color-warning-hover: #EAC084;
+  --semi-color-warning-active: #D49A4F;
+
+  --semi-color-bg-0: #1F2421;
+  --semi-color-bg-1: #262B28;
+  --semi-color-bg-2: #2E332F;
+  --semi-color-bg-3: #363B37;
+
+  --semi-color-fill-0: #2E332F;
+  --semi-color-fill-1: #363B37;
+  --semi-color-fill-2: #3E433F;
+
+  --semi-color-border: rgba(255, 255, 255, 0.08);
+
+  --semi-color-text-0: #EDE8E0;
+  --semi-color-text-1: #D5D0C8;
+  --semi-color-text-2: #8C8279;
+  --semi-color-text-3: #6B635C;
+
+  --semi-color-shadow: rgba(0, 0, 0, 0.3);
+  --semi-color-overlay-bg: rgba(0, 0, 0, 0.6);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 20px -4px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 16px 32px -8px rgba(0, 0, 0, 0.4);
+}
