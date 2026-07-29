@@ -425,10 +425,9 @@ func SetApiRouter(router *gin.Engine) {
 
 		// Model Health (model health monitoring)
 		modelHealthRoute := apiRouter.Group("/admin/model-health")
-		modelHealthRoute.Use(middleware.AdminAuth())
 		{
-			modelHealthRoute.GET("", controller.GetModelHealth)
-			modelHealthRoute.GET("/:model", controller.GetModelHealthDetail)
+			modelHealthRoute.GET("", middleware.UserAuth(), controller.GetModelHealth)
+			modelHealthRoute.GET("/:model", middleware.AdminAuth(), controller.GetModelHealthDetail)
 		}
 
 		// Deployments (model deployment management)

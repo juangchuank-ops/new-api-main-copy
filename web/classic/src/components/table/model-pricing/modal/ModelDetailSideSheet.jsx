@@ -136,6 +136,7 @@ const ModelDetailSideSheet = ({
             <TabPane
               tab={<TabLabel icon={HeartPulse}>{t('性能')}</TabLabel>}
               itemKey='performance'
+              className='model-performance-panel'
             >
               <ModelPerformance
                 modelData={modelData}

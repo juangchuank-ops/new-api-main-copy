@@ -1,8 +1,10 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
 
@@ -26,16 +28,16 @@ type ModelHealthTimeline struct {
 
 // ModelHealthDetail represents detailed health data for a single model
 type ModelHealthDetail struct {
-	ModelName        string                 `json:"model_name"`
-	SuccessRate      float64                `json:"success_rate"`
-	TotalTokens      int64                  `json:"total_tokens"`
-	TotalRequests    int64                  `json:"total_requests"`
-	SuccessCount     int64                  `json:"success_count"`
-	FailedCount      int64                  `json:"failed_count"`
-	AvgLatency       int                    `json:"avg_latency_ms"`
-	AvgTTFT          int                    `json:"avg_ttft_ms"`
-	Timeline         []ModelHealthTimeline  `json:"timeline"`
-	TopErrors        []ModelHealthError     `json:"top_errors,omitempty"`
+	ModelName     string                `json:"model_name"`
+	SuccessRate   float64               `json:"success_rate"`
+	TotalTokens   int64                 `json:"total_tokens"`
+	TotalRequests int64                 `json:"total_requests"`
+	SuccessCount  int64                 `json:"success_count"`
+	FailedCount   int64                 `json:"failed_count"`
+	AvgLatency    int                   `json:"avg_latency_ms"`
+	AvgTTFT       int                   `json:"avg_ttft_ms"`
+	Timeline      []ModelHealthTimeline `json:"timeline"`
+	TopErrors     []ModelHealthError    `json:"top_errors,omitempty"`
 }
 
 // ModelHealthError represents error statistics
@@ -46,8 +48,8 @@ type ModelHealthError struct {
 
 // ModelHealthResponse represents the API response
 type ModelHealthResponse struct {
-	Summary ModelHealthSummary   `json:"summary"`
-	Models  []ModelHealthDetail  `json:"models"`
+	Summary ModelHealthSummary  `json:"summary"`
+	Models  []ModelHealthDetail `json:"models"`
 }
 
 // GetModelHealth retrieves model health statistics for the specified time range
@@ -105,7 +107,7 @@ func getModelHealthSummary(startTime, endTime int64) (ModelHealthSummary, error)
 			model_name,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as success,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as failed,
-			SUM(CASE WHEN type = ? THEN prompt_tokens + completion_tokens ELSE 0 END) as total_tokens
+			COALESCE(SUM(CASE WHEN type = ? THEN COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0) ELSE 0 END), 0) as total_tokens
 		FROM logs
 		WHERE created_at >= ? AND created_at <= ?
 		AND type IN (?, ?)
@@ -153,7 +155,7 @@ func getModelHealthSummary(startTime, endTime int64) (ModelHealthSummary, error)
 func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDetail, error) {
 	// Get all enabled models first
 	enabledModels := GetEnabledModels()
-	
+
 	// Get per-model aggregated stats from logs
 	type ModelAggregate struct {
 		ModelName    string
@@ -171,8 +173,8 @@ func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDe
 			model_name,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as success,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as failed,
-			SUM(CASE WHEN type = ? THEN prompt_tokens + completion_tokens ELSE 0 END) as total_tokens,
-			SUM(CASE WHEN type = ? THEN use_time ELSE 0 END) as total_latency,
+			COALESCE(SUM(CASE WHEN type = ? THEN COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0) ELSE 0 END), 0) as total_tokens,
+			COALESCE(SUM(CASE WHEN type = ? THEN COALESCE(use_time, 0) ELSE 0 END), 0) as total_latency,
 			0 as total_ttft,
 			0 as ttft_count
 		FROM logs
@@ -193,11 +195,11 @@ func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDe
 
 	// Build result including all enabled models
 	models := make([]ModelHealthDetail, 0, len(enabledModels))
-	
+
 	// First add models with data (sorted by request count)
 	for _, agg := range aggregates {
 		total := agg.Success + agg.Failed
-		
+
 		detail := ModelHealthDetail{
 			ModelName:     agg.ModelName,
 			TotalRequests: total,
@@ -226,23 +228,10 @@ func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDe
 
 		models = append(models, detail)
 	}
-	
+
 	// Then add enabled models without data
 	for _, modelName := range enabledModels {
 		if _, exists := modelDataMap[modelName]; !exists {
-			// Create empty timeline for models without data
-			emptyTimeline := make([]ModelHealthTimeline, hours)
-			for i := 0; i < hours; i++ {
-				hourStart := endTime - int64((hours-i)*3600)
-				emptyTimeline[i] = ModelHealthTimeline{
-					Hour:        hourStart,
-					Requests:    0,
-					Success:     0,
-					Failed:      0,
-					SuccessRate: 0,
-				}
-			}
-			
 			models = append(models, ModelHealthDetail{
 				ModelName:     modelName,
 				SuccessRate:   0,
@@ -252,7 +241,7 @@ func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDe
 				FailedCount:   0,
 				AvgLatency:    0,
 				AvgTTFT:       0,
-				Timeline:      emptyTimeline,
+				Timeline:      newModelHealthTimeline(endTime, hours),
 			})
 		}
 	}
@@ -261,20 +250,7 @@ func getModelHealthDetails(startTime, endTime int64, hours int) ([]ModelHealthDe
 }
 
 func getModelTimeline(modelName string, startTime, endTime int64, hours int) ([]ModelHealthTimeline, error) {
-	// Calculate hour boundaries
-	hourSeconds := int64(3600)
-	
-	// Generate all hours in the range
-	timeline := make([]ModelHealthTimeline, hours)
-	for i := 0; i < hours; i++ {
-		hourStart := endTime - int64((hours-i)*3600)
-		timeline[i] = ModelHealthTimeline{
-			Hour:     hourStart,
-			Requests: 0,
-			Success:  0,
-			Failed:   0,
-		}
-	}
+	timeline := newModelHealthTimeline(endTime, hours)
 
 	// Query hourly aggregates
 	type HourlyStats struct {
@@ -284,20 +260,20 @@ func getModelTimeline(modelName string, startTime, endTime int64, hours int) ([]
 	}
 
 	var hourlyStats []HourlyStats
-	
-	// Use FLOOR division to bucket by hour
-	err := LOG_DB.Raw(`
+
+	hourBucketExpr := modelHealthHourBucketExpression()
+	err := LOG_DB.Raw(fmt.Sprintf(`
 		SELECT 
-			FLOOR((created_at / ?) * ?) as hour_bucket,
+			%s as hour_bucket,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as success,
 			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) as failed
 		FROM logs
 		WHERE model_name = ?
 		AND created_at >= ? AND created_at <= ?
 		AND type IN (?, ?)
-		GROUP BY hour_bucket
+		GROUP BY %s
 		ORDER BY hour_bucket
-	`, hourSeconds, hourSeconds, LogTypeConsume, LogTypeError, modelName, startTime, endTime, LogTypeConsume, LogTypeError).Scan(&hourlyStats).Error
+	`, hourBucketExpr, hourBucketExpr), LogTypeConsume, LogTypeError, modelName, startTime, endTime, LogTypeConsume, LogTypeError).Scan(&hourlyStats).Error
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +289,7 @@ func getModelTimeline(modelName string, startTime, endTime int64, hours int) ([]
 			timeline[i].Success = stat.Success
 			timeline[i].Failed = stat.Failed
 			timeline[i].Requests = stat.Success + stat.Failed
-			
+
 			if timeline[i].Requests > 0 {
 				timeline[i].SuccessRate = float64(timeline[i].Success) / float64(timeline[i].Requests) * 100
 			}
@@ -321,6 +297,32 @@ func getModelTimeline(modelName string, startTime, endTime int64, hours int) ([]
 	}
 
 	return timeline, nil
+}
+
+func newModelHealthTimeline(endTime int64, hours int) []ModelHealthTimeline {
+	if hours <= 0 {
+		return []ModelHealthTimeline{}
+	}
+
+	const hourSeconds int64 = 3600
+	timeline := make([]ModelHealthTimeline, hours)
+	currentHourStart := endTime / hourSeconds * hourSeconds
+	firstHourStart := currentHourStart - int64(hours-1)*hourSeconds
+	for i := range timeline {
+		timeline[i].Hour = firstHourStart + int64(i)*hourSeconds
+	}
+	return timeline
+}
+
+func modelHealthHourBucketExpression() string {
+	switch common.LogDatabaseType() {
+	case common.DatabaseTypeMySQL:
+		return "FLOOR(created_at / 3600) * 3600"
+	case common.DatabaseTypeClickHouse:
+		return "intDiv(created_at, 3600) * 3600"
+	default:
+		return "(created_at / 3600) * 3600"
+	}
 }
 
 // GetModelHealthDetailWithErrors retrieves detailed health info including top errors
