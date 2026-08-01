@@ -121,6 +121,18 @@ const RegisterForm = () => {
   if (affCode) {
     localStorage.setItem('aff', affCode);
   }
+  const invitationCode = new URLSearchParams(window.location.search).get(
+    'invitation_code',
+  );
+
+  useEffect(() => {
+    if (!invitationCode) return;
+    setInputs((previousInputs) =>
+      previousInputs.invitation_code
+        ? previousInputs
+        : { ...previousInputs, invitation_code: invitationCode },
+    );
+  }, [invitationCode]);
 
   const status = useMemo(() => {
     if (statusState?.status) return statusState.status;
@@ -136,12 +148,12 @@ const RegisterForm = () => {
     (status.custom_oauth_providers || []).length > 0;
   const hasOAuthRegisterOptions = Boolean(
     status.github_oauth ||
-      status.discord_oauth ||
-      status.oidc_enabled ||
-      status.wechat_login ||
-      status.linuxdo_oauth ||
-      status.telegram_oauth ||
-      hasCustomOAuthProviders,
+    status.discord_oauth ||
+    status.oidc_enabled ||
+    status.wechat_login ||
+    status.linuxdo_oauth ||
+    status.telegram_oauth ||
+    hasCustomOAuthProviders,
   );
 
   const [showEmailVerification, setShowEmailVerification] = useState(false);
@@ -322,7 +334,10 @@ const RegisterForm = () => {
       setGithubButtonDisabled(true);
     }, 20000);
     try {
-      onGitHubOAuthClicked(status.github_client_id, { shouldLogout: true, invitationCode: inputs.invitation_code });
+      onGitHubOAuthClicked(status.github_client_id, {
+        shouldLogout: true,
+        invitationCode: inputs.invitation_code,
+      });
     } finally {
       setTimeout(() => setGithubLoading(false), 3000);
     }
@@ -346,7 +361,10 @@ const RegisterForm = () => {
     }
 
     try {
-      onDiscordOAuthClicked(status.discord_client_id, { shouldLogout: true, invitationCode: inputs.invitation_code });
+      onDiscordOAuthClicked(status.discord_client_id, {
+        shouldLogout: true,
+        invitationCode: inputs.invitation_code,
+      });
     } finally {
       setTimeout(() => setDiscordLoading(false), 3000);
     }
@@ -399,7 +417,10 @@ const RegisterForm = () => {
     }
 
     try {
-      onLinuxDOOAuthClicked(status.linuxdo_client_id, { shouldLogout: true, invitationCode: inputs.invitation_code });
+      onLinuxDOOAuthClicked(status.linuxdo_client_id, {
+        shouldLogout: true,
+        invitationCode: inputs.invitation_code,
+      });
     } finally {
       setTimeout(() => setLinuxdoLoading(false), 3000);
     }
@@ -423,7 +444,10 @@ const RegisterForm = () => {
     }
 
     try {
-      onCustomOAuthClicked(provider, { shouldLogout: true, invitationCode: inputs.invitation_code });
+      onCustomOAuthClicked(provider, {
+        shouldLogout: true,
+        invitationCode: inputs.invitation_code,
+      });
     } finally {
       setTimeout(() => {
         setCustomOAuthLoading((prev) => ({ ...prev, [provider.slug]: false }));
@@ -619,7 +643,9 @@ const RegisterForm = () => {
                     <Input
                       placeholder={t('OAuth 注册前请输入邀请码')}
                       value={inputs.invitation_code}
-                      onChange={(value) => handleChange('invitation_code', value)}
+                      onChange={(value) =>
+                        handleChange('invitation_code', value)
+                      }
                       prefix={<IconKey />}
                     />
                   </div>
@@ -882,8 +908,7 @@ const RegisterForm = () => {
         style={{ top: '50%', left: '-120px' }}
       />
       <div className='w-full max-w-sm mt-[60px]'>
-        {showEmailRegister ||
-        !hasOAuthRegisterOptions
+        {showEmailRegister || !hasOAuthRegisterOptions
           ? renderEmailRegisterForm()
           : renderOAuthOptions()}
         {renderWeChatLoginModal()}

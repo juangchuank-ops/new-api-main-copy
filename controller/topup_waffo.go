@@ -447,7 +447,7 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	if topUp != nil && topUp.ProductType == "invitation_code" {
 		if topUp.Status != common.TopUpStatusPending {
 			// Already processed (idempotent) — return success to avoid duplicate code generation
-			logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 邀请码订单已处理 trade_no=%s status=%d client_ip=%s", merchantOrderId, topUp.Status, c.ClientIP()))
+			logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 邀请码订单已处理 trade_no=%s status=%s client_ip=%s", merchantOrderId, topUp.Status, c.ClientIP()))
 			sendWaffoWebhookResponse(c, wh, true, "")
 			return
 		}

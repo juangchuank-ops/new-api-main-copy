@@ -17,21 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Avatar,
-  Typography,
-  Card,
   Button,
-  Form,
+  InputNumber,
+  Modal,
   Space,
-  Row,
-  Col,
-  Spin,
-  Tooltip,
+  Typography,
 } from '@douyinfe/semi-ui';
 import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
-import { CreditCard, ShoppingCart } from 'lucide-react';
+import { CreditCard, Loader2, ShoppingCart } from 'lucide-react';
 import { API, showError, showSuccess } from '../../helpers';
 import { useActualTheme } from '../../context/Theme';
 
@@ -43,11 +38,158 @@ function isSafeHttpCheckoutUrl(value) {
     return false;
   }
   try {
-    const u = new URL(trimmed);
-    return u.protocol === 'http:' || u.protocol === 'https:';
+    const url = new URL(trimmed);
+    return url.protocol === 'http:' || url.protocol === 'https:';
   } catch {
     return false;
   }
+}
+
+function isPaymentSuccess(response) {
+  return (
+    response?.data?.message === 'success' || response?.data?.success === true
+  );
+}
+
+function getPaymentError(response, fallback) {
+  const data = response?.data?.data;
+  if (typeof data === 'string' && data.trim()) {
+    return data;
+  }
+  return response?.data?.message || fallback;
+}
+
+function getChannelIcon(channel, actualTheme) {
+  if (channel.type === 'alipay') {
+    return <SiAlipay size={18} color='#1677FF' />;
+  }
+  if (channel.type === 'wxpay') {
+    return <SiWechat size={18} color='#07C160' />;
+  }
+  if (channel.type === 'stripe') {
+    return <SiStripe size={18} color='#635BFF' />;
+  }
+  if (channel.type === 'waffo_pancake') {
+    return (
+      <img
+        src={
+          actualTheme === 'dark'
+            ? '/waffo-logo-dark.svg'
+            : '/waffo-logo-light.svg'
+        }
+        alt='Waffo'
+        style={{ width: 18, height: 18, objectFit: 'contain' }}
+      />
+    );
+  }
+  if (channel.icon) {
+    return (
+      <img
+        src={channel.icon}
+        alt={channel.name}
+        style={{ width: 18, height: 18, objectFit: 'contain' }}
+      />
+    );
+  }
+  return (
+    <CreditCard size={18} color={channel.color || 'var(--semi-color-text-2)'} />
+  );
+}
+
+function getPaymentChannels({
+  payMethods,
+  enableOnlineTopUp,
+  enableStripeTopUp,
+  enableCreemTopUp,
+  enableWaffoTopUp,
+  waffoPayMethods,
+  enableWaffoPancakeTopUp,
+  paymentComplianceConfirmed,
+}) {
+  if (!paymentComplianceConfirmed) {
+    return [];
+  }
+
+  const channels = [];
+  const channelIds = new Set();
+  const addChannel = (channel) => {
+    if (channelIds.has(channel.id)) {
+      return;
+    }
+    channelIds.add(channel.id);
+    channels.push(channel);
+  };
+
+  const detailedWaffoMethods =
+    enableWaffoTopUp &&
+    Array.isArray(waffoPayMethods) &&
+    waffoPayMethods.length > 0;
+  const specialTypes = new Set(['stripe', 'creem', 'waffo', 'waffo_pancake']);
+
+  if (enableOnlineTopUp) {
+    (payMethods || []).forEach((method) => {
+      if (
+        !method?.type ||
+        specialTypes.has(method.type) ||
+        method.type.startsWith('waffo:')
+      ) {
+        return;
+      }
+      addChannel({
+        id: `epay-${method.type}`,
+        name: method.name || method.type,
+        type: method.type,
+        paymentMethod: method.type,
+        icon: method.icon,
+        color: method.color,
+      });
+    });
+  }
+
+  if (enableStripeTopUp) {
+    addChannel({
+      id: 'stripe',
+      name: 'Stripe',
+      type: 'stripe',
+    });
+  }
+
+  if (enableCreemTopUp) {
+    addChannel({
+      id: 'creem',
+      name: 'Creem',
+      type: 'creem',
+    });
+  }
+
+  if (detailedWaffoMethods) {
+    waffoPayMethods.forEach((method, index) => {
+      addChannel({
+        id: `waffo-${index}`,
+        name: method?.name || 'Waffo',
+        type: 'waffo',
+        payMethodIndex: index,
+        icon: method?.icon,
+        color: method?.color,
+      });
+    });
+  } else if (enableWaffoTopUp) {
+    addChannel({
+      id: 'waffo',
+      name: 'Waffo',
+      type: 'waffo',
+    });
+  }
+
+  if (enableWaffoPancakeTopUp) {
+    addChannel({
+      id: 'waffo_pancake',
+      name: 'Waffo Pancake',
+      type: 'waffo_pancake',
+    });
+  }
+
+  return channels;
 }
 
 const BuyInvitationCodesCard = ({
@@ -60,355 +202,273 @@ const BuyInvitationCodesCard = ({
   enableWaffoTopUp = false,
   waffoPayMethods = [],
   enableWaffoPancakeTopUp = false,
+  paymentComplianceConfirmed = true,
+  onPaymentStarted,
 }) => {
   const actualTheme = useActualTheme();
   const [count, setCount] = useState(1);
   const [paying, setPaying] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState('');
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
 
-  const invitation_code_enabled =
-    statusState?.status?.invitation_code_enabled || false;
-  const unitPrice = Number(
-    statusState?.status?.invitation_code_price || 0,
-  );
+  const invitationCodeEnabled =
+    statusState?.status?.invitation_code_enabled === true;
+  const unitPrice = Number(statusState?.status?.invitation_code_price || 0);
   const totalPrice = (unitPrice * count).toFixed(2);
+  const paymentChannels = useMemo(
+    () =>
+      getPaymentChannels({
+        payMethods,
+        enableOnlineTopUp,
+        enableStripeTopUp,
+        enableCreemTopUp,
+        enableWaffoTopUp,
+        waffoPayMethods,
+        enableWaffoPancakeTopUp,
+        paymentComplianceConfirmed,
+      }),
+    [
+      payMethods,
+      enableOnlineTopUp,
+      enableStripeTopUp,
+      enableCreemTopUp,
+      enableWaffoTopUp,
+      waffoPayMethods,
+      enableWaffoPancakeTopUp,
+      paymentComplianceConfirmed,
+    ],
+  );
 
-  const hasAnyPayment =
-    enableOnlineTopUp ||
-    enableStripeTopUp ||
-    enableCreemTopUp ||
-    enableWaffoTopUp ||
-    enableWaffoPancakeTopUp;
-
-  if (!invitation_code_enabled) {
-    return null;
-  }
-
-  const handlePay = async (payment) => {
+  const handlePay = async (channel) => {
     setPaying(true);
-    setSelectedMethod(payment);
+    setSelectedMethod(channel.id);
 
     try {
-      if (payment === 'stripe') {
-        if (!enableStripeTopUp) {
-          showError(t('管理员未开启Stripe充值！'));
-          return;
-        }
-        const res = await API.post('/api/user/stripe/pay', {
+      let response;
+      if (channel.type === 'stripe') {
+        response = await API.post('/api/user/stripe/pay', {
+          payment_method: 'stripe',
           product_type: 'invitation_code',
-          count: count,
+          count,
         });
-        if (res.data && res.data.message === 'success') {
-          window.open(res.data.data?.pay_link, '_blank');
-          showSuccess(t('已打开支付页面'));
-        } else {
-          const errorMsg =
-            typeof res.data?.data === 'string'
-              ? res.data.data
-              : res.data?.message || t('支付失败');
-          showError(errorMsg);
+        if (!isPaymentSuccess(response) || !response.data?.data?.pay_link) {
+          showError(getPaymentError(response, t('支付失败')));
+          return false;
         }
-      } else if (payment === 'creem') {
-        if (!enableCreemTopUp) {
-          showError(t('管理员未开启 Creem 充值！'));
-          return;
-        }
-        const res = await API.post('/api/user/creem/pay', {
+        window.open(
+          response.data.data.pay_link,
+          '_blank',
+          'noopener,noreferrer',
+        );
+      } else if (channel.type === 'creem') {
+        response = await API.post('/api/user/creem/pay', {
+          payment_method: 'creem',
           product_type: 'invitation_code',
-          count: count,
+          count,
         });
-        if (res.data && res.data.message === 'success') {
-          window.open(res.data.data?.checkout_url, '_blank');
-          showSuccess(t('已打开支付页面'));
-        } else {
-          const errorMsg =
-            typeof res.data?.data === 'string'
-              ? res.data.data
-              : res.data?.message || t('支付失败');
-          showError(errorMsg);
+        if (!isPaymentSuccess(response) || !response.data?.data?.checkout_url) {
+          showError(getPaymentError(response, t('支付失败')));
+          return false;
         }
-      } else if (payment.startsWith('waffo:')) {
-        if (!enableWaffoTopUp) {
-          showError(t('管理员未开启 Waffo 充值！'));
-          return;
-        }
-        const res = await API.post('/api/user/waffo/pay', {
+        window.open(
+          response.data.data.checkout_url,
+          '_blank',
+          'noopener,noreferrer',
+        );
+      } else if (channel.type === 'waffo') {
+        const requestBody = {
           product_type: 'invitation_code',
-          count: count,
-        });
-        if (res.data && res.data.message === 'success' && res.data.data?.payment_url) {
-          window.open(res.data.data.payment_url, '_blank');
-          showSuccess(t('已打开支付页面'));
-        } else {
-          showError(res.data?.data || t('支付请求失败'));
+          count,
+        };
+        if (channel.payMethodIndex !== undefined) {
+          requestBody.pay_method_index = channel.payMethodIndex;
         }
-      } else if (payment === 'waffo_pancake') {
-        if (!enableWaffoPancakeTopUp) {
-          showError(t('管理员未开启 Waffo Pancake 充值！'));
-          return;
+        response = await API.post('/api/user/waffo/pay', requestBody);
+        if (!isPaymentSuccess(response) || !response.data?.data?.payment_url) {
+          showError(getPaymentError(response, t('支付请求失败')));
+          return false;
         }
-        const res = await API.post('/api/user/waffo-pancake/pay', {
+        window.open(
+          response.data.data.payment_url,
+          '_blank',
+          'noopener,noreferrer',
+        );
+      } else if (channel.type === 'waffo_pancake') {
+        response = await API.post('/api/user/waffo-pancake/pay', {
           product_type: 'invitation_code',
-          count: count,
+          count,
         });
-        if (res.data && res.data.message === 'success') {
-          const checkoutUrl = res.data?.data?.checkout_url || '';
-          if (checkoutUrl && isSafeHttpCheckoutUrl(checkoutUrl)) {
-            window.location.href = checkoutUrl;
-          } else if (checkoutUrl) {
-            showError(t('支付跳转地址不安全'));
-          } else {
-            showError(t('支付请求失败'));
-          }
-        } else {
-          const errorMsg =
-            typeof res.data?.data === 'string'
-              ? res.data.data
-              : res.data?.message || t('支付请求失败');
-          showError(errorMsg);
+        const checkoutUrl = response.data?.data?.checkout_url || '';
+        if (!isPaymentSuccess(response) || !checkoutUrl) {
+          showError(getPaymentError(response, t('支付请求失败')));
+          return false;
         }
+        if (!isSafeHttpCheckoutUrl(checkoutUrl)) {
+          showError(t('支付跳转地址不安全'));
+          return false;
+        }
+        window.location.href = checkoutUrl;
       } else {
-        // EPay
-        if (!enableOnlineTopUp) {
-          showError(t('管理员未开启在线充值！'));
-          return;
-        }
-        const res = await API.post('/api/user/pay', {
-          payment_method: payment,
+        response = await API.post('/api/user/pay', {
+          payment_method: channel.paymentMethod || channel.type,
           product_type: 'invitation_code',
-          count: count,
+          count,
         });
-        if (res.data && res.data.message === 'success') {
-          const params = res.data.data;
-          const url = res.data.url;
-          const form = document.createElement('form');
-          form.action = url;
-          form.method = 'POST';
-          const isSafari =
-            navigator.userAgent.indexOf('Safari') > -1 &&
-            navigator.userAgent.indexOf('Chrome') < 1;
-          if (!isSafari) {
-            form.target = '_blank';
-          }
-          for (const key in params) {
-            if (Object.prototype.hasOwnProperty.call(params, key)) {
-              const input = document.createElement('input');
-              input.type = 'hidden';
-              input.name = key;
-              input.value = params[key];
-              form.appendChild(input);
-            }
-          }
-          document.body.appendChild(form);
-          form.submit();
-          document.body.removeChild(form);
-        } else {
-          const errorMsg =
-            typeof res.data?.data === 'string'
-              ? res.data.data
-              : res.data?.message || t('支付失败');
-          showError(errorMsg);
+        if (!isPaymentSuccess(response) || !response.data?.url) {
+          showError(getPaymentError(response, t('支付失败')));
+          return false;
         }
+
+        const form = document.createElement('form');
+        form.action = response.data.url;
+        form.method = 'POST';
+        const isSafari =
+          navigator.userAgent.indexOf('Safari') > -1 &&
+          navigator.userAgent.indexOf('Chrome') < 1;
+        if (!isSafari) {
+          form.target = '_blank';
+        }
+        Object.entries(response.data.data || {}).forEach(([key, value]) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
       }
-    } catch (err) {
+
+      showSuccess(t('已打开支付页面'));
+      return true;
+    } catch (error) {
       showError(t('支付请求失败'));
+      return false;
     } finally {
       setPaying(false);
       setSelectedMethod('');
     }
   };
 
-  // Build the list of payment method buttons
-  const paymentButtons = [];
+  const startPayment = async (channel) => {
+    const started = await handlePay(channel);
+    if (started) {
+      setPaymentDialogOpen(false);
+      onPaymentStarted?.();
+    }
+  };
 
-  // EPay methods
-  if (enableOnlineTopUp) {
-    payMethods.forEach((method) => {
-      paymentButtons.push({
-        type: method.type,
-        name: method.name,
-        icon: method.type === 'alipay' ? (
-          <SiAlipay size={18} color='#1677FF' />
-        ) : method.type === 'wxpay' ? (
-          <SiWechat size={18} color='#07C160' />
-        ) : method.icon ? (
-          <img
-            src={method.icon}
-            alt={method.name}
-            style={{ width: 18, height: 18, objectFit: 'contain' }}
-          />
+  const handlePurchase = () => {
+    if (paymentChannels.length === 0) {
+      showError(t('暂无可用支付渠道'));
+      return;
+    }
+    if (paymentChannels.length === 1) {
+      void startPayment(paymentChannels[0]);
+      return;
+    }
+    setPaymentDialogOpen(true);
+  };
+
+  const canPurchase =
+    invitationCodeEnabled && unitPrice > 0 && paymentChannels.length > 0;
+  const purchaseButton = (
+    <Button
+      type='primary'
+      theme='solid'
+      onClick={handlePurchase}
+      disabled={!canPurchase || paying}
+      loading={paying && paymentChannels.length !== 2}
+      icon={
+        paying && paymentChannels.length !== 2 ? (
+          <Loader2 size={16} className='animate-spin' />
         ) : (
-          <CreditCard
-            size={18}
-            color={method.color || 'var(--semi-color-text-2)'}
-          />
-        ),
-        disabled: false,
-      });
-    });
-  }
+          <ShoppingCart size={16} />
+        )
+      }
+    >
+      {t('购买邀请码')}
+    </Button>
+  );
 
-  // Stripe
-  if (enableStripeTopUp) {
-    paymentButtons.push({
-      type: 'stripe',
-      name: 'Stripe',
-      icon: <SiStripe size={18} color='#635BFF' />,
-      disabled: false,
-    });
-  }
-
-  // Creem
-  if (enableCreemTopUp) {
-    paymentButtons.push({
-      type: 'creem',
-      name: 'Creem',
-      icon: (
-        <CreditCard
-          size={18}
-          color='var(--semi-color-text-2)'
-        />
-      ),
-      disabled: false,
-    });
-  }
-
-  // Waffo methods
-  if (enableWaffoTopUp) {
-    waffoPayMethods.forEach((method, index) => {
-      paymentButtons.push({
-        type: `waffo:${index}`,
-        name: method.name || 'Waffo',
-        icon: method.icon ? (
-          <img
-            src={method.icon}
-            alt={method.name}
-            style={{ width: 18, height: 18, objectFit: 'contain' }}
-          />
-        ) : (
-          <CreditCard size={18} color='var(--semi-color-text-2)' />
-        ),
-        disabled: false,
-      });
-    });
-  }
-
-  // WaffoPancake
-  if (enableWaffoPancakeTopUp) {
-    paymentButtons.push({
-      type: 'waffo_pancake',
-      name: 'Waffo Pancake',
-      icon: (
-        <img
-          src={
-            actualTheme === 'dark'
-              ? '/waffo-logo-dark.svg'
-              : '/waffo-logo-light.svg'
-          }
-          alt='Waffo'
-          style={{ width: 18, height: 18, objectFit: 'contain' }}
-        />
-      ),
-      disabled: false,
-    });
-  }
+  const renderChannelButton = (channel) => (
+    <Button
+      key={channel.id}
+      theme='outline'
+      type='tertiary'
+      onClick={() => void startPayment(channel)}
+      disabled={!canPurchase || paying}
+      loading={paying && selectedMethod === channel.id}
+      icon={getChannelIcon(channel, actualTheme)}
+    >
+      {channel.name}
+    </Button>
+  );
 
   return (
-    <Card className='!rounded-2xl shadow-sm border-0'>
-      <div className='flex items-center mb-4'>
-        <Avatar size='small' color='amber' className='mr-3 shadow-md'>
-          <ShoppingCart size={16} />
-        </Avatar>
-        <div>
-          <Typography.Text className='text-lg font-medium'>
-            {t('购买邀请码')}
-          </Typography.Text>
-          <div className='text-xs'>
-            {t('购买邀请码用于新用户注册')}
-          </div>
+    <div className='flex flex-col gap-3 border-b pb-3'>
+      <div className='flex flex-wrap items-end gap-3'>
+        <div className='flex flex-col gap-1'>
+          <Text type='secondary' size='small'>
+            {t('购买数量')}
+          </Text>
+          <InputNumber
+            value={count}
+            min={1}
+            max={100}
+            step={1}
+            precision={0}
+            onChange={(value) => {
+              const nextValue = Number(value);
+              if (Number.isFinite(nextValue)) {
+                setCount(Math.max(1, Math.min(100, Math.floor(nextValue))));
+              }
+            }}
+            style={{ width: 120 }}
+          />
         </div>
+        <Text type='secondary' className='pb-2 text-sm'>
+          {t('合计')}: {totalPrice} {t('元')}
+        </Text>
+        {paymentChannels.length !== 2 && purchaseButton}
       </div>
 
-      {!hasAnyPayment ? (
-        <Text type='tertiary'>{t('管理员未开启在线支付功能')}</Text>
-      ) : (
-        <Form>
-          <div className='space-y-4'>
-            <Row gutter={12}>
-              <Col xs={24} sm={24} md={24} lg={10} xl={10}>
-                <Form.InputNumber
-                  field='inviteCodeCount'
-                  label={t('购买数量')}
-                  value={count}
-                  min={1}
-                  max={100}
-                  step={1}
-                  precision={0}
-                  onChange={(value) => {
-                    if (value && value >= 1) {
-                      setCount(value);
-                    }
-                  }}
-                  onBlur={(e) => {
-                    const val = parseInt(e.target.value);
-                    if (!val || val < 1) {
-                      setCount(1);
-                    } else if (val > 100) {
-                      setCount(100);
-                    }
-                  }}
-                  formatter={(value) => (value ? `${value}` : '')}
-                  parser={(value) =>
-                    value ? parseInt(value.replace(/[^\d]/g, '')) : 0
-                  }
-                  extraText={
-                    <div>
-                      <Text type='secondary' size='small'>
-                        {t('单价')}: {unitPrice} {t('元')}
-                      </Text>
-                      <Text
-                        type='secondary'
-                        size='small'
-                        style={{ marginLeft: 12 }}
-                      >
-                        {t('合计')}: <span style={{ color: 'red' }}>{totalPrice} {t('元')}</span>
-                      </Text>
-                    </div>
-                  }
-                  style={{ width: '100%' }}
-                />
-              </Col>
-
-              {paymentButtons.length > 0 && (
-                <Col xs={24} sm={24} md={24} lg={14} xl={14}>
-                  <Form.Slot label={t('选择支付方式')}>
-                    <Space wrap>
-                      {paymentButtons.map((btn) => {
-                        const isPaying = paying && selectedMethod === btn.type;
-                        return (
-                          <Button
-                            key={btn.type}
-                            theme='outline'
-                            type='tertiary'
-                            onClick={() => handlePay(btn.type)}
-                            disabled={paying}
-                            loading={isPaying}
-                            icon={btn.icon}
-                            className='!rounded-lg !px-4 !py-2'
-                          >
-                            {btn.name}
-                          </Button>
-                        );
-                      })}
-                    </Space>
-                  </Form.Slot>
-                </Col>
-              )}
-            </Row>
-          </div>
-        </Form>
+      {paymentChannels.length === 2 && canPurchase && (
+        <div className='flex flex-col gap-2'>
+          <Text type='secondary' size='small'>
+            {t('选择支付方式')}
+          </Text>
+          <Space wrap>{paymentChannels.map(renderChannelButton)}</Space>
+        </div>
       )}
-    </Card>
+
+      {!invitationCodeEnabled && (
+        <Text type='tertiary'>{t('邀请码购买暂未开放')}</Text>
+      )}
+      {invitationCodeEnabled && unitPrice <= 0 && (
+        <Text type='tertiary'>{t('请先设置邀请码单价后再购买')}</Text>
+      )}
+      {invitationCodeEnabled &&
+        unitPrice > 0 &&
+        paymentChannels.length === 0 && (
+          <Text type='tertiary'>
+            {t('管理员未开启在线支付功能，请联系管理员配置。')}
+          </Text>
+        )}
+
+      <Modal
+        title={t('选择支付方式')}
+        visible={paymentDialogOpen}
+        onCancel={() => setPaymentDialogOpen(false)}
+        footer={null}
+        centered
+      >
+        <div className='flex flex-wrap gap-2'>
+          {paymentChannels.map(renderChannelButton)}
+        </div>
+      </Modal>
+    </div>
   );
 };
 

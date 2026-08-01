@@ -119,7 +119,11 @@ function App() {
         />
         <Route
           path='/model-health'
-          element={<ModelHealth />}
+          element={
+            <PrivateRoute>
+              <ModelHealth />
+            </PrivateRoute>
+          }
         />
         <Route
           path='/console/deployment'

@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Activity,
   BarChart3,
@@ -33,13 +39,7 @@ import { showError } from '../../helpers/utils';
 import { useTranslation } from 'react-i18next';
 import './index.css';
 
-const RANGE_OPTIONS = [
-  { value: '1h', hours: 1, label: '最近 1 小时' },
-  { value: '6h', hours: 6, label: '最近 6 小时' },
-  { value: '24h', hours: 24, label: '最近 24 小时' },
-  { value: '7d', hours: 24 * 7, label: '最近 7 天' },
-  { value: '30d', hours: 24 * 30, label: '最近 30 天' },
-];
+const HEALTH_RANGE = '24h';
 
 const SORT_OPTIONS = [
   { value: 'requests', label: '按请求数降序' },
@@ -48,69 +48,6 @@ const SORT_OPTIONS = [
   { value: 'tokens', label: '按 Token 用量降序' },
 ];
 
-const previewTimeline = (rates) =>
-  Array.from({ length: 24 }, (_, index) => {
-    const rate = rates[index % rates.length];
-    const requests = index % 9 === 0 ? 0 : 20 + index;
-    return {
-      hour: Math.floor(Date.now() / 3600000) * 3600 - (23 - index) * 3600,
-      requests,
-      success: Math.round((requests * rate) / 100),
-      failed: requests - Math.round((requests * rate) / 100),
-      success_rate: rate,
-    };
-  });
-
-const PREVIEW_DATA = {
-  summary: {
-    monitored_models: 4,
-    healthy_models: 3,
-    overall_success_rate: 90.7,
-  },
-  models: [
-    {
-      model_name: 'gpt-5.6-sol',
-      success_rate: 98.1,
-      total_tokens: 18540820,
-      total_requests: 17579,
-      success_count: 17239,
-      failed_count: 340,
-      avg_latency_ms: 9.4,
-      timeline: previewTimeline([100, 100, 98, 100, 91, 100, 100, 96]),
-    },
-    {
-      model_name: 'gpt-5.6-luna',
-      success_rate: 59,
-      total_tokens: 6290120,
-      total_requests: 6269,
-      success_count: 3698,
-      failed_count: 2571,
-      avg_latency_ms: 3.8,
-      timeline: previewTimeline([88, 40, 100, 65, 20, 100, 72, 55]),
-    },
-    {
-      model_name: 'claude-opus-4-8',
-      success_rate: 99.6,
-      total_tokens: 4096800,
-      total_requests: 4096,
-      success_count: 4079,
-      failed_count: 17,
-      avg_latency_ms: 3.7,
-      timeline: previewTimeline([100, 100, 100, 96, 100, 100, 100, 100]),
-    },
-    {
-      model_name: 'claude-fable-5',
-      success_rate: 98.6,
-      total_tokens: 3685210,
-      total_requests: 3685,
-      success_count: 3634,
-      failed_count: 51,
-      avg_latency_ms: 4,
-      timeline: previewTimeline([100, 100, 94, 100, 100, 96, 100, 100]),
-    },
-  ],
-};
-
 const getNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
@@ -118,19 +55,19 @@ const getNumber = (value) => {
 
 const formatInteger = (value) => getNumber(value).toLocaleString();
 
-const formatTokens = (value) => {
-  const tokens = getNumber(value);
-  if (tokens >= 1e9) return (tokens / 1e9).toFixed(1) + 'B';
-  if (tokens >= 1e6) return (tokens / 1e6).toFixed(1) + 'M';
-  if (tokens >= 1e3) return (tokens / 1e3).toFixed(1) + 'K';
-  return formatInteger(tokens);
+const formatTTFT = (value) => {
+  if (value === null || value === undefined) return '--';
+  const milliseconds = getNumber(value);
+  if (milliseconds <= 0) return '--';
+  if (milliseconds >= 1000) return (milliseconds / 1000).toFixed(1) + ' s';
+  return formatInteger(milliseconds) + ' ms';
 };
 
-const formatLatency = (value) => {
-  const seconds = getNumber(value);
-  if (seconds <= 0) return '--';
-  if (seconds >= 60) return (seconds / 60).toFixed(1) + ' min';
-  return seconds.toFixed(1) + ' s';
+const formatTPS = (value) => {
+  if (value === null || value === undefined) return '--';
+  const tokensPerSecond = getNumber(value);
+  if (tokensPerSecond <= 0) return '--';
+  return tokensPerSecond.toFixed(1).replace(/\.0$/, '') + ' t/s';
 };
 
 const formatTimestamp = (value) => {
@@ -212,7 +149,8 @@ const formatTimelineHour = (timestamp) => {
     pad(date.getDate()) +
     ' ' +
     pad(date.getHours()) +
-    ':00'
+    ':' +
+    pad(date.getMinutes())
   );
 };
 
@@ -226,7 +164,15 @@ const ModelHealthCard = ({ model, t }) => {
       <div className='model-health-card-header'>
         <div className='model-health-card-title'>
           <h2 title={model.model_name}>{model.model_name}</h2>
-          <p>
+          <p className='model-health-card-meta'>
+            <span>
+              {t('分组')}: {model.group || '--'}
+            </span>
+            <span>
+              {t('模型')}: {model.model_name}
+            </span>
+          </p>
+          <p className='model-health-card-requests'>
             {formatInteger(model.total_requests)} {t('总请求')}
           </p>
         </div>
@@ -270,6 +216,7 @@ const ModelHealthCard = ({ model, t }) => {
           className='model-health-timeline-bars'
           style={{ '--model-health-bar-count': Math.max(timeline.length, 1) }}
           aria-label={t('模型状态时间线')}
+          role='img'
         >
           {timeline.length > 0 ? (
             timeline.map((point, index) => {
@@ -295,6 +242,7 @@ const ModelHealthCard = ({ model, t }) => {
                   key={String(point.hour) + '-' + index}
                   style={{ backgroundColor: getTimelineColor(point) }}
                   title={title}
+                  aria-hidden='true'
                 />
               );
             })
@@ -302,6 +250,7 @@ const ModelHealthCard = ({ model, t }) => {
             <span
               className='model-health-timeline-bar'
               style={{ backgroundColor: '#e5e7eb' }}
+              aria-hidden='true'
             />
           )}
         </div>
@@ -313,10 +262,10 @@ const ModelHealthCard = ({ model, t }) => {
 
       <div className='model-health-card-footer'>
         <span>
-          <b>{t('近期平均延迟')}:</b> {formatLatency(model.avg_latency_ms)}
+          <b>{t('近期平均首字延迟')}:</b> {formatTTFT(model.avg_ttft_ms)}
         </span>
         <span>
-          <b>{t('Token 用量')}:</b> {formatTokens(model.total_tokens)}
+          <b>{t('近期平均输出速度')}:</b> {formatTPS(model.avg_tps)}
         </span>
       </div>
     </article>
@@ -325,42 +274,49 @@ const ModelHealthCard = ({ model, t }) => {
 
 const ModelHealth = () => {
   const { t } = useTranslation();
-  const previewMode =
-    new URLSearchParams(window.location.search).get('preview') === '1';
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState(previewMode ? PREVIEW_DATA : null);
+  const [data, setData] = useState(null);
+  const [groups, setGroups] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [range, setRange] = useState('24h');
+  const [group, setGroup] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('requests');
+  const latestRequestRef = useRef(0);
 
   const fetchData = useCallback(async () => {
-    if (previewMode) {
-      setLastUpdated(Date.now());
-      return;
-    }
+    const requestId = ++latestRequestRef.current;
     setLoading(true);
     try {
       const res = await API.get('/api/admin/model-health', {
-        params: { range },
+        params: {
+          range: HEALTH_RANGE,
+          ...(group ? { group } : {}),
+        },
         skipErrorHandler: true,
       });
       if (res.data.success) {
+        if (requestId !== latestRequestRef.current) return;
         setData(res.data.data);
+        if (Array.isArray(res.data.data?.groups)) {
+          setGroups(res.data.data.groups);
+        }
         setLastUpdated(Date.now());
       } else {
         showError(res.data.message || t('加载失败'));
       }
     } catch (error) {
+      if (requestId !== latestRequestRef.current) return;
       if (error?.response?.status === 401) {
         showError(error);
         return;
       }
       showError(t('加载模型健康度数据失败'));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestRef.current) {
+        setLoading(false);
+      }
     }
-  }, [previewMode, range, t]);
+  }, [group, t]);
 
   useEffect(() => {
     fetchData();
@@ -455,14 +411,15 @@ const ModelHealth = () => {
 
           <div className='model-health-toolbar'>
             <label className='model-health-select'>
-              <span className='sr-only'>{t('时间范围')}</span>
+              <span className='sr-only'>{t('分组')}</span>
               <select
-                value={range}
-                onChange={(event) => setRange(event.target.value)}
+                value={group}
+                onChange={(event) => setGroup(event.target.value)}
               >
-                {RANGE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {t(option.label)}
+                <option value=''>{t('全部分组')}</option>
+                {groups.map((groupName) => (
+                  <option key={groupName} value={groupName}>
+                    {groupName}
                   </option>
                 ))}
               </select>
@@ -482,20 +439,6 @@ const ModelHealth = () => {
               </select>
               <ChevronDown size={17} aria-hidden='true' />
             </label>
-            <button
-              className='model-health-refresh'
-              type='button'
-              onClick={fetchData}
-              disabled={loading}
-              aria-label={t('刷新')}
-              title={t('自动刷新，每 30 秒')}
-            >
-              <RefreshCw
-                size={17}
-                className={loading ? 'model-health-spin' : ''}
-                aria-hidden='true'
-              />
-            </button>
           </div>
         </header>
 
@@ -568,7 +511,11 @@ const ModelHealth = () => {
         ) : (
           <section className='model-health-grid' aria-label={t('模型列表')}>
             {filteredModels.map((model) => (
-              <ModelHealthCard key={model.model_name} model={model} t={t} />
+              <ModelHealthCard
+                key={(model.group || '') + ':' + model.model_name}
+                model={model}
+                t={t}
+              />
             ))}
           </section>
         )}

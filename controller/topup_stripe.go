@@ -317,7 +317,7 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 	if topUp != nil && topUp.ProductType == "invitation_code" {
 		if topUp.Status != common.TopUpStatusPending {
 			// Already processed (idempotent) — return success to avoid duplicate code generation
-			logger.LogInfo(ctx, fmt.Sprintf("Stripe 邀请码订单已处理 trade_no=%s status=%d event_type=%s client_ip=%s", referenceId, topUp.Status, string(event.Type), callerIp))
+			logger.LogInfo(ctx, fmt.Sprintf("Stripe 邀请码订单已处理 trade_no=%s status=%s event_type=%s client_ip=%s", referenceId, topUp.Status, string(event.Type), callerIp))
 			return
 		}
 		if genErr := model.GenerateInvitationCodesForUser(topUp.UserId, int(topUp.Amount)); genErr != nil {

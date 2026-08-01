@@ -214,7 +214,9 @@ const SystemSetting = () => {
           case 'Price':
           case 'MinTopUp':
           case 'InvitationCodePrice':
-            item.value = parseFloat(item.value);
+            item.value = Number.isFinite(parseFloat(item.value))
+              ? parseFloat(item.value)
+              : 0;
             break;
           default:
             break;
@@ -713,6 +715,26 @@ const SystemSetting = () => {
     }
   };
 
+  const submitInvitationCodeSettings = async () => {
+    const formValues = formApiRef.current?.getValues() || {};
+    const rawPrice = formValues.InvitationCodePrice;
+    const price = Number(rawPrice);
+    if (rawPrice === '' || rawPrice === null || rawPrice === undefined) {
+      showError(t('请输入有效的邀请码单价'));
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      showError(t('邀请码单价必须是非负数字'));
+      return;
+    }
+    await updateOptions([
+      {
+        key: 'InvitationCodePrice',
+        value: price.toFixed(2),
+      },
+    ]);
+  };
+
   const handleSMTPSecurityModeChange = async (event) => {
     const mode = event && event.target ? event.target.value : event;
     const nextSMTPSSLEnabled = mode === 'ssl_tls';
@@ -1074,13 +1096,26 @@ const SystemSetting = () => {
                       >
                         {t('邀请码注册')}
                       </Form.Checkbox>
-                      <Form.Input
+                      <Form.InputNumber
                         field='InvitationCodePrice'
                         label={t('邀请码单价')}
                         placeholder='1.5'
-                        extraText={t('邀请码单价，单位：元')}
+                        min={0}
+                        step={0.01}
+                        precision={2}
+                        suffix={t('元/个')}
+                        extraText={t(
+                          '邀请码单价为 0 时关闭购买，设置正数后用户才能购买。',
+                        )}
                         style={{ width: 200, marginTop: 8 }}
                       />
+                      <Button
+                        size='small'
+                        onClick={submitInvitationCodeSettings}
+                        style={{ marginTop: 8 }}
+                      >
+                        {t('保存邀请码购买设置')}
+                      </Button>
                       <Form.Checkbox
                         field='TurnstileCheckEnabled'
                         noLabel
