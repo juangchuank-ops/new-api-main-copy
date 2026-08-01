@@ -308,7 +308,7 @@
     "上一个表单块": "Previous form block",
     "上一步": "Previous",
     "上传 PNG/JPG/SVG 图片，建议尺寸 ≤ 128×128px": "",
-    "上传图片": "",
+    "上传图片": "Upload Image",
     "上次保存: ": "Last saved: ",
     "上次检测到可加入模型": "",
     "上次检测时间": "",
@@ -3927,6 +3927,20 @@
     "合计": "Total",
     "邀请码注册": "Invitation code registration",
     "邀请码单价": "Invitation code unit price",
-    "用户注册时看到的网站名称，比如'我的网站'": "Website name shown during registration, for example 'My Website'"
+    "用户注册时看到的网站名称，比如'我的网站'": "Website name shown during registration, for example 'My Website'",
+    "编辑头像": "Edit Avatar",
+    "图片链接": "Image Link",
+    "图片文件不能超过 5 MB": "The image file cannot exceed 5 MB",
+    "仅支持 JPG、PNG 或 WebP 图片": "Only JPG, PNG, or WebP images are supported",
+    "头像处理失败，请更换图片后重试": "Failed to process the avatar. Try another image.",
+    "头像更新失败": "Failed to update avatar",
+    "头像更新成功": "Avatar updated",
+    "仅支持 HTTP 或 HTTPS 图片链接": "Only HTTP or HTTPS image links are supported",
+    "请选择头像图片": "Select an avatar image",
+    "移除头像": "Remove Avatar",
+    "保存头像": "Save Avatar",
+    "头像预览": "Avatar Preview",
+    "选择头像图片": "Choose Avatar Image",
+    "请输入头像图片链接": "Enter an avatar image link"
   }
 }

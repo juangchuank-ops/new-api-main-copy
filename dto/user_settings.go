@@ -16,6 +16,7 @@ type UserSetting struct {
 	SidebarModules                   string  `json:"sidebar_modules,omitempty"`                      // SidebarModules 左侧边栏模块配置
 	BillingPreference                string  `json:"billing_preference,omitempty"`                   // BillingPreference 扣费策略（订阅/钱包）
 	Language                         string  `json:"language,omitempty"`                             // Language 用户语言偏好 (zh, en)
+	AvatarUrl                        string  `json:"avatar_url,omitempty"`                           // AvatarUrl 用户头像地址或压缩后的图片数据
 }
 
 var (

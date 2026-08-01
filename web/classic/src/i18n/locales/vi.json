@@ -300,7 +300,7 @@
     "上一个表单块": "Khối biểu mẫu trước",
     "上一步": "Trước",
     "上传 PNG/JPG/SVG 图片，建议尺寸 ≤ 128×128px": "",
-    "上传图片": "",
+    "上传图片": "Tải ảnh lên",
     "上次保存: ": "Lần lưu cuối: ",
     "上次检测到可加入模型": "",
     "上次检测时间": "",
@@ -4300,6 +4300,20 @@
     "邀请码注册": "Đăng ký bằng mã mời",
     "邀请码单价": "Đơn giá mã mời",
     "用户注册时看到的网站名称，比如'我的网站'": "Tên trang web hiển thị khi đăng ký, ví dụ 'Trang web của tôi'",
-    "支付跳转地址不安全": "URL chuyển hướng thanh toán không an toàn"
+    "支付跳转地址不安全": "URL chuyển hướng thanh toán không an toàn",
+    "编辑头像": "Chỉnh sửa ảnh đại diện",
+    "图片链接": "Liên kết ảnh",
+    "图片文件不能超过 5 MB": "Tệp ảnh không được vượt quá 5 MB",
+    "仅支持 JPG、PNG 或 WebP 图片": "Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP",
+    "头像处理失败，请更换图片后重试": "Không thể xử lý ảnh đại diện. Hãy thử ảnh khác.",
+    "头像更新失败": "Không thể cập nhật ảnh đại diện",
+    "头像更新成功": "Đã cập nhật ảnh đại diện",
+    "仅支持 HTTP 或 HTTPS 图片链接": "Chỉ hỗ trợ liên kết ảnh HTTP hoặc HTTPS",
+    "请选择头像图片": "Hãy chọn ảnh đại diện",
+    "移除头像": "Xóa ảnh đại diện",
+    "保存头像": "Lưu ảnh đại diện",
+    "头像预览": "Xem trước ảnh đại diện",
+    "选择头像图片": "Chọn ảnh đại diện",
+    "请输入头像图片链接": "Nhập liên kết ảnh đại diện"
   }
 }

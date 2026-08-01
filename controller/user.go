@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,75 @@ import (
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+const (
+	avatarMaxExternalURLLength = 2048
+	avatarMaxDataURLLength     = 350 * 1024
+	avatarMaxImageBytes        = 256 * 1024
+)
+
+func normalizeAvatarURL(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+
+	lowerValue := strings.ToLower(value)
+	allowedDataImages := []struct {
+		prefix string
+		mime   string
+	}{
+		{prefix: "data:image/jpeg;base64,", mime: "image/jpeg"},
+		{prefix: "data:image/png;base64,", mime: "image/png"},
+		{prefix: "data:image/webp;base64,", mime: "image/webp"},
+	}
+
+	for _, imageType := range allowedDataImages {
+		if !strings.HasPrefix(lowerValue, imageType.prefix) {
+			continue
+		}
+		if len(value) > avatarMaxDataURLLength {
+			return "", errors.New("avatar image is too large")
+		}
+
+		imageBytes, err := base64.StdEncoding.DecodeString(value[len(imageType.prefix):])
+		if err != nil || len(imageBytes) == 0 || len(imageBytes) > avatarMaxImageBytes {
+			return "", errors.New("invalid avatar image data")
+		}
+
+		validImage := false
+		switch imageType.mime {
+		case "image/jpeg":
+			validImage = len(imageBytes) >= 3 && imageBytes[0] == 0xff && imageBytes[1] == 0xd8 && imageBytes[2] == 0xff
+		case "image/png":
+			validImage = len(imageBytes) >= 8 &&
+				imageBytes[0] == 0x89 && imageBytes[1] == 0x50 && imageBytes[2] == 0x4e && imageBytes[3] == 0x47 &&
+				imageBytes[4] == 0x0d && imageBytes[5] == 0x0a && imageBytes[6] == 0x1a && imageBytes[7] == 0x0a
+		case "image/webp":
+			validImage = len(imageBytes) >= 12 &&
+				string(imageBytes[:4]) == "RIFF" && string(imageBytes[8:12]) == "WEBP"
+		}
+		if !validImage {
+			return "", errors.New("avatar image type does not match its content")
+		}
+
+		return imageType.prefix + base64.StdEncoding.EncodeToString(imageBytes), nil
+	}
+
+	if strings.HasPrefix(lowerValue, "data:") || len(value) > avatarMaxExternalURLLength {
+		return "", errors.New("invalid avatar URL")
+	}
+
+	parsedURL, err := url.ParseRequestURI(value)
+	if err != nil || parsedURL.Host == "" || parsedURL.User != nil {
+		return "", errors.New("invalid avatar URL")
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", errors.New("avatar URL must use HTTP or HTTPS")
+	}
+
+	return parsedURL.String(), nil
 }
 
 func Login(c *gin.Context) {
@@ -143,6 +213,7 @@ func setupLogin(user *model.User, c *gin.Context) {
 		return
 	}
 	recordLoginAudit(user, c)
+	userSetting := user.GetSetting()
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,
@@ -153,6 +224,7 @@ func setupLogin(user *model.User, c *gin.Context) {
 			"role":         user.Role,
 			"status":       user.Status,
 			"group":        user.Group,
+			"avatar_url":   userSetting.AvatarUrl,
 		},
 	})
 }
@@ -504,6 +576,7 @@ func GetSelf(c *gin.Context) {
 		"inviter_id":        user.InviterId,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
+		"avatar_url":        userSetting.AvatarUrl,
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
@@ -783,6 +856,44 @@ func UpdateSelf(c *gin.Context) {
 		}
 
 		common.ApiSuccessI18n(c, i18n.MsgUpdateSuccess, nil)
+		return
+	}
+
+	// 检查是否是头像更新请求
+	if avatarURL, avatarExists := requestData["avatar_url"]; avatarExists {
+		avatarURLString, ok := avatarURL.(string)
+		if !ok {
+			common.ApiErrorI18n(c, i18n.MsgInvalidInput)
+			return
+		}
+
+		normalizedAvatarURL, err := normalizeAvatarURL(avatarURLString)
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidInput)
+			return
+		}
+
+		userId := c.GetInt("id")
+		user, err := model.GetUserById(userId, false)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+
+		currentSetting := user.GetSetting()
+		currentSetting.AvatarUrl = normalizedAvatarURL
+		user.SetSetting(currentSetting)
+		if err := user.Update(false); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
+			return
+		}
+		if err := model.InvalidateUserCache(userId); err != nil {
+			common.SysLog("failed to invalidate user cache after avatar update: " + err.Error())
+		}
+
+		common.ApiSuccessI18n(c, i18n.MsgUpdateSuccess, gin.H{
+			"avatar_url": normalizedAvatarURL,
+		})
 		return
 	}
 
@@ -1345,6 +1456,7 @@ func UpdateUserSetting(c *gin.Context) {
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
 		RecordIpLog:                      req.RecordIpLog,
+		AvatarUrl:                        existingSettings.AvatarUrl,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置

@@ -27,7 +27,7 @@ import {
   IconCreditCard,
   IconKey,
 } from '@douyinfe/semi-icons';
-import { stringToColor } from '../../../helpers';
+import { getUserAvatarUrl, stringToColor } from '../../../helpers';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const UserArea = ({
@@ -52,6 +52,7 @@ const UserArea = ({
   }
 
   if (userState.user) {
+    const avatarUrl = getUserAvatarUrl(userState.user);
     return (
       <div className='relative' ref={dropdownRef}>
         <Dropdown
@@ -123,6 +124,8 @@ const UserArea = ({
           >
             <Avatar
               size='extra-small'
+              src={avatarUrl || undefined}
+              alt={userState.user.username}
               color={stringToColor(userState.user.username)}
               className='mr-1'
             >

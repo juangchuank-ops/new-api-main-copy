@@ -305,7 +305,7 @@
     "上一个表单块": "Bloc de formulaire précédent",
     "上一步": "Précédent",
     "上传 PNG/JPG/SVG 图片，建议尺寸 ≤ 128×128px": "",
-    "上传图片": "",
+    "上传图片": "Téléverser une image",
     "上次保存: ": "Dernier enregistrement : ",
     "上次检测到可加入模型": "",
     "上次检测时间": "",
@@ -3768,6 +3768,20 @@
     "邀请码注册": "Inscription par code d'invitation",
     "邀请码单价": "Prix unitaire du code d'invitation",
     "用户注册时看到的网站名称，比如'我的网站'": "Nom du site affiché lors de l'inscription, par exemple « Mon site »",
-    "支付跳转地址不安全": "URL de redirection de paiement non sécurisée"
+    "支付跳转地址不安全": "URL de redirection de paiement non sécurisée",
+    "编辑头像": "Modifier l'avatar",
+    "图片链接": "Lien de l'image",
+    "图片文件不能超过 5 MB": "Le fichier image ne peut pas dépasser 5 Mo",
+    "仅支持 JPG、PNG 或 WebP 图片": "Seules les images JPG, PNG ou WebP sont acceptées",
+    "头像处理失败，请更换图片后重试": "Échec du traitement de l'avatar. Essayez une autre image.",
+    "头像更新失败": "Échec de la mise à jour de l'avatar",
+    "头像更新成功": "Avatar mis à jour",
+    "仅支持 HTTP 或 HTTPS 图片链接": "Seuls les liens d'image HTTP ou HTTPS sont acceptés",
+    "请选择头像图片": "Sélectionnez une image d'avatar",
+    "移除头像": "Supprimer l'avatar",
+    "保存头像": "Enregistrer l'avatar",
+    "头像预览": "Aperçu de l'avatar",
+    "选择头像图片": "Choisir une image d'avatar",
+    "请输入头像图片链接": "Saisissez le lien de l'image de l'avatar"
   }
 }

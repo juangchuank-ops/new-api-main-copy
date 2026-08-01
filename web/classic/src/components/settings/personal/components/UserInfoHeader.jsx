@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Avatar,
   Card,
@@ -30,11 +30,15 @@ import {
   isRoot,
   isAdmin,
   renderQuota,
+  getUserAvatarUrl,
+  setUserData,
   stringToColor,
 } from '../../../../helpers';
-import { Coins, BarChart2, Users } from 'lucide-react';
+import { Coins, BarChart2, Camera, Users } from 'lucide-react';
+import AvatarEditorModal from './AvatarEditorModal';
 
-const UserInfoHeader = ({ t, userState }) => {
+const UserInfoHeader = ({ t, userState, userDispatch }) => {
+  const [avatarEditorVisible, setAvatarEditorVisible] = useState(false);
   const getUsername = () => {
     if (userState.user) {
       return userState.user.username;
@@ -49,6 +53,32 @@ const UserInfoHeader = ({ t, userState }) => {
       return username.slice(0, 2).toUpperCase();
     }
     return 'NA';
+  };
+
+  const avatarUrl = getUserAvatarUrl(userState.user);
+
+  const handleAvatarSaved = (nextAvatarUrl) => {
+    let settings = {};
+    if (userState.user?.setting) {
+      try {
+        settings = JSON.parse(userState.user.setting) || {};
+      } catch {
+        settings = {};
+      }
+    }
+    if (nextAvatarUrl) {
+      settings.avatar_url = nextAvatarUrl;
+    } else {
+      delete settings.avatar_url;
+    }
+
+    const nextUser = {
+      ...userState.user,
+      avatar_url: nextAvatarUrl,
+      setting: JSON.stringify(settings),
+    };
+    userDispatch({ type: 'login', payload: nextUser });
+    setUserData(nextUser);
   };
 
   return (
@@ -69,9 +99,23 @@ const UserInfoHeader = ({ t, userState }) => {
           <div className='relative z-10 h-full flex flex-col justify-end p-6'>
             <div className='flex items-center'>
               <div className='flex items-stretch gap-3 sm:gap-4 flex-1 min-w-0'>
-                <Avatar size='large' color={stringToColor(getUsername())}>
-                  {getAvatarText()}
-                </Avatar>
+                <button
+                  type='button'
+                  className='flex shrink-0'
+                  aria-label={t('编辑头像')}
+                  title={t('编辑头像')}
+                  onClick={() => setAvatarEditorVisible(true)}
+                >
+                  <Avatar
+                    size='large'
+                    src={avatarUrl || undefined}
+                    alt={getUsername()}
+                    color={stringToColor(getUsername())}
+                    hoverMask={<Camera size={18} />}
+                  >
+                    {getAvatarText()}
+                  </Avatar>
+                </button>
                 <div className='flex-1 min-w-0 flex flex-col justify-between'>
                   <div
                     className='text-3xl font-bold truncate'
@@ -213,6 +257,14 @@ const UserInfoHeader = ({ t, userState }) => {
           </div>
         </Card>
       </div>
+      <AvatarEditorModal
+        visible={avatarEditorVisible}
+        onCancel={() => setAvatarEditorVisible(false)}
+        currentAvatar={avatarUrl}
+        username={getUsername()}
+        onSaved={handleAvatarSaved}
+        t={t}
+      />
     </Card>
   );
 };
