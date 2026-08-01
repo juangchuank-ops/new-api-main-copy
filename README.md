@@ -6,7 +6,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](./go.mod)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](./web/default/package.json)
 
-**语言：** [简体中文](./README.zh_CN.md) · [繁體中文](./README.zh_TW.md) · [English](./README.en.md) · [Français](./README.fr.md) · [日本語](./README.ja.md)
+**语言：** [简体中文](./README.md) · [繁體中文](./README.zh_TW.md) · [English](./README.en.md) · [Français](./README.fr.md) · [日本語](./README.ja.md)
 
 New API 是由 **QuantumNous** 维护的 AI API 网关。它将 OpenAI、Claude、Gemini、Azure、AWS Bedrock 等上游服务接入统一接口，并提供渠道管理、智能路由、鉴权、额度与成本核算、日志、用户管理和管理控制台。
 
@@ -170,7 +170,7 @@ web/classic/  Classic 兼容控制台
 - [渠道配置补充](./docs/channel/other_setting.md)
 - [宝塔面板安装](./docs/installation/BT.md)
 - [安全政策](./.github/SECURITY.md)
-- [问题反馈](https://github.com/QuantumNous/new-api/issues)
+- [问题反馈](https://github.com/juangchuank-ops/new-api-main-copy/issues)
 
 ## 贡献
 

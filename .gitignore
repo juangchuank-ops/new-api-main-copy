@@ -52,6 +52,7 @@ show_options.py
 
 # Local binaries (non-Windows naming variants)
 new-api-linux
+new-api-linux-amd64
 new-api-linux-guarded
 new-api-health.exe
 new-api-optimized.exe
