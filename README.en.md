@@ -165,6 +165,7 @@ web/classic/  Classic compatibility console
 
 ## Documentation & Support
 
+- [Classic homepage public banner update](./docs/updates/classic-public-banners.md)
 - [简体中文完整说明](./README.zh_CN.md)
 - [OpenAPI definitions](./docs/openapi/)
 - [Additional channel settings](./docs/channel/other_setting.md)

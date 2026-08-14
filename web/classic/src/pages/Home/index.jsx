@@ -40,6 +40,7 @@ import {
 } from '@douyinfe/semi-icons';
 import { Link } from 'react-router-dom';
 import NoticeModal from '../../components/layout/NoticeModal';
+import PublicBanners from '../../components/banner/PublicBanners';
 import {
   Moonshot,
   OpenAI,
@@ -155,6 +156,7 @@ const Home = () => {
         onClose={() => setNoticeVisible(false)}
         isMobile={isMobile}
       />
+      <PublicBanners />
       {homePageContentLoaded && homePageContent === '' ? (
         <div className='classic-home-default w-full overflow-x-hidden'>
           {/* Banner 部分 */}

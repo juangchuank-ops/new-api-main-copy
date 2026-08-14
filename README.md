@@ -165,6 +165,7 @@ web/classic/  Classic 兼容控制台
 
 ## 文档与支持
 
+- [Classic 首页公共横幅更新说明](./docs/updates/classic-public-banners.md)
 - [简体中文完整说明](./README.zh_CN.md)
 - [OpenAPI 定义](./docs/openapi/)
 - [渠道配置补充](./docs/channel/other_setting.md)
