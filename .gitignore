@@ -72,3 +72,7 @@ __pycache__/
 # Generated PDF/HTML reports
 model-health-page.html
 page.html
+
+# Runtime logs
+new-api.stderr.log
+new-api.stdout.log
