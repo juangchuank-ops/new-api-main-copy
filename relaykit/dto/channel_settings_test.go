@@ -1,0 +1,957 @@
+package dto
+
+import (
+	"encoding/json"
+	"regexp"
+	"testing"
+
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestAdvancedCustomValidateResponsesToChatConverterPath(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	validGemini := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+			},
+		},
+	}
+	require.NoError(t, validGemini.Validate())
+
+	tests := []struct {
+		name         string
+		incomingPath string
+	}{
+		{name: "chat completions", incomingPath: "/v1/chat/completions"},
+		{name: "responses compact", incomingPath: "/v1/responses/compact"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &AdvancedCustomConfig{
+				Routes: []AdvancedCustomRoute{
+					{
+						IncomingPath: tt.incomingPath,
+						UpstreamPath: "/v1/chat/completions",
+						Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+					},
+				},
+			}
+			err := config.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "converter does not match incoming_path")
+		})
+	}
+}
+
+func TestAdvancedCustomValidateModelListRouteConstraints(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: AdvancedCustomModelListPath,
+				UpstreamPath: "https://upstream.example/custom/models",
+				Converter:    advancedCustomConverterNone,
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	tests := []struct {
+		name   string
+		routes []AdvancedCustomRoute
+		want   string
+	}{
+		{
+			name: "model matching rules",
+			routes: []AdvancedCustomRoute{
+				{
+					IncomingPath: AdvancedCustomModelListPath,
+					UpstreamPath: "/v1/models",
+					Models:       []string{"gpt-4o"},
+				},
+			},
+			want: "models must be empty",
+		},
+		{
+			name: "converter",
+			routes: []AdvancedCustomRoute{
+				{
+					IncomingPath: AdvancedCustomModelListPath,
+					UpstreamPath: "/v1/models",
+					Converter:    advancedCustomConverterOpenAIChatToOpenAIResponses,
+				},
+			},
+			want: "converter must be none",
+		},
+		{
+			name: "model placeholder",
+			routes: []AdvancedCustomRoute{
+				{
+					IncomingPath: AdvancedCustomModelListPath,
+					UpstreamPath: "/v1/models/{model}",
+				},
+			},
+			want: "upstream_path must not contain {model}",
+		},
+		{
+			name: "duplicate routes",
+			routes: []AdvancedCustomRoute{
+				{IncomingPath: AdvancedCustomModelListPath, UpstreamPath: "/v1/models"},
+				{IncomingPath: AdvancedCustomModelListPath, UpstreamPath: "/provider/models"},
+			},
+			want: "duplicates the /v1/models route",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&AdvancedCustomConfig{Routes: tt.routes}).Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestAdvancedCustomModelListRouteRequiresExactIncomingPath(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/{model}",
+				UpstreamPath: "/generic/{model}",
+			},
+			{
+				IncomingPath: AdvancedCustomModelListPath,
+				UpstreamPath: "/provider/models",
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	route, ok := config.ModelListRoute()
+	require.True(t, ok)
+	assert.Equal(t, "/provider/models", route.UpstreamPath)
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathWithDisjointModels(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"gpt-4o"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"gemini-2.5-flash"},
+			},
+		},
+	}
+
+	require.NoError(t, config.Validate())
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathRejectsOverlappingModels(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"shared-model"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"shared-model"},
+			},
+		},
+	}
+
+	err := config.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "models overlaps")
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathRejectsMultipleCatchAllRoutes(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+			},
+		},
+	}
+
+	err := config.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "catch-all already exists")
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathRequiresCatchAllLast(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"gemini-2.5-flash"},
+			},
+		},
+	}
+
+	err := config.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "catch-all route must be last")
+}
+
+func TestAdvancedCustomMatchPathForModel(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"gemini-2.5-flash"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"gpt-4o"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    advancedCustomConverterNone,
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	geminiRoute, ok := config.MatchPathForModel("/v1/responses", "gemini-2.5-flash")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterOpenAIResponsesToGemini, geminiRoute.Converter)
+
+	chatRoute, ok := config.MatchPathForModel("/v1/responses", "gpt-4o")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterOpenAIResponsesToOpenAIChat, chatRoute.Converter)
+
+	fallbackRoute, ok := config.MatchPathForModel("/v1/responses", "unknown-model")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterNone, fallbackRoute.Converter)
+}
+
+func TestAdvancedCustomMatchPathForModelRegexRules(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"re:(?i)^OAI-"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    advancedCustomConverterNone,
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	geminiRoute, ok := config.MatchPathForModel("/v1/responses", "gemini-2.5-flash")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterOpenAIResponsesToGemini, geminiRoute.Converter)
+
+	chatRoute, ok := config.MatchPathForModel("/v1/responses", "oai-test")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterOpenAIResponsesToOpenAIChat, chatRoute.Converter)
+
+	fallbackRoute, ok := config.MatchPathForModel("/v1/responses", "gpt-4o")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterNone, fallbackRoute.Converter)
+}
+
+func TestAdvancedCustomRouteModelRegexRulesAreCachedCompiled(t *testing.T) {
+	require.True(t, matchAdvancedCustomRouteModelRule("re:^cache-probe-", "cache-probe-model"))
+
+	cached, ok := advancedCustomModelRegexCache.Load("^cache-probe-")
+	require.True(t, ok)
+	require.NotNil(t, cached)
+	_, isRegexp := cached.(*regexp.Regexp)
+	require.True(t, isRegexp)
+
+	// Invalid patterns never match and are cached as nil so they are not recompiled.
+	require.False(t, matchAdvancedCustomRouteModelRule("re:(", "anything"))
+	cached, ok = advancedCustomModelRegexCache.Load("(")
+	require.True(t, ok)
+	re, _ := cached.(*regexp.Regexp)
+	require.Nil(t, re)
+
+	// Cached entries keep matching correctly on subsequent calls.
+	require.True(t, matchAdvancedCustomRouteModelRule("re:^cache-probe-", "cache-probe-other"))
+	require.False(t, matchAdvancedCustomRouteModelRule("re:^cache-probe-", "other-model"))
+}
+
+func TestAdvancedCustomMatchPathForModelExactRuleDoesNotMatchPrefix(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"gemini"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    advancedCustomConverterNone,
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	fallbackRoute, ok := config.MatchPathForModel("/v1/responses", "gemini-2.5-flash")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterNone, fallbackRoute.Converter)
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathRejectsInvalidRegexModels(t *testing.T) {
+	tests := []struct {
+		name   string
+		models []string
+		want   string
+	}{
+		{name: "empty regex", models: []string{"re:"}, want: "regex is empty"},
+		{name: "invalid regex", models: []string{"re:["}, want: "regex is invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &AdvancedCustomConfig{
+				Routes: []AdvancedCustomRoute{
+					{
+						IncomingPath: "/v1/responses",
+						UpstreamPath: "/v1beta/models/{model}:generateContent",
+						Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+						Models:       tt.models,
+					},
+				},
+			}
+
+			err := config.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestAdvancedCustomValidateDuplicateIncomingPathRejectsDuplicateRegexModels(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"re:^gemini-"},
+			},
+		},
+	}
+
+	err := config.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "models overlaps")
+}
+
+func TestAdvancedCustomMatchPathForModelUsesFirstMatchingRegexRoute(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+				Models:       []string{"gemini-2.5-flash"},
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	route, ok := config.MatchPathForModel("/v1/responses", "gemini-2.5-flash")
+	require.True(t, ok)
+	assert.Equal(t, advancedCustomConverterOpenAIResponsesToGemini, route.Converter)
+}
+
+func TestAdvancedCustomSupportedEndpointTypesForModel(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Converter:    advancedCustomConverterOpenAIResponsesToGemini,
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1beta/models/{model}:generateContent",
+				UpstreamPath: "/v1beta/models/{model}:generateContent",
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1beta/models/{model}:streamGenerateContent",
+				UpstreamPath: "/v1beta/models/{model}:streamGenerateContent",
+				Models:       []string{"re:^gemini-"},
+			},
+			{
+				IncomingPath: "/v1/chat/completions",
+				UpstreamPath: "/v1/chat/completions",
+				Models:       []string{"gpt-4o"},
+			},
+			{
+				IncomingPath: "/v1/messages",
+				UpstreamPath: "/v1/messages",
+			},
+			{
+				IncomingPath: "/custom/endpoint",
+				UpstreamPath: "/custom/endpoint",
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	assert.Equal(t, []types.EndpointType{
+		types.EndpointTypeOpenAIResponse,
+		types.EndpointTypeGemini,
+		types.EndpointTypeAnthropic,
+	}, config.SupportedEndpointTypesForModel("gemini-2.5-flash"))
+	assert.Equal(t, []types.EndpointType{
+		types.EndpointTypeOpenAI,
+		types.EndpointTypeAnthropic,
+	}, config.SupportedEndpointTypesForModel("gpt-4o"))
+	assert.Equal(t, []types.EndpointType{
+		types.EndpointTypeAnthropic,
+	}, config.SupportedEndpointTypesForModel("other-model"))
+}
+
+func TestAdvancedCustomValidateAlphaSearchConverterPath(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/alpha/search",
+				UpstreamPath: "/v1/alpha/search",
+				Converter:    advancedCustomConverterNone,
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+	assert.Equal(t, []types.EndpointType{
+		types.EndpointTypeOpenAIAlphaSearch,
+	}, valid.SupportedEndpointTypesForModel("gpt-5.1"))
+
+	nonNoneConverters := []string{
+		advancedCustomConverterClaudeMessagesToOpenAIChat,
+		advancedCustomConverterOpenAIChatToClaudeMessages,
+		advancedCustomConverterOpenAIChatToOpenAIResponses,
+		advancedCustomConverterOpenAIResponsesToOpenAIChat,
+		advancedCustomConverterOpenAIResponsesToGemini,
+		advancedCustomConverterGeminiContentToOpenAIChat,
+		advancedCustomConverterOpenAIChatToGeminiContent,
+	}
+	for _, converter := range nonNoneConverters {
+		t.Run(converter, func(t *testing.T) {
+			config := &AdvancedCustomConfig{
+				Routes: []AdvancedCustomRoute{
+					{
+						IncomingPath: "/v1/alpha/search",
+						UpstreamPath: "/v1/alpha/search",
+						Converter:    converter,
+					},
+				},
+			}
+			err := config.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "converter does not match incoming_path")
+		})
+	}
+}
+
+func TestChannelSettingsHTTPTransportJSONRoundTrip(t *testing.T) {
+	legacy := `{"proxy":"http://127.0.0.1:8080","force_format":true}`
+	var settings ChannelSettings
+	require.NoError(t, json.Unmarshal([]byte(legacy), &settings))
+	assert.Equal(t, "http://127.0.0.1:8080", settings.Proxy)
+	assert.True(t, settings.ForceFormat)
+	assert.Empty(t, settings.HTTPProtocol)
+	assert.Zero(t, settings.HTTP2ConnectionShards)
+
+	encoded, err := json.Marshal(settings)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "http_protocol")
+	assert.NotContains(t, string(encoded), "http2_connection_shards")
+
+	explicit := ChannelSettings{
+		Proxy:                 "socks5://127.0.0.1:1080",
+		HTTPProtocol:          HTTPProtocolHTTP1,
+		HTTP2ConnectionShards: 1,
+	}
+	encoded, err = json.Marshal(explicit)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"http_protocol":"http1"`)
+
+	var decoded ChannelSettings
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, explicit.HTTPProtocol, decoded.HTTPProtocol)
+	assert.Equal(t, 1, decoded.HTTP2ConnectionShards)
+
+	sharded := ChannelSettings{HTTP2ConnectionShards: 4}
+	encoded, err = json.Marshal(sharded)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"http2_connection_shards":4`)
+	assert.NotContains(t, string(encoded), "http_protocol")
+}
+
+func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
+	require.NoError(t, (&ChannelSettings{}).ValidateHTTPTransport())
+	require.NoError(t, (&ChannelSettings{HTTPProtocol: "AUTO"}).ValidateHTTPTransport())
+	require.NoError(t, (&ChannelSettings{HTTPProtocol: "http1"}).ValidateHTTPTransport())
+	require.NoError(t, (&ChannelSettings{HTTP2ConnectionShards: 8}).ValidateHTTPTransport())
+
+	err := (&ChannelSettings{HTTPProtocol: "http2"}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http_protocol")
+
+	err = (&ChannelSettings{HTTP2ConnectionShards: -1}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http2_connection_shards")
+
+	err = (&ChannelSettings{HTTP2ConnectionShards: 9}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http2_connection_shards")
+
+	err = (&ChannelSettings{HTTPProtocol: "http1", HTTP2ConnectionShards: 2}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http2_connection_shards")
+}
+
+func TestClientIdentityDefaultsKeepCodexProfilesDistinct(t *testing.T) {
+	legacy := DefaultClientIdentityConfig(ClientIdentityChannelTypeCodexLegacy)
+	compatible := DefaultClientIdentityConfig(ClientIdentityChannelTypeCodexCompatible)
+	standardOpenAI := DefaultClientIdentityConfig(ClientIdentityChannelTypeOpenAI)
+	standardAnthropic := DefaultClientIdentityConfig(ClientIdentityChannelTypeAnthropic)
+
+	require.Equal(t, ClientIdentityClientTypeCodex, legacy.ClientType)
+	require.Equal(t, ClientIdentityProfileCodexLegacy, legacy.Profile)
+	require.Equal(t, ClientIdentityProfileCodexCompatibility, compatible.Profile)
+	require.Equal(t, ClientIdentityClientTypeNone, standardOpenAI.ClientType)
+	require.Equal(t, ClientIdentityProfileNone, standardOpenAI.Profile)
+	require.Equal(t, ClientIdentityClientTypeNone, standardAnthropic.ClientType)
+	require.Equal(t, ClientIdentityProfileNone, standardAnthropic.Profile)
+	require.NotEqual(t, legacy.Profile, compatible.Profile)
+	require.Empty(t, legacy.Version)
+	require.Empty(t, legacy.Platform)
+	require.Empty(t, standardOpenAI.Version)
+	require.Empty(t, standardOpenAI.Platform)
+	require.Empty(t, standardAnthropic.Version)
+	require.Empty(t, standardAnthropic.Platform)
+}
+
+func TestClientIdentityStandardChannelsAcceptOnlyTheirTemplateProfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		config      ClientIdentityConfig
+		wantErr     string
+	}{
+		{
+			name:        "openai Codex CLI profile",
+			channelType: ClientIdentityChannelTypeOpenAI,
+			config: ClientIdentityConfig{
+				ClientType: ClientIdentityClientTypeCodex,
+				Profile:    ClientIdentityProfileCodexCLI,
+				Version:    "0.147.0",
+				Platform:   ClientIdentityPlatformLinuxX64,
+			},
+		},
+		{
+			name:        "anthropic Claude CLI profile",
+			channelType: ClientIdentityChannelTypeAnthropic,
+			config: ClientIdentityConfig{
+				ClientType: ClientIdentityClientTypeClaude,
+				Profile:    ClientIdentityProfileClaudeCLI,
+				Version:    "2.1.224",
+				Platform:   ClientIdentityPlatformMacOSArm64,
+			},
+		},
+		{
+			name:        "openai rejects legacy Codex profile",
+			channelType: ClientIdentityChannelTypeOpenAI,
+			config: ClientIdentityConfig{
+				ClientType: ClientIdentityClientTypeCodex,
+				Profile:    ClientIdentityProfileCodexLegacy,
+			},
+			wantErr: "not supported",
+		},
+		{
+			name:        "anthropic rejects deep WorkBuddy profile",
+			channelType: ClientIdentityChannelTypeAnthropic,
+			config: ClientIdentityConfig{
+				ClientType: ClientIdentityClientTypeCodeBuddy,
+				Profile:    ClientIdentityProfileCodeBuddy,
+			},
+			wantErr: "not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate(tt.channelType)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestClientIdentityLegacySettingsRoundTripWithoutClientIdentity(t *testing.T) {
+	legacy := `{"aws_key_type":"ak_sk","disable_store":true}`
+	var settings ChannelOtherSettings
+	require.NoError(t, json.Unmarshal([]byte(legacy), &settings))
+	require.Nil(t, settings.ClientIdentity)
+	require.Equal(t, AwsKeyTypeAKSK, settings.AwsKeyType)
+	require.True(t, settings.DisableStore)
+
+	encoded, err := json.Marshal(settings)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "client_identity")
+}
+
+func TestClientIdentityNormalizeAndValidate(t *testing.T) {
+	config := ClientIdentityConfig{
+		Version:  " 2.1.214 ",
+		Platform: "darwin-arm64-user",
+	}
+	require.NoError(t, config.Normalize(ClientIdentityChannelTypeClaudeCode))
+	assert.Equal(t, ClientIdentityClientTypeClaudeCode, config.ClientType)
+	assert.Equal(t, ClientIdentityProfileClaudeCode, config.Profile)
+	assert.Equal(t, "2.1.214", config.Version)
+	assert.Equal(t, ClientIdentityPlatformMacOSArm64, config.Platform)
+
+	workBuddy := ClientIdentityConfig{Version: "5.3.8.34705286", Platform: "win32-x64-user"}
+	require.NoError(t, workBuddy.Normalize(ClientIdentityChannelTypeCodeBuddy))
+	assert.Equal(t, ClientIdentityPlatformWindowsX64, workBuddy.Platform)
+	assert.Equal(t, ClientIdentityProfileCodeBuddy, workBuddy.Profile)
+}
+
+func TestClientIdentityNormalizeRejectsNPMPrereleases(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		profile     string
+		version     string
+	}{
+		{
+			name:        "codex legacy alpha",
+			channelType: ClientIdentityChannelTypeCodexLegacy,
+			profile:     ClientIdentityProfileCodexLegacy,
+			version:     "1.4.0-alpha.1",
+		},
+		{
+			name:        "codex compatibility beta",
+			channelType: ClientIdentityChannelTypeCodexCompatible,
+			profile:     ClientIdentityProfileCodexCompatibility,
+			version:     "1.4.0-beta.1",
+		},
+		{
+			name:        "codex cli release candidate",
+			channelType: ClientIdentityChannelTypeOpenAI,
+			profile:     ClientIdentityProfileCodexCLI,
+			version:     "1.4.0-rc.1",
+		},
+		{
+			name:        "claude code prerelease",
+			channelType: ClientIdentityChannelTypeClaudeCode,
+			profile:     ClientIdentityProfileClaudeCode,
+			version:     "2.1.214-beta",
+		},
+		{
+			name:        "claude cli prerelease",
+			channelType: ClientIdentityChannelTypeAnthropic,
+			profile:     ClientIdentityProfileClaudeCLI,
+			version:     "2.1.214-alpha",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := ClientIdentityConfig{
+				Profile:  tt.profile,
+				Version:  tt.version,
+				Platform: ClientIdentityPlatformLinuxX64,
+			}
+			err := config.Normalize(tt.channelType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "prerelease")
+		})
+	}
+}
+
+func TestClientIdentityNormalizeAcceptsStableNPMVersions(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		profile     string
+		version     string
+	}{
+		{
+			name:        "codex legacy",
+			channelType: ClientIdentityChannelTypeCodexLegacy,
+			profile:     ClientIdentityProfileCodexLegacy,
+			version:     "1.4.0",
+		},
+		{
+			name:        "codex compatibility with metadata",
+			channelType: ClientIdentityChannelTypeCodexCompatible,
+			profile:     ClientIdentityProfileCodexCompatibility,
+			version:     "1.4.0+foo-linux-x64",
+		},
+		{
+			name:        "codex cli",
+			channelType: ClientIdentityChannelTypeOpenAI,
+			profile:     ClientIdentityProfileCodexCLI,
+			version:     "0.147.0",
+		},
+		{
+			name:        "claude code",
+			channelType: ClientIdentityChannelTypeClaudeCode,
+			profile:     ClientIdentityProfileClaudeCode,
+			version:     "2.1.214+build.7",
+		},
+		{
+			name:        "claude cli",
+			channelType: ClientIdentityChannelTypeAnthropic,
+			profile:     ClientIdentityProfileClaudeCLI,
+			version:     "2.1.214",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := ClientIdentityConfig{
+				Profile:  tt.profile,
+				Version:  tt.version,
+				Platform: ClientIdentityPlatformLinuxX64,
+			}
+			require.NoError(t, config.Normalize(tt.channelType))
+		})
+	}
+}
+
+func TestClientIdentityNormalizeRequiresMatchingPlatformForNPMBuilds(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform string
+		version  string
+		wantErr  string
+	}{
+		{
+			name:     "matching platform build",
+			platform: ClientIdentityPlatformLinuxX64,
+			version:  "1.4.0-linux-x64+foo",
+		},
+		{
+			name:    "missing platform",
+			version: "1.4.0-linux-x64",
+			wantErr: "requires an explicit platform",
+		},
+		{
+			name:     "wrong platform",
+			platform: ClientIdentityPlatformWindowsX64,
+			version:  "1.4.0-linux-x64",
+			wantErr:  "does not match platform",
+		},
+		{
+			name:     "metadata suffix is not a platform build",
+			platform: ClientIdentityPlatformWindowsX64,
+			version:  "1.4.0+foo-linux-x64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := ClientIdentityConfig{
+				Profile:  ClientIdentityProfileCodexCompatibility,
+				Version:  tt.version,
+				Platform: tt.platform,
+			}
+			err := config.Normalize(ClientIdentityChannelTypeCodexCompatible)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateClientIdentityVersionRemainsSyntaxOnlyForNPMVersions(t *testing.T) {
+	for _, version := range []string{
+		"1.4.0-alpha.1",
+		"1.4.0-linux-x64+foo",
+		"1.4.0+foo-linux-x64",
+	} {
+		t.Run(version, func(t *testing.T) {
+			require.NoError(t, ValidateClientIdentityVersion(ClientIdentityProfileCodexCompatibility, version))
+		})
+	}
+}
+
+func TestClientIdentityRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		config      ClientIdentityConfig
+		want        string
+	}{
+		{
+			name:        "codex profiles cannot be merged",
+			channelType: ClientIdentityChannelTypeCodexLegacy,
+			config:      ClientIdentityConfig{Profile: ClientIdentityProfileCodexCompatibility},
+			want:        "not supported",
+		},
+		{
+			name:        "npm versions require semver",
+			channelType: ClientIdentityChannelTypeCodexCompatible,
+			config:      ClientIdentityConfig{Version: "0.146"},
+			want:        "invalid client identity version",
+		},
+		{
+			name:        "platform is allowlisted",
+			channelType: ClientIdentityChannelTypeClaudeCode,
+			config:      ClientIdentityConfig{Platform: "freebsd-x64"},
+			want:        "invalid client identity platform",
+		},
+		{
+			name:        "codebuddy product source is not npm",
+			channelType: ClientIdentityChannelTypeCodeBuddy,
+			config: ClientIdentityConfig{
+				Version: "5.3.8.34705286",
+				Source:  &ClientIdentitySourceMetadata{Kind: ClientIdentitySourceNPM},
+			},
+			want: "invalid client identity source kind",
+		},
+		{
+			name:        "source package is fixed",
+			channelType: ClientIdentityChannelTypeCodexCompatible,
+			config: ClientIdentityConfig{
+				Version: "0.146.0",
+				Source:  &ClientIdentitySourceMetadata{Kind: ClientIdentitySourceNPM, Package: "evil/package"},
+			},
+			want: "invalid client identity source package",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate(tt.channelType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestClientIdentityUnsupportedChannelRejectsNonEmptyConfig(t *testing.T) {
+	config := ClientIdentityConfig{Version: "1.2.3"}
+	err := config.Validate(2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+	assert.False(t, config.SupportsChannelType(2))
+}
+
+func TestClientIdentityDesktopProfilesValidateOnStandardChannels(t *testing.T) {
+	codexDesktop := ClientIdentityConfig{
+		ClientType: ClientIdentityClientTypeCodex,
+		Profile:    ClientIdentityProfileCodexDesktop,
+		Version:    "1.0.0",
+	}
+	require.NoError(t, codexDesktop.Validate(ClientIdentityChannelTypeOpenAI))
+	require.NoError(t, codexDesktop.Validate(ClientIdentityChannelTypeAnthropic))
+
+	claudeDesktop := ClientIdentityConfig{
+		ClientType: ClientIdentityClientTypeClaude,
+		Profile:    ClientIdentityProfileClaudeDesktop,
+		Version:    "0.9.3",
+		Platform:   ClientIdentityPlatformWindowsX64,
+	}
+	require.NoError(t, claudeDesktop.Validate(ClientIdentityChannelTypeOpenAI))
+	require.NoError(t, claudeDesktop.Validate(ClientIdentityChannelTypeAnthropic))
+
+	// 桌面版身份只属于轻量渠道，锁定单一身份的渠道（如 Codex legacy）应拒绝
+	locked := ClientIdentityConfig{
+		ClientType: ClientIdentityClientTypeCodex,
+		Profile:    ClientIdentityProfileCodexDesktop,
+	}
+	err := locked.Validate(ClientIdentityChannelTypeCodexLegacy)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+
+	// codex_desktop 复用 npm 官方源（@openai/codex）；claude_desktop 无公开源必须是 manual 且不带包名
+	kind, pkg, sourceErr := ClientIdentitySourceForProfile(ClientIdentityProfileCodexDesktop)
+	require.NoError(t, sourceErr)
+	assert.Equal(t, ClientIdentitySourceNPM, kind)
+	assert.Equal(t, ClientIdentityNPMCodexPackage, pkg)
+
+	kind, pkg, sourceErr = ClientIdentitySourceForProfile(ClientIdentityProfileClaudeDesktop)
+	require.NoError(t, sourceErr)
+	assert.Equal(t, ClientIdentitySourceManual, kind)
+	assert.Empty(t, pkg)
+}

@@ -1,0 +1,10 @@
+{
+  "name": "new-api-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter ./web/classic dev",
+    "build": "pnpm --filter ./web/classic build",
+    "lint": "pnpm --filter ./web/classic lint"
+  }
+}

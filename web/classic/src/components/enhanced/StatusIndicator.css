@@ -1,0 +1,22 @@
+/*
+Copyright (C) 2025 QuantumNous
+*/
+
+.status-indicator {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  font-weight: var(--font-medium);
+  padding: 4px 10px !important;
+  border-radius: 9999px !important;
+  transition: all var(--transition-fast);
+}
+
+.status-indicator-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.status-indicator-text {
+  line-height: 1;
+}

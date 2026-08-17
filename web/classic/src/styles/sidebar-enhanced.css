@@ -1,0 +1,206 @@
+/*
+Copyright (C) 2025 QuantumNous
+Sidebar Enhancement Styles — Editorial Warm Edition
+*/
+
+/* ---- Enhanced Sidebar Navigation Item ---- */
+.sidebar-nav-item {
+  position: relative;
+  border-radius: 9999px !important;
+  margin: var(--space-1) var(--space-2) !important;
+  padding: var(--space-2) var(--space-3) !important;
+  transition: all var(--transition-fast) !important;
+}
+
+.sidebar-nav-item:hover {
+  background-color: rgba(196, 97, 47, 0.08) !important;
+  color: #C4612F !important;
+}
+
+.sidebar-nav-item-selected {
+  background-color: rgba(196, 97, 47, 0.12) !important;
+  color: #C4612F !important;
+  font-weight: var(--font-medium) !important;
+}
+
+/* Active Page Indicator — terracotta dot */
+.sidebar-nav-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: #C4612F;
+}
+
+/* Enhanced Icon Container */
+.sidebar-icon-container {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-2-5);
+  transition: transform var(--transition-base);
+}
+
+.sidebar-nav-item:hover .sidebar-icon-container {
+  transform: scale(1.1);
+}
+
+.sidebar-sub-icon-container {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-2-5);
+  margin-left: var(--space-0-5);
+}
+
+/* Enhanced Group Label */
+.sidebar-group-label {
+  padding: var(--space-2) var(--space-4) var(--space-2);
+  color: var(--semi-color-text-2);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.sidebar-group-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--semi-color-border);
+  opacity: 0.5;
+}
+
+/* Enhanced Divider */
+.sidebar-divider {
+  margin: var(--space-2) var(--space-3);
+  opacity: 0.1;
+}
+
+/* Enhanced Collapse Button — glass effect */
+.sidebar-collapse-button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-3);
+  margin-top: auto;
+  cursor: pointer;
+  background-color: rgba(247, 244, 239, 0.85);
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 1px solid var(--semi-color-border);
+  transition: all var(--transition-base);
+}
+
+.sidebar-collapse-button:hover {
+  background-color: rgba(237, 232, 224, 0.9);
+}
+
+.sidebar-collapse-button-inner {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--semi-color-fill-0);
+  transition: all var(--transition-base);
+}
+
+.sidebar-collapse-button:hover .sidebar-collapse-button-inner {
+  background-color: var(--semi-color-fill-1);
+  transform: scale(1.05);
+}
+
+.sidebar-collapse-icon-container {
+  display: inline-block;
+  transition: transform var(--transition-slow);
+}
+
+/* Area Color Coding (Warm Editorial) */
+.sidebar-nav-item[data-area='channel'] .sidebar-icon-container {
+  color: #C4612F;
+}
+
+.sidebar-nav-item[data-area='token'] .sidebar-icon-container {
+  color: #D49A4F;
+}
+
+.sidebar-nav-item[data-area='log'] .sidebar-icon-container {
+  color: #8FA8B5;
+}
+
+.sidebar-nav-item[data-area='user'] .sidebar-icon-container {
+  color: #7A9E6D;
+}
+
+.sidebar-nav-item[data-area='setting'] .sidebar-icon-container {
+  color: #8C8279;
+}
+
+/* Mobile Adjustments */
+@media (max-width: 767px) {
+  .sidebar-container {
+    background: rgba(247, 244, 239, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-right: 1px solid var(--semi-color-border);
+  }
+
+  .sidebar-nav {
+    background: transparent;
+  }
+
+  .sidebar-collapse-button {
+    background-color: rgba(247, 244, 239, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  html.dark .sidebar-container {
+    background: rgba(31, 36, 33, 0.95);
+  }
+
+  html.dark .sidebar-collapse-button {
+    background-color: rgba(31, 36, 33, 0.85);
+  }
+}
+
+/* Dark mode adjustments */
+html.dark .sidebar-nav-item:hover {
+  background-color: rgba(212, 122, 79, 0.12) !important;
+  color: #D47A4F !important;
+}
+
+html.dark .sidebar-nav-item-selected {
+  background-color: rgba(212, 122, 79, 0.16) !important;
+  color: #D47A4F !important;
+}
+
+html.dark .sidebar-nav-item-selected::before {
+  background: #D47A4F;
+}
+
+html.dark .sidebar-collapse-button {
+  background-color: rgba(31, 36, 33, 0.85);
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+html.dark .sidebar-collapse-button:hover {
+  background-color: rgba(46, 51, 47, 0.9);
+}

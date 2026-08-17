@@ -1,0 +1,100 @@
+/*
+Copyright (C) 2025 QuantumNous
+*/
+
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-base);
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.stat-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.stat-card-label {
+  font-size: var(--text-sm);
+  color: var(--semi-color-text-2);
+  font-weight: var(--font-medium);
+  line-height: var(--leading-normal);
+}
+
+.stat-card-icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.2;
+  transition: opacity var(--transition-fast);
+}
+
+.stat-card:hover .stat-card-icon {
+  opacity: 0.3;
+}
+
+.stat-card-icon-positive {
+  color: var(--chart-positive);
+}
+
+.stat-card-icon-negative {
+  color: var(--chart-negative);
+}
+
+.stat-card-icon-neutral {
+  color: var(--chart-neutral);
+}
+
+.stat-card-value {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  font-variant-numeric: tabular-nums;
+  color: var(--semi-color-text-0);
+  line-height: 1.2;
+  margin-bottom: var(--space-2);
+}
+
+.stat-card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.stat-card-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-semibold);
+  transition: all var(--transition-fast);
+}
+
+.stat-card-change-positive {
+  color: var(--chart-positive);
+  background: rgba(122, 158, 109, 0.1);
+}
+
+.stat-card-change-negative {
+  color: var(--chart-negative);
+  background: rgba(196, 74, 63, 0.1);
+}
+
+.stat-card-period {
+  color: var(--semi-color-text-3);
+}
+
+/* Dark mode adjustments */
+html.dark .stat-card-change-positive {
+  background: rgba(148, 181, 135, 0.15);
+}
+
+html.dark .stat-card-change-negative {
+  background: rgba(214, 106, 96, 0.15);
+}

@@ -1,0 +1,9 @@
+2026/08/14 19:51:00 WARNING: TRUSTED_PROXIES is unset or blank; trusting loopback, RFC 1918, and IPv6 ULA proxy addresses for compatibility. Set TRUSTED_PROXIES=none to trust no proxies, or configure explicit proxy IPs/CIDRs to replace these defaults.
+2026/08/14 19:53:50 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:02 [sessions] ERROR! securecookie: the value is not valid
+2026/08/14 19:54:04 [sessions] ERROR! securecookie: the value is not valid
