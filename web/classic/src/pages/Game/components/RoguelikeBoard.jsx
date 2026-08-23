@@ -51,6 +51,9 @@ const RoguelikeBoard = ({ t }) => {
         <div>
           <Text strong className='block'>NEON-PULSE v1.1</Text>
           <Text type='secondary'>{t('WASD 移动，SPACE 冲刺，鼠标移动并左键冲刺')}</Text>
+          <Text type='warning' className='block mt-1'>
+            {t('价格 Tips：此游戏比例是 10000:1')}
+          </Text>
         </div>
         <Input value={playerName} onChange={setPlayerName} placeholder={t('排行榜名称')} maxLength={12} style={{ width: 180 }} />
       </div>
