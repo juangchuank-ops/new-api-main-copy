@@ -33,10 +33,11 @@ const GAME_COMPONENTS = {
   match3: Match3,
 };
 
-// 兑换面板：所有计分游戏共用（1000 分 = 0.01 额度）
+// 兑换面板：普通计分游戏 1000 分 = 1 额度，肉鸽 10000 分 = 1 额度
 export const RedeemPanel = ({ gameKey, score, onRedeemed, t }) => {
   const [redeeming, setRedeeming] = useState(false);
-  const usd = (score / 1000 * 0.01).toFixed(4);
+  const scorePerUnit = gameKey === 'roguelike' ? 10000 : 1000;
+  const usd = (score / scorePerUnit).toFixed(4);
 
   const redeem = async () => {
     if (score <= 0) return;
@@ -68,17 +69,19 @@ export const RedeemPanel = ({ gameKey, score, onRedeemed, t }) => {
       <div>
         <Text strong>{t('当前得分')}：{Math.floor(score)}</Text>
         <Text type='secondary' className='block'>
-          {t('可兑换')} ≈ ${usd}（1000 {t('分')} = 0.01 {t('额度')}）
+          {t('可兑换')} ≈ ${usd}（{scorePerUnit} {t('分')} = 1 {t('额度')}）
         </Text>
       </div>
       <Button
         theme='solid'
         type='primary'
         loading={redeeming}
-        disabled={score < 1000}
+        disabled={score < scorePerUnit}
         onClick={redeem}
       >
-        {score < 1000 ? t('满 1000 分可兑换') : t('兑换为额度')}
+        {score < scorePerUnit
+          ? t('满 {{score}} 分可兑换', { score: scorePerUnit })
+          : t('兑换为额度')}
       </Button>
     </div>
   );

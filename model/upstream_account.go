@@ -47,9 +47,9 @@ type UpstreamAccount struct {
 	CredentialCiphertext string  `json:"-" gorm:"type:text"`
 	Credential           string  `json:"credential,omitempty" gorm:"-:all"`
 	CredentialConfigured bool    `json:"credential_configured" gorm:"-:all"`
-	AutoCheckin          bool    `json:"auto_checkin" gorm:"default:false"`
-	AutoBalance          bool    `json:"auto_balance" gorm:"default:true"`
-	BalanceInterval      int     `json:"balance_interval" gorm:"default:60"`
+	AutoCheckin          bool    `json:"auto_checkin"`
+	AutoBalance          bool    `json:"auto_balance"`
+	BalanceInterval      int     `json:"balance_interval"`
 	Balance              float64 `json:"balance"`
 	BalanceUnit          string  `json:"balance_unit" gorm:"type:varchar(16)"`
 	RawQuota             float64 `json:"raw_quota"`
@@ -257,7 +257,7 @@ func UpdateUpstreamAccount(account *UpstreamAccount) error {
 		"credential_ciphertext": credentialCiphertext,
 		"auto_checkin":          account.AutoCheckin,
 		"auto_balance":          account.AutoBalance,
-		"balance_interval":     account.BalanceInterval,
+		"balance_interval":      account.BalanceInterval,
 		"updated_time":          now,
 	}
 	if account.AutoCheckin && (!existing.AutoCheckin || existing.NextCheckinTime == 0) {
@@ -276,17 +276,16 @@ func UpdateUpstreamAccount(account *UpstreamAccount) error {
 }
 
 func DeleteUpstreamAccount(id int) error {
-	if err := DB.Where("account_id = ?", id).Delete(&UpstreamAccountLog{}).Error; err != nil {
-		return err
-	}
-	result := DB.Delete(&UpstreamAccount{}, id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&UpstreamAccount{}, id)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Where("account_id = ?", id).Delete(&UpstreamAccountLog{}).Error
+	})
 }
 
 func ListUpstreamAccountLogs(accountId, limit int) ([]*UpstreamAccountLog, error) {

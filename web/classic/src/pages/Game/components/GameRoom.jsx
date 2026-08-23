@@ -15,6 +15,7 @@ import GoldMiner from './GoldMiner';
 import TokenMining from './TokenMining';
 import RoguelikeBoard from './RoguelikeBoard';
 import Match3 from './Match3';
+import GameHelpButton from './GameHelpButton';
 
 const { Title, Text } = Typography;
 
@@ -72,9 +73,16 @@ const GameRoom = () => {
           >
             {t('返回大厅')}
           </Button>
-          <Title heading={4} className='!m-0'>
-            {t(GAME_META[gameKey] || '')}
-          </Title>
+          <div className='inline-flex items-center gap-2'>
+            <Title heading={4} className='!m-0'>
+              {t(GAME_META[gameKey] || '')}
+            </Title>
+            <GameHelpButton
+              gameKey={gameKey}
+              gameName={t(GAME_META[gameKey] || '')}
+              t={t}
+            />
+          </div>
         </Space>
       </div>
       <div className='px-4 pb-16 max-w-5xl mx-auto'>

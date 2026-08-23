@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { API, showError, showSuccess } from '../../helpers';
 import { isRoot } from '../../helpers/utils';
+import GameHelpButton from './components/GameHelpButton';
 
 const { Text, Title } = Typography;
 
@@ -163,7 +164,9 @@ const Game = () => {
                   games[0]?.page_title || t('纸上游乐场')
                 )}
               </Title>
-              <Text type='secondary'>{t('小游戏展示 · 1000 分 = 0.01 额度')}</Text>
+              <Text type='secondary'>
+                {t('普通计分游戏 1000 分 = 1 额度 · NEON-PULSE 10000 分 = 1 额度')}
+              </Text>
             </div>
             <Space>
               {canAdmin && (
@@ -226,9 +229,16 @@ const Game = () => {
                       </Tag>
                     )}
                   </div>
-                  <Title heading={5} className='!m-0 mb-1'>
-                    {game.name}
-                  </Title>
+                  <div className='inline-flex items-center gap-2 mb-1'>
+                    <Title heading={5} className='!m-0'>
+                      {game.name}
+                    </Title>
+                    <GameHelpButton
+                      gameKey={game.game_key}
+                      gameName={game.name}
+                      t={t}
+                    />
+                  </div>
                   <Text type='secondary' size='small' className='block mb-3' style={{ minHeight: 32 }}>
                     {game.description}
                   </Text>

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -16,9 +17,12 @@ const (
 	GameScoreLogTypeRedeem = "redeem"
 )
 
-// 兑换比例：1000 分 = 0.01 美元额度
+// 普通计分游戏兑换比例：1000 分 = 1 美元额度
 const GameScorePerUnit = 1000.0
-const GameUSDPerUnit = 0.01
+const GameUSDPerUnit = 1.0
+
+// 肉鸽 NEON-PULSE 兑换比例：10000 分 = 1 美元额度
+const RoguelikeScorePerUnit = 10000.0
 
 // 每小时最多兑换次数，防止无成本刷分
 const GameRedeemHourlyLimit = 20
@@ -31,22 +35,22 @@ type GameConfig struct {
 	Status      string `json:"status" gorm:"type:varchar(32);index"`
 	SortOrder   int    `json:"sort_order"`
 	// MaxScore 单局得分上限，超过视为异常拒收
-	MaxScore int    `json:"max_score"`
-	PageTitle string `json:"page_title" gorm:"-:all"`
-	UpdatedTime int64 `json:"updated_time" gorm:"bigint"`
+	MaxScore    int    `json:"max_score"`
+	PageTitle   string `json:"page_title" gorm:"-:all"`
+	UpdatedTime int64  `json:"updated_time" gorm:"bigint"`
 }
 
 type GameScoreLog struct {
-	Id            int     `json:"id"`
-	UserId        int     `json:"user_id" gorm:"index"`
-	Username      string  `json:"username" gorm:"type:varchar(191);index"`
-	GameKey       string  `json:"game_key" gorm:"type:varchar(64);index"`
-	Score         int     `json:"score"`
-	QuotaAwarded  int     `json:"quota_awarded"`
-	UsdAwarded    float64 `json:"usd_awarded"`
-	Status        string  `json:"status" gorm:"type:varchar(32)"`
-	Message       string  `json:"message" gorm:"type:text"`
-	CreatedTime   int64   `json:"created_time" gorm:"bigint;index"`
+	Id           int     `json:"id"`
+	UserId       int     `json:"user_id" gorm:"index"`
+	Username     string  `json:"username" gorm:"type:varchar(191);index"`
+	GameKey      string  `json:"game_key" gorm:"type:varchar(64);index"`
+	Score        int     `json:"score"`
+	QuotaAwarded int     `json:"quota_awarded"`
+	UsdAwarded   float64 `json:"usd_awarded"`
+	Status       string  `json:"status" gorm:"type:varchar(32)"`
+	Message      string  `json:"message" gorm:"type:text"`
+	CreatedTime  int64   `json:"created_time" gorm:"bigint;index"`
 }
 
 var defaultGames = []GameConfig{
@@ -69,16 +73,9 @@ func InitGameConfigs() error {
 		return err
 	}
 	for _, game := range defaultGames {
-		var count int64
-		if err := DB.Model(&GameConfig{}).Where("game_key = ?", game.GameKey).Count(&count).Error; err != nil {
+		game.UpdatedTime = common.GetTimestamp()
+		if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&game).Error; err != nil {
 			return err
-		}
-		if count == 0 {
-			g := game
-			g.UpdatedTime = common.GetTimestamp()
-			if err := DB.Create(&g).Error; err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -86,7 +83,7 @@ func InitGameConfigs() error {
 
 func GetGamePageTitle() string {
 	var option Option
-	if err := DB.Where("`key` = 'game_page_title'").First(&option).Error; err == nil {
+	if err := DB.Where(commonKeyCol+" = ?", "game_page_title").First(&option).Error; err == nil {
 		if strings.TrimSpace(option.Value) != "" {
 			return option.Value
 		}
@@ -165,37 +162,56 @@ func RedeemGameScore(userId int, username string, gameKey string, score int) (in
 
 	now := common.GetTimestamp()
 	hourAgo := now - 3600
-	var count int64
-	if err := DB.Model(&GameScoreLog{}).
-		Where("user_id = ? AND status = 'ok' AND created_time > ?", userId, hourAgo).
-		Count(&count).Error; err != nil {
-		return 0, 0, err
+	scorePerUnit := GameScorePerUnit
+	if game.GameKey == "roguelike" {
+		scorePerUnit = RoguelikeScorePerUnit
 	}
-	if count >= GameRedeemHourlyLimit {
-		return 0, 0, fmt.Errorf("兑换过于频繁，每小时最多 %d 次", GameRedeemHourlyLimit)
-	}
-
-	usd := float64(score) / GameScorePerUnit * GameUSDPerUnit
+	usd := float64(score) / scorePerUnit * GameUSDPerUnit
 	quota := int(usd * common.QuotaPerUnit)
 	if quota <= 0 {
 		return 0, 0, errors.New("score too low to redeem")
 	}
-
-	if err := IncreaseUserQuota(userId, quota, true); err != nil {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := lockForUpdate(tx).Model(&User{}).Where("id = ?", userId).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Model(&GameScoreLog{}).
+			Where("user_id = ? AND status = 'ok' AND created_time > ?", userId, hourAgo).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= GameRedeemHourlyLimit {
+			return fmt.Errorf("兑换过于频繁，每小时最多 %d 次", GameRedeemHourlyLimit)
+		}
+		result := tx.Model(&User{}).Where("id = ?", userId).
+			Update("quota", gorm.Expr("quota + ?", quota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(&GameScoreLog{
+			UserId:       userId,
+			Username:     username,
+			GameKey:      game.GameKey,
+			Score:        score,
+			QuotaAwarded: quota,
+			UsdAwarded:   usd,
+			Status:       "ok",
+			CreatedTime:  now,
+		}).Error
+	})
+	if err != nil {
 		return 0, 0, err
 	}
-
-	log := &GameScoreLog{
-		UserId:       userId,
-		Username:     username,
-		GameKey:      gameKey,
-		Score:        score,
-		QuotaAwarded: quota,
-		UsdAwarded:   usd,
-		Status:       "ok",
-		CreatedTime:  now,
+	if err := cacheIncrUserQuota(userId, int64(quota)); err != nil {
+		common.SysLog("failed to increase user quota cache: " + err.Error())
 	}
-	_ = DB.Create(log).Error
 	return quota, usd, nil
 }
 

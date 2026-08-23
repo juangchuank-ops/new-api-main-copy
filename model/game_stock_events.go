@@ -107,7 +107,7 @@ const marketRegimeSetTimeKey = "game_stock_market_regime_time"
 
 func GetMarketRegime() string {
 	var option Option
-	if err := DB.Where("`key` = ?", marketRegimeOptionKey).First(&option).Error; err == nil {
+	if err := DB.Where(commonKeyCol+" = ?", marketRegimeOptionKey).First(&option).Error; err == nil {
 		switch option.Value {
 		case MarketRegimeBull, MarketRegimeNeutral, MarketRegimeBear, MarketRegimeCrash, MarketRegimeBubble:
 			return option.Value

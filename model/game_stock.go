@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -33,7 +34,7 @@ type GameStock struct {
 	// HaltedUntil 停牌截止时间（unix 秒），0 表示未停牌
 	HaltedUntil int64 `json:"halted_until" gorm:"bigint;default:0"`
 	// Delisted 退市标记，退市后不可交易
-	Delisted bool `json:"delisted" gorm:"default:false"`
+	Delisted bool `json:"delisted"`
 	// NextEarningsTs 下次财报时间（unix 秒）
 	NextEarningsTs int64 `json:"next_earnings_ts" gorm:"bigint;default:0"`
 	UpdatedTime    int64 `json:"updated_time" gorm:"bigint"`
@@ -41,8 +42,8 @@ type GameStock struct {
 
 type GameStockKline struct {
 	Id      int     `json:"id"`
-	StockId int     `json:"stock_id" gorm:"index:idx_kline_stock_ts"`
-	Ts      int64   `json:"ts" gorm:"index:idx_kline_stock_ts"`
+	StockId int     `json:"stock_id" gorm:"uniqueIndex:idx_kline_stock_ts"`
+	Ts      int64   `json:"ts" gorm:"uniqueIndex:idx_kline_stock_ts"`
 	Open    float64 `json:"open"`
 	High    float64 `json:"high"`
 	Low     float64 `json:"low"`
@@ -105,18 +106,11 @@ func InitGameStocks() error {
 		return err
 	}
 	for _, stock := range defaultStocks {
-		var count int64
-		if err := DB.Model(&GameStock{}).Where("code = ?", stock.Code).Count(&count).Error; err != nil {
+		stock.PrevClose = stock.ListingPrice
+		stock.LastPrice = stock.ListingPrice
+		stock.UpdatedTime = common.GetTimestamp()
+		if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&stock).Error; err != nil {
 			return err
-		}
-		if count == 0 {
-			s := stock
-			s.PrevClose = s.ListingPrice
-			s.LastPrice = s.ListingPrice
-			s.UpdatedTime = common.GetTimestamp()
-			if err := DB.Create(&s).Error; err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -327,88 +321,123 @@ func GetUserStockPositions(userId int) ([]map[string]any, error) {
 }
 
 // TradeGameStock 市价买卖。usd 由前端报价，实际成交价用最新价。
-func TradeGameStock(userId int, stockId int, side string, shares int) (*GameStock, int, float64, error) {
+func tradeGameStock(userId int, stockId int, side string, shares int, enforceTradingHours bool) (*GameStock, int, float64, error) {
 	if side != "buy" && side != "sell" {
 		return nil, 0, 0, errors.New("invalid side")
 	}
 	if shares <= 0 {
 		return nil, 0, 0, errors.New("shares must be positive")
 	}
-	if GetStockPhase(time.Now()) != StockPhaseOpen {
+	if enforceTradingHours && GetStockPhase(time.Now()) != StockPhaseOpen {
 		return nil, 0, 0, errors.New("当前不在交易时间内（9:30-11:30，13:00-15:00）")
 	}
-	stock, err := GetGameStockById(stockId)
-	if err != nil {
-		return nil, 0, 0, errors.New("stock not found")
-	}
-	if stock.Delisted {
-		return nil, 0, 0, errors.New("该股票已退市，无法交易")
-	}
-	if stock.HaltedUntil > time.Now().Unix() {
-		return nil, 0, 0, errors.New("该股票临时停牌中，暂停交易")
-	}
 
-	var pos GameStockPosition
-	hasPos := DB.Where("user_id = ? AND stock_id = ?", userId, stockId).First(&pos).Error == nil
+	var stock GameStock
+	var quota int
+	var usd float64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).First(&stock, stockId).Error; err != nil {
+			return errors.New("stock not found")
+		}
+		if stock.Delisted {
+			return errors.New("该股票已退市，无法交易")
+		}
+		if stock.HaltedUntil > time.Now().Unix() {
+			return errors.New("该股票临时停牌中，暂停交易")
+		}
 
-	if side == "buy" {
-		usd := stock.LastPrice * float64(shares)
-		quota := int(usd * common.QuotaPerUnit)
-		userQuota, err := GetUserQuota(userId, false)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		if userQuota < quota {
-			return nil, 0, 0, errors.New("余额不足")
-		}
-		if err := DecreaseUserQuota(userId, quota, false); err != nil {
-			return nil, 0, 0, err
-		}
-		if hasPos {
-			pos.Shares += shares
-			pos.CostTotal += usd
-			pos.UpdatedTime = common.GetTimestamp()
-			DB.Save(&pos)
-		} else {
-			newPos := GameStockPosition{
-				UserId: userId, StockId: stockId, Shares: shares,
-				CostTotal: usd, UpdatedTime: common.GetTimestamp(),
+		usd = stock.LastPrice * float64(shares)
+		quota = int(usd * common.QuotaPerUnit)
+		now := common.GetTimestamp()
+		if side == "buy" {
+			result := tx.Model(&User{}).
+				Where("id = ? AND quota >= ?", userId, quota).
+				Update("quota", gorm.Expr("quota - ?", quota))
+			if result.Error != nil {
+				return result.Error
 			}
-			DB.Create(&newPos)
+			if result.RowsAffected != 1 {
+				return errors.New("余额不足")
+			}
+			result = tx.Model(&GameStockPosition{}).
+				Where("user_id = ? AND stock_id = ?", userId, stockId).
+				Updates(map[string]any{
+					"shares":       gorm.Expr("shares + ?", shares),
+					"cost_total":   gorm.Expr("cost_total + ?", usd),
+					"updated_time": now,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				position := &GameStockPosition{
+					UserId: userId, StockId: stockId, Shares: shares,
+					CostTotal: usd, UpdatedTime: now,
+				}
+				if err := tx.Create(position).Error; err != nil {
+					return err
+				}
+			}
+		} else {
+			var position GameStockPosition
+			if err := lockForUpdate(tx).
+				Where("user_id = ? AND stock_id = ?", userId, stockId).
+				First(&position).Error; err != nil {
+				return errors.New("持仓不足")
+			}
+			if position.Shares < shares {
+				return errors.New("持仓不足")
+			}
+			soldCost := position.CostTotal * float64(shares) / float64(position.Shares)
+			newShares := position.Shares - shares
+			newCostTotal := position.CostTotal - soldCost
+			if newShares == 0 {
+				newCostTotal = 0
+			}
+			result := tx.Model(&GameStockPosition{}).
+				Where("id = ? AND shares >= ?", position.Id, shares).
+				Updates(map[string]any{
+					"shares":       newShares,
+					"cost_total":   newCostTotal,
+					"updated_time": now,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("持仓不足")
+			}
+			result = tx.Model(&User{}).Where("id = ?", userId).
+				Update("quota", gorm.Expr("quota + ?", quota))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return gorm.ErrRecordNotFound
+			}
 		}
-		trade := &GameStockTrade{
-			UserId: userId, StockId: stockId, StockCode: stock.Code, Side: "buy",
-			Price: stock.LastPrice, Shares: shares, UsdAmount: usd, QuotaAmount: quota,
-			CreatedTime: common.GetTimestamp(),
-		}
-		DB.Create(trade)
-		return stock, quota, usd, nil
-	}
 
-	// sell
-	if !hasPos || pos.Shares < shares {
-		return nil, 0, 0, errors.New("持仓不足")
-	}
-	usd := stock.LastPrice * float64(shares)
-	quota := int(usd * common.QuotaPerUnit)
-	soldCost := pos.CostTotal * float64(shares) / float64(pos.Shares)
-	pos.Shares -= shares
-	pos.CostTotal -= soldCost
-	if pos.Shares == 0 {
-		pos.CostTotal = 0
-	}
-	pos.UpdatedTime = common.GetTimestamp()
-	DB.Save(&pos)
-	if err := IncreaseUserQuota(userId, quota, false); err != nil {
+		return tx.Create(&GameStockTrade{
+			UserId: userId, StockId: stockId, StockCode: stock.Code, Side: side,
+			Price: stock.LastPrice, Shares: shares, UsdAmount: usd, QuotaAmount: quota,
+			CreatedTime: now,
+		}).Error
+	})
+	if err != nil {
 		return nil, 0, 0, err
 	}
-	trade := &GameStockTrade{
-		UserId: userId, StockId: stockId, StockCode: stock.Code, Side: "sell",
-		Price: stock.LastPrice, Shares: shares, UsdAmount: usd, QuotaAmount: quota,
-		CreatedTime: common.GetTimestamp(),
+	if side == "buy" {
+		if err := cacheDecrUserQuota(userId, int64(quota)); err != nil {
+			common.SysLog("failed to decrease user quota cache: " + err.Error())
+		}
+	} else if err := cacheIncrUserQuota(userId, int64(quota)); err != nil {
+		common.SysLog("failed to increase user quota cache: " + err.Error())
 	}
-	DB.Create(trade)
-	return stock, quota, usd, nil
+	return &stock, quota, usd, nil
+}
+
+func TradeGameStock(userId int, stockId int, side string, shares int) (*GameStock, int, float64, error) {
+	return tradeGameStock(userId, stockId, side, shares, true)
 }
 
 // OpenFutures 开仓
@@ -449,13 +478,22 @@ func OpenFutures(userId int, side string, leverage int, marginQuota int, stockId
 		CreatedTime: now, UpdatedTime: now,
 	}
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := DecreaseUserQuota(userId, marginQuota, false); err != nil {
-			return err
+		result := tx.Model(&User{}).
+			Where("id = ? AND quota >= ?", userId, marginQuota).
+			Update("quota", gorm.Expr("quota - ?", marginQuota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("余额不足")
 		}
 		return tx.Create(position).Error
 	})
 	if err != nil {
 		return nil, err
+	}
+	if err := cacheDecrUserQuota(userId, int64(marginQuota)); err != nil {
+		common.SysLog("failed to decrease user quota cache: " + err.Error())
 	}
 	return position, nil
 }
@@ -506,12 +544,25 @@ func CloseFutures(userId int, positionId int) (*GameFuturesPosition, error) {
 			return errors.New("position already closed")
 		}
 		if settleQuota > 0 {
-			return IncreaseUserQuota(userId, settleQuota, false)
+			result = tx.Model(&User{}).
+				Where("id = ?", userId).
+				Update("quota", gorm.Expr("quota + ?", settleQuota))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("user not found")
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if settleQuota > 0 {
+		if err := cacheIncrUserQuota(userId, int64(settleQuota)); err != nil {
+			common.SysLog("failed to increase user quota cache: " + err.Error())
+		}
 	}
 	DB.First(&position, positionId)
 	return &position, nil
