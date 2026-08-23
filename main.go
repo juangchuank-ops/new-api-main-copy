@@ -310,6 +310,21 @@ func InitResources() error {
 	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
 
+	// 初始化小游戏（配置表 + 股市表），失败不阻塞启动
+	if err := model.InitGameConfigs(); err != nil {
+		common.SysError("failed to init game configs: " + err.Error())
+	}
+	if err := model.InitGameStocks(); err != nil {
+		common.SysError("failed to init game stocks: " + err.Error())
+	}
+	// 股市K线 tick：每 20 秒推进一次（内部对齐到分钟并判断交易时段）
+	gameStockTicker := time.NewTicker(20 * time.Second)
+	go func() {
+		for range gameStockTicker.C {
+			model.AdvanceGameStockTick()
+		}
+	}()
+
 	if common.IsMasterNode {
 		if err := model.MigrateConsoleSettingAnnouncementsToBanners(); err != nil {
 			common.SysError("failed to migrate console announcements to banners: " + err.Error())

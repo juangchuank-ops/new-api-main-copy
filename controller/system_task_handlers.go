@@ -22,6 +22,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(upstreamAccountHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -150,6 +151,22 @@ func (asyncTaskPollHandler) NewPayload() any { return nil }
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// upstreamAccountHandler 每隔几分钟检查到期的上游账号，执行签到/余额刷新。
+type upstreamAccountHandler struct{}
+
+func (upstreamAccountHandler) Type() string { return model.SystemTaskTypeUpstreamAccount }
+
+func (upstreamAccountHandler) Enabled() bool { return true }
+
+func (upstreamAccountHandler) Interval() time.Duration { return 5 * time.Minute }
+
+func (upstreamAccountHandler) NewPayload() any { return nil }
+
+func (upstreamAccountHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	service.RunDueUpstreamAccounts(ctx)
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, nil, nil)
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {

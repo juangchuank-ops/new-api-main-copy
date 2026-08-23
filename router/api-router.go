@@ -83,14 +83,34 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
-			selfRoute := userRoute.Group("/")
-			selfRoute.Use(middleware.UserOrNewApiUserAuth()) // 支持 token 或 New-Api-User header
+		selfRoute := userRoute.Group("/")
+		selfRoute.Use(middleware.UserOrNewApiUserAuth()) // 支持 token 或 New-Api-User header
+		{
+			selfRoute.GET("/self/groups", controller.GetUserGroups)
+			selfRoute.GET("/self", controller.GetSelf)
+			selfRoute.GET("/models", controller.GetUserModels)
+			selfRoute.PUT("/self", controller.UpdateSelf)
+			selfRoute.DELETE("/self", controller.DeleteSelf)
+			// 小游戏：得分兑换与记录（登录即可）
+			gameRoute := selfRoute.Group("/game")
 			{
-				selfRoute.GET("/self/groups", controller.GetUserGroups)
-				selfRoute.GET("/self", controller.GetSelf)
-				selfRoute.GET("/models", controller.GetUserModels)
-				selfRoute.PUT("/self", controller.UpdateSelf)
-				selfRoute.DELETE("/self", controller.DeleteSelf)
+				gameRoute.GET("/list", controller.ListGames)
+				gameRoute.POST("/redeem", controller.RedeemGameScore)
+				gameRoute.GET("/scores", controller.ListGameScores)
+				// 游戏管理（root）
+				gameRoute.POST("/manage", middleware.RootAuth(), controller.UpdateGames)
+				// TOKEN 股市
+				gameRoute.GET("/stock/overview", controller.GetStockOverview)
+				gameRoute.GET("/stock/klines/:id", controller.GetStockKlines)
+				gameRoute.GET("/stock/news", controller.GetStockNews)
+				gameRoute.GET("/stock/orderbook/:id", controller.GetStockOrderBook)
+				gameRoute.POST("/stock/trade", controller.TradeStock)
+				gameRoute.GET("/stock/positions", controller.ListStockPositions)
+				// 永续合约
+				gameRoute.POST("/futures/open", controller.OpenFuturesPosition)
+				gameRoute.POST("/futures/close", controller.CloseFuturesPosition)
+				gameRoute.GET("/futures/positions", controller.ListFuturesPositions)
+			}
 				selfRoute.GET("/token", controller.GenerateAccessToken)
 				selfRoute.GET("/passkey", controller.PasskeyStatus)
 				selfRoute.POST("/passkey/register/begin", controller.PasskeyRegisterBegin)
@@ -297,6 +317,18 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/client-identity/versions/refresh", controller.RefreshClientIdentityVersions)
 			// P3-Schema: GetChannelClientIdentity — 读取渠道的 client identity 配置
 			channelRoute.GET("/:id/client-identity", controller.GetChannelClientIdentity)
+		}
+		upstreamAccountRoute := apiRouter.Group("/upstream-account")
+		upstreamAccountRoute.Use(middleware.AdminAuth())
+		{
+			upstreamAccountRoute.GET("/", controller.ListUpstreamAccounts)
+			upstreamAccountRoute.POST("/", controller.CreateUpstreamAccount)
+			upstreamAccountRoute.GET("/logs", controller.ListUpstreamAccountLogs)
+			upstreamAccountRoute.PUT("/:id", controller.UpdateUpstreamAccount)
+			upstreamAccountRoute.DELETE("/:id", controller.DeleteUpstreamAccount)
+			upstreamAccountRoute.POST("/:id/checkin", controller.CheckinUpstreamAccount)
+			upstreamAccountRoute.POST("/:id/balance", controller.RefreshUpstreamAccountBalance)
+			upstreamAccountRoute.POST("/:id/health", controller.HealthCheckUpstreamAccount)
 		}
 		registerAuthzRoutes(apiRouter)
 

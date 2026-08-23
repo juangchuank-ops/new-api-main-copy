@@ -49,6 +49,9 @@ import Subscription from './pages/Subscription';
 import ModelHealth from './pages/ModelHealth';
 import SystemInfo from './pages/SystemInfo';
 import Banner from './pages/Banner';
+import UpstreamAccount from './pages/UpstreamAccount';
+import Game from './pages/Game';
+import GameRoom from './pages/Game/components/GameRoom';
 import Rankings from './pages/Rankings';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
@@ -141,6 +144,14 @@ function App() {
           element={
             <AdminRoute>
               <Banner />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/upstream-account'
+          element={
+            <AdminRoute>
+              <UpstreamAccount />
             </AdminRoute>
           }
         />
@@ -377,6 +388,26 @@ function App() {
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
               <About />
             </Suspense>
+          }
+        />
+        <Route
+          path='/game'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Game />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/game/:gameKey'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <GameRoom />
+              </Suspense>
+            </PrivateRoute>
           }
         />
         <Route

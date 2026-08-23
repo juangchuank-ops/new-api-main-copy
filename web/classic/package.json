@@ -24,6 +24,7 @@
     "lucide-react": "^0.511.0",
     "marked": "^4.1.1",
     "mermaid": "^11.6.0",
+    "phaser": "^4.2.1",
     "qrcode.react": "catalog:",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
