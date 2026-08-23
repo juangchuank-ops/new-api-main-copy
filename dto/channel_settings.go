@@ -49,6 +49,7 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	FullRequestURL                        bool                  `json:"full_request_url,omitempty"` // base_url 为完整请求地址，不再自动拼接路径
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

@@ -351,6 +351,8 @@ func migrateDB() error {
 		&UserSecurityEvent{},
 		&UserAutoBanRecord{},
 		&ExternalIdentityClaim{},
+		&UpstreamAccount{},
+		&UpstreamAccountLog{},
 	)
 	if err != nil {
 		return err

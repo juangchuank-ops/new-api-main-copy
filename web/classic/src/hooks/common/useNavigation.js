@@ -72,9 +72,14 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         itemKey: 'about',
         to: '/about',
       },
+      {
+        text: t('游戏'),
+        itemKey: 'game',
+        to: '/game',
+      },
     ];
 
-    // 根据配置过滤导航链接
+    // 根据配置过滤导航链接（game 不在旧配置里，默认显示）
     return allLinks.filter((link) => {
       if (link.itemKey === 'docs') {
         return docsLink && modules.docs;
@@ -84,6 +89,9 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         return typeof modules.pricing === 'object'
           ? modules.pricing.enabled
           : modules.pricing;
+      }
+      if (link.itemKey === 'game') {
+        return modules.game !== false;
       }
       return modules[link.itemKey] === true;
     });

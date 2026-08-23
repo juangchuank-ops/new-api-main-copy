@@ -1046,6 +1046,7 @@ const EditChannelModal = (props) => {
             parsedSettings.allow_inference_geo || false;
           data.allow_speed = parsedSettings.allow_speed || false;
           data.claude_beta_query = parsedSettings.claude_beta_query || false;
+          data.full_request_url = parsedSettings.full_request_url || false;
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -1076,6 +1077,7 @@ const EditChannelModal = (props) => {
           data.allow_inference_geo = false;
           data.allow_speed = false;
           data.claude_beta_query = false;
+          data.full_request_url = false;
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
@@ -3679,18 +3681,33 @@ const EditChannelModal = (props) => {
                           <div>
                             <Form.Input
                               field='base_url'
-                              label={t('API地址')}
-                              placeholder={t(
-                                '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
-                              )}
+                              label={
+                                <div className='flex items-center justify-between' style={{ width: '100%' }}>
+                                  <span>{t('API地址')}</span>
+                                  <Form.Switch
+                                    field='full_request_url'
+                                    size='small'
+                                    checkedText={t('完整')}
+                                    uncheckedText={t('补全')}
+                                    onChange={(value) => handleChannelOtherSettingsChange('full_request_url', value)}
+                                  />
+                                </div>
+                              }
+                              placeholder={
+                                inputs.full_request_url
+                                  ? t('填写完整请求地址，例如：https://open.bigmodel.cn/api/paas/v4/chat/completions')
+                                  : t('此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/')
+                              }
                               onChange={(value) =>
                                 handleInputChange('base_url', value)
                               }
                               showClear
                               disabled={isIonetLocked}
-                              extraText={t(
-                                '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
-                              )}
+                              extraText={
+                                inputs.full_request_url
+                                  ? t('已开启完整地址模式：new-api 不再自动补全路径，请填写到 /v1/chat/completions 这样的完整地址。')
+                                  : t('对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写')
+                              }
                             />
                           </div>
                         )}

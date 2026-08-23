@@ -24,6 +24,8 @@ const (
 	// Auto Sync 任务类型：与新版保持一致，供 Auto Sync 调度与事件队列使用。
 	SystemTaskTypeAutoPriceSync = "auto_price_sync"
 	SystemTaskTypeAutoModelSync = "auto_model_metadata_sync"
+	// UpstreamAccount 定时签到/余额刷新任务
+	SystemTaskTypeUpstreamAccount = "upstream_account_maintenance"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")

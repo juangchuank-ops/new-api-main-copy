@@ -44,6 +44,7 @@ const routerMap = {
   setting: '/console/setting',
   'system-info': '/console/system-info',
   'banner': '/console/banner',
+  'upstream-account': '/console/upstream-account',
   about: '/about',
   detail: '/console',
   pricing: '/pricing',
@@ -208,6 +209,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('横幅管理'),
         itemKey: 'banner',
         to: '/banner',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('上游账号'),
+        itemKey: 'upstream-account',
+        to: '/upstream-account',
         className: isAdmin() ? '' : 'tableHiddle',
       },
     ];

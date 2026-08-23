@@ -56,6 +56,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     setting: true,
     'system-info': true,
     'banner': true,
+    'upstream-account': true,
   },
 };
 
