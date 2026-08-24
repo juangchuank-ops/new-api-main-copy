@@ -16,6 +16,7 @@ import TokenMining from './TokenMining';
 import RoguelikeBoard from './RoguelikeBoard';
 import Match3 from './Match3';
 import GameHelpButton from './GameHelpButton';
+import '../game-theme.css';
 
 const { Title, Text } = Typography;
 
@@ -54,7 +55,7 @@ const GameRoom = () => {
 
   if (!GameComponent) {
     return (
-      <div className='mt-[70px] px-4 py-10 text-center'>
+      <div className='game-page game-room mt-[70px] px-4 py-10 text-center'>
         <Title heading={4}>{t('未知游戏')}</Title>
         <Button className='mt-4' onClick={() => navigate('/game')}>{t('返回游戏大厅')}</Button>
       </div>
@@ -62,9 +63,9 @@ const GameRoom = () => {
   }
 
   return (
-    <div className='min-h-screen' style={{ background: 'var(--semi-color-bg-0)' }}>
+    <div className='game-page game-room min-h-screen'>
       {/* 顶部栏：与站点导航留空 */}
-      <div className='pt-[70px] px-4 pb-4 max-w-5xl mx-auto'>
+      <div className='game-room__header pt-[70px] px-4 pb-4 max-w-5xl mx-auto'>
         <Space>
           <Button
             icon={<IconChevronLeft />}
@@ -73,7 +74,7 @@ const GameRoom = () => {
           >
             {t('返回大厅')}
           </Button>
-          <div className='inline-flex items-center gap-2'>
+          <div className='game-room__title inline-flex items-center gap-2'>
             <Title heading={4} className='!m-0'>
               {t(GAME_META[gameKey] || '')}
             </Title>
@@ -85,7 +86,7 @@ const GameRoom = () => {
           </div>
         </Space>
       </div>
-      <div className='px-4 pb-16 max-w-5xl mx-auto'>
+      <div className='game-room__stage px-4 pb-16 max-w-5xl mx-auto'>
         <GameComponent t={t} fullScreen />
       </div>
     </div>
