@@ -25,7 +25,6 @@ import { useNavigate } from 'react-router-dom';
 import { API, showError, showSuccess } from '../../helpers';
 import { isRoot } from '../../helpers/utils';
 import GameHelpButton from './components/GameHelpButton';
-import './game-theme.css';
 
 const { Text, Title } = Typography;
 
@@ -112,7 +111,7 @@ const Game = () => {
   };
 
   return (
-    <div className='game-page relative mt-[60px] px-2'>
+    <div className='relative mt-[60px] px-2'>
       {/* 未保存横幅：离导航栏留一点空 */}
       {adminMode && hasUnsavedChanges && (
         <div className='sticky top-[60px] z-40 mb-4'>
@@ -150,9 +149,9 @@ const Game = () => {
       )}
 
       <div className='pb-8'>
-        <Card className='game-page__masthead mb-4'>
+        <Card className='mb-4'>
           <div className='flex items-center justify-between flex-wrap gap-3'>
-            <div className='game-page__heading'>
+            <div>
               <Title heading={3} className='!m-0'>
                 {adminMode ? (
                   <Input
@@ -199,7 +198,6 @@ const Game = () => {
               return (
                 <Card
                   key={game.game_key}
-                  className='game-card'
                   style={{
                     opacity: isAvailable ? 1 : 0.55,
                     border: '1px solid var(--semi-color-border)',

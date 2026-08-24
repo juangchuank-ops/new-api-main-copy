@@ -57,7 +57,7 @@ const GAME_RULES = {
   roguelike: [
     '移动鼠标、触摸或使用 WASD 控制核心，武器会自动锁定射击；点击、触摸或空格发动冲刺。',
     '连续击杀会提高连击得分，每波后可购买升级并选择风险合约，每 5 波会出现 Boss。',
-    '核心生命归零时结束并记录本机排行榜。游戏分数可按 10000 分 = 1 额度兑换。',
+    '核心生命归零时结束并记录本机排行榜。游戏分数可按 10000 分 = 1 额度兑换。',,
   ],
   match3: [
     '点击两个相邻宝石或滑动宝石进行交换，横向或纵向连成至少 3 个同色宝石即可消除。',
@@ -73,7 +73,6 @@ const GameHelpButton = ({ gameKey, gameName, t }) => {
   const openHelp = (event) => {
     event.stopPropagation();
     Modal.info({
-      className: 'game-help-modal',
       title: `${gameName} · ${t('玩法说明')}`,
       width: 520,
       centered: true,
@@ -96,7 +95,23 @@ const GameHelpButton = ({ gameKey, gameName, t }) => {
         type='button'
         aria-label={t('{{game}}玩法说明', { game: gameName })}
         onClick={openHelp}
-        className='game-help-button'
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flex: '0 0 auto',
+          width: 22,
+          height: 22,
+          padding: 0,
+          border: '1.5px solid var(--semi-color-text-2)',
+          borderRadius: '50%',
+          background: 'transparent',
+          color: 'var(--semi-color-text-2)',
+          fontSize: 14,
+          fontWeight: 700,
+          lineHeight: 1,
+          cursor: 'pointer',
+        }}
       >
         ?
       </button>
