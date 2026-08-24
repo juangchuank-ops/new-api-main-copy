@@ -16,6 +16,7 @@ import TokenMining from './TokenMining';
 import RoguelikeBoard from './RoguelikeBoard';
 import Match3 from './Match3';
 import GameHelpButton from './GameHelpButton';
+import useFrakturGameText from './useFrakturGameText';
 import '../game-theme.css';
 
 const { Title, Text } = Typography;
@@ -46,6 +47,7 @@ const GameRoom = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { gameKey } = useParams();
+  useFrakturGameText();
   const GameComponent = GAME_COMPONENTS[gameKey];
 
   useEffect(() => {
