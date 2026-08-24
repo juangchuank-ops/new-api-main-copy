@@ -165,10 +165,7 @@ const Game = () => {
                   games[0]?.page_title || t('纸上游乐场')
                 )}
               </Title>
-              <Text type='secondary' className='game-page__motto'>
-                {t('𝔚𝔢𝔢𝔭 𝔴𝔦𝔱𝔥 𝔪𝔢, 𝔞𝔫𝔡 𝔴𝔞𝔦𝔩 𝔴𝔦𝔱𝔥 𝔪𝔢')}
-              </Text>
-              <Text type='secondary' className='game-page__exchange'>
+              <Text type='secondary'>
                 {t('普通计分游戏 1000 分 = 1 额度 · NEON-PULSE 10000 分 = 1 额度')}
               </Text>
             </div>

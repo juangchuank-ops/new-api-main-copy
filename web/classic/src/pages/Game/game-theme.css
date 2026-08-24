@@ -94,21 +94,6 @@ body[theme-mode='dark'] .game-help-modal {
   z-index: 1;
 }
 
-.game-page__motto {
-  display: block;
-  margin-top: 6px;
-  color: var(--game-crimson) !important;
-  font-family: Georgia, 'Times New Roman', serif !important;
-  font-size: 18px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.game-page__exchange {
-  display: block;
-  margin-top: 3px;
-}
-
 .game-page__heading::after {
   display: block;
   width: min(260px, 72vw);
