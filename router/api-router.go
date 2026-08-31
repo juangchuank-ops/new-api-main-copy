@@ -83,34 +83,34 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
-		selfRoute := userRoute.Group("/")
-		selfRoute.Use(middleware.UserOrNewApiUserAuth()) // 支持 token 或 New-Api-User header
-		{
-			selfRoute.GET("/self/groups", controller.GetUserGroups)
-			selfRoute.GET("/self", controller.GetSelf)
-			selfRoute.GET("/models", controller.GetUserModels)
-			selfRoute.PUT("/self", controller.UpdateSelf)
-			selfRoute.DELETE("/self", controller.DeleteSelf)
-			// 小游戏：得分兑换与记录（登录即可）
-			gameRoute := selfRoute.Group("/game")
+			selfRoute := userRoute.Group("/")
+			selfRoute.Use(middleware.UserOrNewApiUserAuth()) // 支持 token 或 New-Api-User header
 			{
-				gameRoute.GET("/list", controller.ListGames)
-				gameRoute.POST("/redeem", controller.RedeemGameScore)
-				gameRoute.GET("/scores", controller.ListGameScores)
-				// 游戏管理（root）
-				gameRoute.POST("/manage", middleware.RootAuth(), controller.UpdateGames)
-				// TOKEN 股市
-				gameRoute.GET("/stock/overview", controller.GetStockOverview)
-				gameRoute.GET("/stock/klines/:id", controller.GetStockKlines)
-				gameRoute.GET("/stock/news", controller.GetStockNews)
-				gameRoute.GET("/stock/orderbook/:id", controller.GetStockOrderBook)
-				gameRoute.POST("/stock/trade", controller.TradeStock)
-				gameRoute.GET("/stock/positions", controller.ListStockPositions)
-				// 永续合约
-				gameRoute.POST("/futures/open", controller.OpenFuturesPosition)
-				gameRoute.POST("/futures/close", controller.CloseFuturesPosition)
-				gameRoute.GET("/futures/positions", controller.ListFuturesPositions)
-			}
+				selfRoute.GET("/self/groups", controller.GetUserGroups)
+				selfRoute.GET("/self", controller.GetSelf)
+				selfRoute.GET("/models", controller.GetUserModels)
+				selfRoute.PUT("/self", controller.UpdateSelf)
+				selfRoute.DELETE("/self", controller.DeleteSelf)
+				// 小游戏：得分兑换与记录（登录即可）
+				gameRoute := selfRoute.Group("/game")
+				{
+					gameRoute.GET("/list", controller.ListGames)
+					gameRoute.POST("/redeem", controller.RedeemGameScore)
+					gameRoute.GET("/scores", controller.ListGameScores)
+					// 游戏管理（root）
+					gameRoute.POST("/manage", middleware.RootAuth(), controller.UpdateGames)
+					// TOKEN 股市
+					gameRoute.GET("/stock/overview", controller.GetStockOverview)
+					gameRoute.GET("/stock/klines/:id", controller.GetStockKlines)
+					gameRoute.GET("/stock/news", controller.GetStockNews)
+					gameRoute.GET("/stock/orderbook/:id", controller.GetStockOrderBook)
+					gameRoute.POST("/stock/trade", controller.TradeStock)
+					gameRoute.GET("/stock/positions", controller.ListStockPositions)
+					// 永续合约
+					gameRoute.POST("/futures/open", controller.OpenFuturesPosition)
+					gameRoute.POST("/futures/close", controller.CloseFuturesPosition)
+					gameRoute.GET("/futures/positions", controller.ListFuturesPositions)
+				}
 				selfRoute.GET("/token", controller.GenerateAccessToken)
 				selfRoute.GET("/passkey", controller.PasskeyStatus)
 				selfRoute.POST("/passkey/register/begin", controller.PasskeyRegisterBegin)
@@ -132,6 +132,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
 				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
 				selfRoute.POST("/aff_transfer", controller.TransferAffQuota)
+				selfRoute.POST("/transfer", middleware.CriticalRateLimit(), controller.TransferUserQuota)
+				selfRoute.POST("/rename", middleware.CriticalRateLimit(), controller.RenameSelf)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 
 				// 邮件发送
@@ -158,7 +160,7 @@ func SetApiRouter(router *gin.Engine) {
 			}
 
 			adminRoute := userRoute.Group("/")
-			adminRoute.Use(middleware.AdminAuth())
+			adminRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("user"))
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
@@ -194,7 +196,7 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestWaffoPancakePay)
 		}
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
-		subscriptionAdminRoute.Use(middleware.AdminAuth())
+		subscriptionAdminRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("subscription"))
 		{
 			subscriptionAdminRoute.GET("/plans", controller.AdminListSubscriptionPlans)
 			subscriptionAdminRoute.POST("/plans", controller.AdminCreateSubscriptionPlan)
@@ -271,7 +273,7 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
 		channelRoute := apiRouter.Group("/channel")
-		channelRoute.Use(middleware.AdminAuth())
+		channelRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("channel"))
 		{
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/search", controller.SearchChannels)
@@ -319,7 +321,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/:id/client-identity", controller.GetChannelClientIdentity)
 		}
 		upstreamAccountRoute := apiRouter.Group("/upstream-account")
-		upstreamAccountRoute.Use(middleware.AdminAuth())
+		upstreamAccountRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("upstream-account"))
 		{
 			upstreamAccountRoute.GET("/", controller.ListUpstreamAccounts)
 			upstreamAccountRoute.POST("/", controller.CreateUpstreamAccount)
@@ -331,6 +333,28 @@ func SetApiRouter(router *gin.Engine) {
 			upstreamAccountRoute.POST("/:id/health", controller.HealthCheckUpstreamAccount)
 		}
 		registerAuthzRoutes(apiRouter)
+
+		ipBanRoute := apiRouter.Group("/ip-bans")
+		ipBanRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("ip-ban"))
+		{
+			ipBanRoute.GET("/users", controller.ListIPBanUsers)
+			ipBanRoute.GET("", controller.ListIPBans)
+			ipBanRoute.POST("", controller.CreateIPBan)
+			ipBanRoute.PUT("/:id", controller.UpdateIPBan)
+			ipBanRoute.POST("/:id/toggle", controller.ToggleIPBan)
+			ipBanRoute.DELETE("/:id", controller.DeleteIPBan)
+		}
+
+		browserFingerprintBanRoute := apiRouter.Group("/browser-fingerprint-bans")
+		browserFingerprintBanRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("browser-fingerprint-ban"))
+		{
+			browserFingerprintBanRoute.GET("/users", controller.ListBrowserFingerprintUsers)
+			browserFingerprintBanRoute.GET("", controller.ListBrowserFingerprintBans)
+			browserFingerprintBanRoute.POST("", controller.CreateBrowserFingerprintBan)
+			browserFingerprintBanRoute.PUT("/:id", controller.UpdateBrowserFingerprintBan)
+			browserFingerprintBanRoute.POST("/:id/toggle", controller.ToggleBrowserFingerprintBan)
+			browserFingerprintBanRoute.DELETE("/:id", controller.DeleteBrowserFingerprintBan)
+		}
 
 		// AutoBan admin routes (additive, ported from new-api-reference)
 		autoBanRoute := apiRouter.Group("/security/auto-ban")
@@ -365,7 +389,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		redemptionRoute := apiRouter.Group("/redemption")
-		redemptionRoute.Use(middleware.AdminAuth())
+		redemptionRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("redemption"))
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
 			redemptionRoute.GET("/search", controller.SearchRedemptions)
@@ -390,7 +414,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		invitationCodeRoute := apiRouter.Group("/invitation-code")
-		invitationCodeRoute.Use(middleware.AdminAuth())
+		invitationCodeRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("invitation-code"))
 		{
 			invitationCodeRoute.GET("/", controller.GetAllInvitationCodes)
 			invitationCodeRoute.GET("/search", controller.SearchInvitationCodes)
@@ -402,11 +426,11 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		logRoute := apiRouter.Group("/log")
-	logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
-	logRoute.GET("/:request_id/request-body", middleware.RootAuth(), controller.GetRequestDebugBody)
-	// Legacy synchronous direct-delete route used only by the classic frontend.
-	// TODO: remove once the classic frontend is removed; the default frontend uses /system-task/log-cleanup.
-	logRoute.DELETE("/", middleware.RootAuth(), controller.DeleteHistoryLogs)
+		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
+		logRoute.GET("/:request_id/request-body", middleware.RootAuth(), controller.GetRequestDebugBody)
+		// Legacy synchronous direct-delete route used only by the classic frontend.
+		// TODO: remove once the classic frontend is removed; the default frontend uses /system-task/log-cleanup.
+		logRoute.DELETE("/", middleware.RootAuth(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
@@ -442,7 +466,10 @@ func SetApiRouter(router *gin.Engine) {
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
 		groupRoute := apiRouter.Group("/group")
-		groupRoute.Use(middleware.AdminAuth())
+		groupRoute.Use(
+			middleware.PermissionAdminAuth(),
+			middleware.ModuleAuth("user", "channel"),
+		)
 		{
 			groupRoute.GET("/", controller.GetGroups)
 		}
@@ -467,7 +494,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		vendorRoute := apiRouter.Group("/vendors")
-		vendorRoute.Use(middleware.AdminAuth())
+		vendorRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("models"))
 		{
 			vendorRoute.GET("/", controller.GetAllVendors)
 			vendorRoute.GET("/search", controller.SearchVendors)
@@ -478,7 +505,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		modelsRoute := apiRouter.Group("/models")
-		modelsRoute.Use(middleware.AdminAuth())
+		modelsRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("models"))
 		{
 			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview)
 			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)
@@ -500,7 +527,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
-		deploymentsRoute.Use(middleware.AdminAuth())
+		deploymentsRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("deployment"))
 		{
 			deploymentsRoute.GET("/settings", controller.GetModelDeploymentSettings)
 			deploymentsRoute.POST("/settings/test-connection", controller.TestIoNetConnection)

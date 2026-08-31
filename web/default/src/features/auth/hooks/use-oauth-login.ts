@@ -28,6 +28,7 @@ import {
   buildDiscordOAuthUrl,
   buildOIDCOAuthUrl,
   buildLinuxDOOAuthUrl,
+  buildGoogleOAuthUrl,
 } from '../lib/oauth'
 import type { SystemStatus, CustomOAuthProviderInfo } from '../types'
 
@@ -185,6 +186,27 @@ export function useOAuthLogin(status: SystemStatus | null, invitationCode?: stri
     }
   }
 
+  const handleGoogleLogin = async () => {
+    if (!status?.google_client_id) return
+
+    setIsLoading(true)
+    try {
+      await resetSession()
+      const state = await getOAuthState(invitationCode)
+      if (!state) {
+        toast.error(t('Failed to initialize OAuth'))
+        return
+      }
+
+      const url = buildGoogleOAuthUrl(status.google_client_id, state)
+      window.open(url, '_self')
+    } catch (_error) {
+      toast.error(t('Failed to start Google login'))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleTelegramLogin = () => {
     toast.info(t('Telegram login requires widget integration; coming soon'))
   }
@@ -229,6 +251,7 @@ export function useOAuthLogin(status: SystemStatus | null, invitationCode?: stri
     handleDiscordLogin,
     handleOIDCLogin,
     handleLinuxDOLogin,
+    handleGoogleLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
   }

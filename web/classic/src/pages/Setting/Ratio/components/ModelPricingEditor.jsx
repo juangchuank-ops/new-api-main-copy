@@ -467,12 +467,6 @@ export default function ModelPricingEditor({
                       }}
                     >
                       <div className='font-medium mb-3'>{t('基础价格')}</div>
-                      <PriceInput
-                        label={t('输入价格')}
-                        value={selectedModel.inputPrice}
-                        placeholder={t('输入 $/1M tokens')}
-                        onChange={(value) => handleNumericFieldChange('inputPrice', value)}
-                      />
                       {selectedModel.completionRatioLocked ? (
                         <Banner
                           type='warning'
@@ -480,9 +474,9 @@ export default function ModelPricingEditor({
                           fullMode={false}
                           closeIcon={null}
                           style={{ marginBottom: 12 }}
-                          title={t('补全价格已锁定')}
+                          title={t('输出已锁定')}
                           description={t(
-                            '该模型补全倍率由后端固定为 {{ratio}}。补全价格不能在这里修改。',
+                            '该模型补全倍率由后端固定为 {{ratio}}。输出价格不能在这里修改。',
                             {
                               ratio: selectedModel.lockedCompletionRatio || '-',
                             },
@@ -490,7 +484,7 @@ export default function ModelPricingEditor({
                         />
                       ) : null}
                       <PriceInput
-                        label={t('补全价格')}
+                        label={t('输出')}
                         value={selectedModel.completionPrice}
                         placeholder={t('输入 $/1M tokens')}
                         onChange={(value) =>
@@ -533,7 +527,13 @@ export default function ModelPricingEditor({
                         }
                       />
                       <PriceInput
-                        label={t('缓存读取价格')}
+                        label={t('输入（未命中）')}
+                        value={selectedModel.inputPrice}
+                        placeholder={t('输入 $/1M tokens')}
+                        onChange={(value) => handleNumericFieldChange('inputPrice', value)}
+                      />
+                      <PriceInput
+                        label={t('输入（命中）')}
                         value={selectedModel.cachePrice}
                         placeholder={t('输入 $/1M tokens')}
                         onChange={(value) => handleNumericFieldChange('cachePrice', value)}

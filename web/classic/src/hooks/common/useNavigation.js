@@ -26,6 +26,7 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
       home: true,
       console: true,
       pricing: true,
+      rankings: true,
       modelHealth: true,
       docs: true,
       about: true,
@@ -51,6 +52,11 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         text: t('模型广场'),
         itemKey: 'pricing',
         to: '/pricing',
+      },
+      {
+        text: t('排行榜'),
+        itemKey: 'rankings',
+        to: '/rankings',
       },
       {
         text: t('模型健康度'),
@@ -89,6 +95,13 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         return typeof modules.pricing === 'object'
           ? modules.pricing.enabled
           : modules.pricing;
+      }
+      if (link.itemKey === 'rankings') {
+        // 排行榜模块默认开启，与后端 HeaderNavModuleAuth 的兜底行为一致
+        if (typeof modules.rankings === 'object') {
+          return modules.rankings.enabled;
+        }
+        return modules.rankings !== false;
       }
       if (link.itemKey === 'game') {
         return modules.game !== false;

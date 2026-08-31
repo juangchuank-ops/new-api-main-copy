@@ -1,3 +1,22 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
 import React from 'react';
 import { Modal, Tooltip, Typography } from '@douyinfe/semi-ui';
 
@@ -57,12 +76,7 @@ const GAME_RULES = {
   roguelike: [
     '移动鼠标、触摸或使用 WASD 控制核心，武器会自动锁定射击；点击、触摸或空格发动冲刺。',
     '连续击杀会提高连击得分，每波后可购买升级并选择风险合约，每 5 波会出现 Boss。',
-    '核心生命归零时结束并记录本机排行榜。游戏分数可按 10000 分 = 1 额度兑换。',,
-  ],
-  match3: [
-    '点击两个相邻宝石或滑动宝石进行交换，横向或纵向连成至少 3 个同色宝石即可消除。',
-    '无效交换会自动退回且不消耗步数；连续下落消除会提高连锁倍率。',
-    '20 次有效交换用完后结束。游戏分数可按 1000 分 = 1 额度兑换。',
+    '核心生命归零时结束并记录本机排行榜。游戏分数可按 100000 分 = 1 额度兑换。',
   ],
 };
 
@@ -73,6 +87,7 @@ const GameHelpButton = ({ gameKey, gameName, t }) => {
   const openHelp = (event) => {
     event.stopPropagation();
     Modal.info({
+      className: 'game-paper-modal',
       title: `${gameName} · ${t('玩法说明')}`,
       width: 520,
       centered: true,
@@ -92,26 +107,10 @@ const GameHelpButton = ({ gameKey, gameName, t }) => {
   return (
     <Tooltip content={t('查看玩法说明')}>
       <button
+        className='game-help-button'
         type='button'
         aria-label={t('{{game}}玩法说明', { game: gameName })}
         onClick={openHelp}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flex: '0 0 auto',
-          width: 22,
-          height: 22,
-          padding: 0,
-          border: '1.5px solid var(--semi-color-text-2)',
-          borderRadius: '50%',
-          background: 'transparent',
-          color: 'var(--semi-color-text-2)',
-          fontSize: 14,
-          fontWeight: 700,
-          lineHeight: 1,
-          cursor: 'pointer',
-        }}
       >
         ?
       </button>

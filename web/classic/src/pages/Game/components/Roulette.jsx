@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Typography, Space, Tag, Progress } from '@douyinfe/semi-ui';
 import { RedeemPanel } from './GameModal';
 
@@ -24,6 +24,9 @@ const Roulette = ({ t }) => {
   const [busy, setBusy] = useState(false);
   const [gameOver, setGameOver] = useState(null); // 'win' | 'lose'
   const [combo, setCombo] = useState(0);
+  const playerTimerRef = useRef(null);
+  const aiTimerRef = useRef(null);
+  const nextRoundTimerRef = useRef(null);
 
   const loadRound = useCallback((r) => {
     const total = 6;
@@ -50,62 +53,102 @@ const Roulette = ({ t }) => {
   const liveCount = chamber.filter(Boolean).length;
   const blankCount = chamber.length - liveCount;
 
-  const nextRoundOrEnd = (myHp, enemyHp) => {
-    if (enemyHp <= 0) {
-      setGameOver('win');
-      setScore((s) => s + 2000);
-      return true;
-    }
-    if (myHp <= 0) {
-      setGameOver('lose');
-      return true;
-    }
-    if (chamber.length === 0) {
-      setTimeout(() => setRound((r) => r + 1), 1000);
-    }
-    return false;
-  };
+  const clearTimers = useCallback(() => {
+    if (playerTimerRef.current) clearTimeout(playerTimerRef.current);
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    if (nextRoundTimerRef.current) clearTimeout(nextRoundTimerRef.current);
+    playerTimerRef.current = null;
+    aiTimerRef.current = null;
+    nextRoundTimerRef.current = null;
+  }, []);
+
+  const scheduleNextRound = useCallback(() => {
+    if (nextRoundTimerRef.current) return;
+    setBusy(false);
+    nextRoundTimerRef.current = setTimeout(() => {
+      nextRoundTimerRef.current = null;
+      setRound((r) => r + 1);
+      setTurn('player');
+    }, 1000);
+  }, []);
+
+  useEffect(() => clearTimers, [clearTimers]);
+
+  const setRemainingChamber = useCallback((rest) => {
+    setChamber(rest);
+    setKnown(null);
+  }, []);
+
+  const finishAction = useCallback(
+    (rest) => {
+      setRemainingChamber(rest);
+      if (rest.length === 0) scheduleNextRound();
+      return rest.length === 0;
+    },
+    [scheduleNextRound, setRemainingChamber],
+  );
+
+  const finishGame = useCallback(
+    (result) => {
+      clearTimers();
+      setGameOver(result);
+      setBusy(false);
+    },
+    [clearTimers],
+  );
+
+  const nextRoundOrEnd = useCallback(
+    (rest, myHp, enemyHp) => {
+      setRemainingChamber(rest);
+      if (enemyHp <= 0) {
+        setScore((s) => s + 2000);
+        finishGame('win');
+        return true;
+      }
+      if (myHp <= 0) {
+        finishGame('lose');
+        return true;
+      }
+      if (rest.length === 0) scheduleNextRound();
+      return false;
+    },
+    [finishGame, scheduleNextRound, setRemainingChamber],
+  );
 
   // 玩家开枪
   const fire = (target) => {
     if (busy || chamber.length === 0 || gameOver) return;
     setBusy(true);
     const isLive = chamber[0];
-    setTimeout(() => {
-      const rest = chamber.slice(1);
-      setChamber(rest);
-      setKnown(null);
+    const rest = chamber.slice(1);
+    playerTimerRef.current = setTimeout(() => {
+      playerTimerRef.current = null;
+      if (gameOver) return;
       if (isLive) {
         setLastResult('live');
         if (target === 'self') {
           const nhp = hp - 1;
           setHp(nhp);
           setCombo(0);
-          if (nextRoundOrEnd(nhp, aiHp)) {
-            setBusy(false);
-            return;
-          }
-          setTurn('ai');
+          if (nextRoundOrEnd(rest, nhp, aiHp)) return;
+          if (rest.length > 0) setTurn('ai');
         } else {
           const nAiHp = aiHp - 1;
           setAiHp(nAiHp);
           setCombo((c) => c + 1);
           setScore((s) => s + 300 + combo * 100);
-          if (nextRoundOrEnd(hp, nAiHp)) {
-            setBusy(false);
-            return;
-          }
-          setTurn('ai');
+          if (nextRoundOrEnd(rest, hp, nAiHp)) return;
+          if (rest.length > 0) setTurn('ai');
         }
       } else {
         setLastResult('blank');
+        finishAction(rest);
         if (target === 'self') {
           setScore((s) => s + 50); // 空包打自己 = 免费行动奖励
           setTurn('player');
         } else {
           setTurn('ai');
         }
-        if (rest.length === 0) setTimeout(() => setRound((r) => r + 1), 1000);
       }
       setBusy(false);
     }, 700);
@@ -120,63 +163,86 @@ const Roulette = ({ t }) => {
 
   // 啤酒：弹出当前一发
   const useBeer = () => {
-    if (beers <= 0 || chamber.length === 0 || busy) return;
+    if (
+      beers <= 0 ||
+      chamber.length === 0 ||
+      busy ||
+      turn !== 'player' ||
+      gameOver
+    )
+      return;
     setBeers((b) => b - 1);
     const ejected = chamber[0];
     const rest = chamber.slice(1);
-    setChamber(rest);
-    setKnown(null);
+    setRemainingChamber(rest);
     setLastResult(ejected ? 'eject_live' : 'eject_blank');
     setScore((s) => s + 30);
-    if (rest.length === 0) setTimeout(() => setRound((r) => r + 1), 1000);
+    if (rest.length === 0) scheduleNextRound();
   };
 
   // AI 回合：简单策略——若空包多且不知情则赌自己，实弹概率高则打玩家
   useEffect(() => {
-    if (turn !== 'ai' || gameOver || busy) return;
-    const timer = setTimeout(() => {
+    if (turn !== 'ai' || gameOver || busy || chamber.length === 0) return;
+    aiTimerRef.current = setTimeout(() => {
+      aiTimerRef.current = null;
       const isLive = chamber[0];
       const liveRatio = liveCount / chamber.length;
       const target = liveRatio > 0.5 ? 'player' : isLive ? 'player' : 'self';
-      // AI 简单决策：实弹占比过半直接打玩家
       const rest = chamber.slice(1);
-      setChamber(rest);
+      setRemainingChamber(rest);
       if (isLive) {
         setLastResult('ai_live');
         if (target === 'self') {
-          const nhp = hp - 0; // AI 打自己（失误）
-          // AI 打自己实弹扣 AI 血
-          setAiHp((h) => h - 1);
-          if (aiHp - 1 <= 0) {
-            setGameOver('win');
+          const nextAiHp = aiHp - 1;
+          setAiHp(nextAiHp);
+          if (nextAiHp <= 0) {
             setScore((s) => s + 2000);
+            finishGame('win');
             return;
           }
         } else {
-          const nhp = hp - 1;
-          setHp(nhp);
-          if (nhp <= 0) {
-            setGameOver('lose');
+          const nextHp = hp - 1;
+          setHp(nextHp);
+          if (nextHp <= 0) {
+            finishGame('lose');
             return;
           }
         }
-        setTurn('player');
+        if (rest.length === 0) {
+          scheduleNextRound();
+        } else {
+          setTurn('player');
+        }
       } else {
         setLastResult('ai_blank');
-        if (target === 'self') {
-          // 空包打自己保留行动权，AI 继续抽下一发。
-          setTurn('ai');
+        if (rest.length === 0) {
+          scheduleNextRound();
+        } else if (target === 'self') {
+          // 空包打自己保留行动权，弹巢更新会重新触发 AI effect。
         } else {
           setTurn('player');
         }
       }
-      if (rest.length === 0) setTimeout(() => setRound((r) => r + 1), 1000);
     }, 1100);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, busy, gameOver]);
+    return () => {
+      if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+      aiTimerRef.current = null;
+    };
+  }, [
+    aiHp,
+    chamber,
+    finishGame,
+    gameOver,
+    hp,
+    liveCount,
+    scheduleNextRound,
+    setRemainingChamber,
+    turn,
+    busy,
+  ]);
 
   const restart = () => {
+    clearTimers();
     setHp(3);
     setAiHp(3);
     setScore(0);
@@ -186,6 +252,7 @@ const Roulette = ({ t }) => {
     setCombo(0);
     setMagnifiers(2);
     setBeers(2);
+    setBusy(false);
     setChamber([]);
     loadRound(1);
   };
@@ -195,13 +262,20 @@ const Roulette = ({ t }) => {
     if (gameOver === 'lose') return t('💀 你倒下了……');
     if (busy) return t('……');
     switch (lastResult) {
-      case 'live': return t('💥 实弹！你被打中！');
-      case 'blank': return t('💨 空包弹，虚惊一场，你继续行动');
-      case 'eject_live': return t('🍺 弹出一发实弹！');
-      case 'eject_blank': return t('🍺 弹出一发空包');
-      case 'ai_live': return t('💥 AI 开枪命中！');
-      case 'ai_blank': return t('💨 AI 打出空包弹');
-      default: return turn === 'player' ? t('你的回合') : t('AI 回合……');
+      case 'live':
+        return t('💥 实弹！你被打中！');
+      case 'blank':
+        return t('💨 空包弹，虚惊一场，你继续行动');
+      case 'eject_live':
+        return t('🍺 弹出一发实弹！');
+      case 'eject_blank':
+        return t('🍺 弹出一发空包');
+      case 'ai_live':
+        return t('💥 AI 开枪命中！');
+      case 'ai_blank':
+        return t('💨 AI 打出空包弹');
+      default:
+        return turn === 'player' ? t('你的回合') : t('AI 回合……');
     }
   };
 
@@ -213,18 +287,32 @@ const Roulette = ({ t }) => {
           <Tag color='orange'>{t('AI 生命')}</Tag>
           <Tag color='grey'>{t('第 {{r}} 轮', { r: round })}</Tag>
         </Space>
-        <Button size='small' onClick={restart}>{t('重新开始')}</Button>
+        <Button size='small' onClick={restart}>
+          {t('重新开始')}
+        </Button>
       </div>
 
       {/* 生命条 */}
       <div className='grid grid-cols-2 gap-4 mb-3'>
         <div>
-          <Text type='secondary' size='small'>{t('你')}</Text>
-          <Progress percent={(hp / 3) * 100} stroke='#22c55e' showInfo={false} />
+          <Text type='secondary' size='small'>
+            {t('你')}
+          </Text>
+          <Progress
+            percent={(hp / 3) * 100}
+            stroke='#22c55e'
+            showInfo={false}
+          />
         </div>
         <div>
-          <Text type='secondary' size='small'>{t('AI')}</Text>
-          <Progress percent={(aiHp / 3) * 100} stroke='#ef4444' showInfo={false} />
+          <Text type='secondary' size='small'>
+            {t('AI')}
+          </Text>
+          <Progress
+            percent={(aiHp / 3) * 100}
+            stroke='#ef4444'
+            showInfo={false}
+          />
         </div>
       </div>
 
@@ -233,7 +321,13 @@ const Roulette = ({ t }) => {
         style={{ background: 'linear-gradient(160deg,#1c1917,#292524)' }}
       >
         <div style={{ fontSize: 60 }}>
-          {busy ? '🎯' : lastResult === 'live' || lastResult === 'ai_live' ? '💥' : lastResult === 'blank' || lastResult === 'ai_blank' ? '💨' : '🔫'}
+          {busy
+            ? '🎯'
+            : lastResult === 'live' || lastResult === 'ai_live'
+              ? '💥'
+              : lastResult === 'blank' || lastResult === 'ai_blank'
+                ? '💨'
+                : '🔫'}
         </div>
         <Text style={{ color: '#e7e5e4' }} strong className='mt-2'>
           {statusText()}
@@ -244,38 +338,59 @@ const Roulette = ({ t }) => {
           </Tag>
         )}
         <Space className='mt-3'>
-          <Tag color='red'>{t('实弹')} × {liveCount}</Tag>
-          <Tag color='blue'>{t('空包')} × {blankCount}</Tag>
-          <Tag color='grey'>{t('剩余')} {chamber.length}/6</Tag>
+          <Tag color='red'>
+            {t('实弹')} × {liveCount}
+          </Tag>
+          <Tag color='blue'>
+            {t('空包')} × {blankCount}
+          </Tag>
+          <Tag color='grey'>
+            {t('剩余')} {chamber.length}/6
+          </Tag>
         </Space>
-        {combo > 0 && <Tag color='orange' className='mt-2'>{t('连击')} ×{combo}</Tag>}
+        {combo > 0 && (
+          <Tag color='orange' className='mt-2'>
+            {t('连击')} ×{combo}
+          </Tag>
+        )}
       </div>
 
       {/* 操作 */}
       {!gameOver && (
         <div className='flex gap-2 mt-3 flex-wrap'>
           <Button
-            theme='solid' type='danger' size='large'
+            theme='solid'
+            type='danger'
+            size='large'
             disabled={busy || turn !== 'player' || chamber.length === 0}
             onClick={() => fire('self')}
           >
             {t('对自己开枪')} {t('(空包=再行动)')}
           </Button>
           <Button
-            theme='solid' type='warning' size='large'
+            theme='solid'
+            type='warning'
+            size='large'
             disabled={busy || turn !== 'player' || chamber.length === 0}
             onClick={() => fire('ai')}
           >
             {t('射击 AI')}
           </Button>
           <Button
-            disabled={magnifiers <= 0 || turn !== 'player' || busy || chamber.length === 0}
+            disabled={
+              magnifiers <= 0 ||
+              turn !== 'player' ||
+              busy ||
+              chamber.length === 0
+            }
             onClick={useMagnifier}
           >
             🔍 {t('放大镜')} ×{magnifiers}
           </Button>
           <Button
-            disabled={beers <= 0 || turn !== 'player' || busy || chamber.length === 0}
+            disabled={
+              beers <= 0 || turn !== 'player' || busy || chamber.length === 0
+            }
             onClick={useBeer}
           >
             🍺 {t('啤酒')} ×{beers}
@@ -284,9 +399,16 @@ const Roulette = ({ t }) => {
       )}
 
       <Text type='secondary' className='block mt-2'>
-        {t('弹巢随机装填实弹与空包（数量已知顺序未知）。空包打自己=免费再行动；实弹伤害 1 点，3 血先归零者输。放大镜看当前发，啤酒弹出当前发。命中 AI +300 起连击加成，获胜 +2000。')}
+        {t(
+          '弹巢随机装填实弹与空包（数量已知顺序未知）。空包打自己=免费再行动；实弹伤害 1 点，3 血先归零者输。放大镜看当前发，啤酒弹出当前发。命中 AI +300 起连击加成，获胜 +2000。',
+        )}
       </Text>
-      <RedeemPanel gameKey='roulette' score={score} onRedeemed={() => setScore(0)} t={t} />
+      <RedeemPanel
+        gameKey='roulette'
+        score={score}
+        onRedeemed={() => setScore(0)}
+        t={t}
+      />
     </div>
   );
 };

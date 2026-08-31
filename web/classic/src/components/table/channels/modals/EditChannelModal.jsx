@@ -1287,7 +1287,8 @@ const EditChannelModal = (props) => {
   const fetchModels = async () => {
     try {
       let res = await API.get(`/api/channel/models`);
-      const localModelOptions = res.data.data.map((model) => {
+      const models = Array.isArray(res?.data?.data) ? res.data.data : [];
+      const localModelOptions = models.map((model) => {
         const id = (model.id || '').trim();
         return {
           key: id,
@@ -1296,9 +1297,9 @@ const EditChannelModal = (props) => {
         };
       });
       setOriginModelOptions(localModelOptions);
-      setFullModels(res.data.data.map((model) => model.id));
+      setFullModels(models.map((model) => model.id));
       setBasicModels(
-        res.data.data
+        models
           .filter((model) => {
             return model.id.startsWith('gpt-') || model.id.startsWith('text-');
           })
@@ -1315,8 +1316,9 @@ const EditChannelModal = (props) => {
       if (res === undefined) {
         return;
       }
+      const groups = Array.isArray(res?.data?.data) ? res.data.data : [];
       setGroupOptions(
-        res.data.data.map((group) => ({
+        groups.map((group) => ({
           label: group,
           value: group,
         })),

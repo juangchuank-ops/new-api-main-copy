@@ -32,10 +32,16 @@ export function authHeader() {
   }
 }
 
+// session-expired 由 showError 在 401 时设置。
+// useSidebar 在整页刷新后可能用 access token 重新拉取 /api/user/self
+// 把 user 写回 localStorage，因此所有路由守卫都必须检查此标记，
+// 否则会与 AuthRedirect / PrivateRoute 形成无限重定向循环。
+const isSessionExpired = () => sessionStorage.getItem('session-expired') === '1';
+
 export const AuthRedirect = ({ children }) => {
   const user = localStorage.getItem('user');
 
-  if (user) {
+  if (user && !isSessionExpired()) {
     return <Navigate to='/console' replace />;
   }
 
@@ -43,7 +49,7 @@ export const AuthRedirect = ({ children }) => {
 };
 
 function PrivateRoute({ children }) {
-  if (!localStorage.getItem('user')) {
+  if (!localStorage.getItem('user') || isSessionExpired()) {
     return <Navigate to='/login' state={{ from: history.location }} />;
   }
   return children;
@@ -51,12 +57,12 @@ function PrivateRoute({ children }) {
 
 export function AdminRoute({ children }) {
   const raw = localStorage.getItem('user');
-  if (!raw) {
+  if (!raw || isSessionExpired()) {
     return <Navigate to='/login' state={{ from: history.location }} />;
   }
   try {
     const user = JSON.parse(raw);
-    if (user && typeof user.role === 'number' && user.role >= 10) {
+    if (user && typeof user.role === 'number' && user.role >= 5) {
       return children;
     }
   } catch (e) {

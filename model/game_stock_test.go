@@ -7,8 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestApplyPriceImpactLimitsSingleEventShock(t *testing.T) {
+	stock := &GameStock{PrevClose: 100, LastPrice: 100}
+	assert.InDelta(t, 103.0, applyPriceImpact(stock, 10), 1e-9)
+	assert.InDelta(t, 97.0, applyPriceImpact(stock, -10), 1e-9)
+}
 func TestStockBuyAndSellSettlesQuotaAndPosition(t *testing.T) {
 	truncateTables(t)
+
 	require.NoError(t, DB.AutoMigrate(&GameStock{}, &GameStockPosition{}, &GameStockTrade{}))
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM game_stock_trades")

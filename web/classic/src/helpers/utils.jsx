@@ -35,8 +35,24 @@ export default HTMLToastContent;
 export function isAdmin() {
   let user = localStorage.getItem('user');
   if (!user) return false;
-  user = JSON.parse(user);
+  try {
+    user = JSON.parse(user);
+  } catch (e) {
+    return false;
+  }
   return user.role >= 10;
+}
+
+// 管理侧边栏对权限管理员(5)及以上可见；数据/日志等 AdminAuth 端点仍需 isAdmin()。
+export function isAdminOrPermissionAdmin() {
+  let user = localStorage.getItem('user');
+  if (!user) return false;
+  try {
+    user = JSON.parse(user);
+  } catch (e) {
+    return false;
+  }
+  return user.role >= 5;
 }
 
 export function isRoot() {
@@ -127,7 +143,10 @@ export function showError(error) {
         case 401:
           // 清除用户状态
           localStorage.removeItem('user');
-          // toast.error('错误：未登录或登录已过期，请重新登录！', showErrorOptions);
+          // 标记 session 已过期，防止 AuthRedirect 因 useSidebar 重新写入
+          // localStorage 而把用户推回 /console 形成重定向死循环。
+          // 登录成功后由 LoginForm 清除此标记。
+          sessionStorage.setItem('session-expired', '1');
           window.location.href = '/login?expired=true';
           break;
         case 429:
@@ -842,20 +861,20 @@ export const getModelPriceItems = (
     const unitSuffix = ` / 1${priceData.unitLabel} Tokens`;
     return [
       {
-        key: 'input',
-        label: t('输入价格'),
-        value: priceData.inputPrice,
-        suffix: unitSuffix,
-      },
-      {
         key: 'completion',
-        label: t('补全价格'),
+        label: t('输出'),
         value: priceData.completionPrice,
         suffix: unitSuffix,
       },
       {
+        key: 'input',
+        label: t('输入（未命中）'),
+        value: priceData.inputPrice,
+        suffix: unitSuffix,
+      },
+      {
         key: 'cache',
-        label: t('缓存读取价格'),
+        label: t('输入（命中）'),
         value: priceData.cachePrice,
         suffix: unitSuffix,
       },

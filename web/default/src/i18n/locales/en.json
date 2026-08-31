@@ -1942,7 +1942,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Force a syntactically valid JSON response",
@@ -5002,6 +5002,13 @@
     "This will permanently delete {{count}} selected invitation codes.": "This will permanently delete {{count}} selected invitation codes.",
     "This will permanently delete this invitation code.": "This will permanently delete this invitation code.",
     "Failed to delete invitation code": "Failed to delete invitation code",
-    "Failed to load invitation codes": "Failed to load invitation codes"
+    "Failed to load invitation codes": "Failed to load invitation codes",
+    "Continue with Google": "Continue with Google",
+    "Failed to start Google login": "Failed to start Google login",
+    "Enable Google OAuth": "Enable Google OAuth",
+    "Allow users to sign in with Google": "Allow users to sign in with Google",
+    "Your Google OAuth Client ID": "Your Google OAuth Client ID",
+    "Your Google OAuth Client Secret": "Your Google OAuth Client Secret",
+    "Google": "Google"
   }
 }

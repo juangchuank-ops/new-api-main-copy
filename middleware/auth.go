@@ -92,6 +92,25 @@ func authHelper(c *gin.Context, minRole int) {
 			return
 		}
 	}
+	// Session role/status can be stale after Root changes a user's role.
+	// Reload the current record so authorization and self data converge without logout.
+	if useAccessToken {
+		if currentUser, loadErr := model.GetUserById(id.(int), false); loadErr == nil {
+			username = currentUser.Username
+			role = currentUser.Role
+			status = currentUser.Status
+		}
+	} else if sessionRole, ok := role.(int); ok && sessionRole >= common.RolePermissionAdmin {
+		if sessionId, ok := id.(int); ok {
+			if currentUser, loadErr := model.GetUserById(sessionId, false); loadErr == nil {
+				username = currentUser.Username
+				role = currentUser.Role
+				status = currentUser.Status
+			} else {
+				common.SysLog("failed to refresh session user: " + loadErr.Error())
+			}
+		}
+	}
 	// get header New-Api-User
 	apiUserIdStr := c.Request.Header.Get("New-Api-User")
 	if apiUserIdStr == "" {
@@ -189,9 +208,64 @@ func AdminAuth() func(c *gin.Context) {
 	}
 }
 
+// PermissionAdminAuth authenticates administrators of any level, including
+// permission administrators. ModuleAuth applies the fine-grained check.
+func PermissionAdminAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RolePermissionAdmin)
+	}
+}
+
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleRootUser)
+	}
+}
+
+// ModuleAuth limits permission administrators to an explicitly granted
+// management module. Multiple modules mean any granted one allows access.
+// Full admins and root users retain their existing access.
+func ModuleAuth(modules ...string) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		role := c.GetInt("role")
+		if role >= common.RoleAdminUser {
+			c.Next()
+			return
+		}
+		if role != common.RolePermissionAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "insufficient privilege"})
+			c.Abort()
+			return
+		}
+		user, err := model.GetUserById(c.GetInt("id"), false)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to load permissions"})
+			c.Abort()
+			return
+		}
+		setting := user.GetSetting()
+		var config map[string]interface{}
+		if setting.SidebarModules == "" || common.Unmarshal([]byte(setting.SidebarModules), &config) != nil {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "module permission denied"})
+			c.Abort()
+			return
+		}
+		adminConfig, ok := config["admin"].(map[string]interface{})
+		allowed := false
+		if ok && adminConfig["enabled"] != false {
+			for _, module := range modules {
+				if adminConfig[module] == true {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "module permission denied"})
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }
 
@@ -288,13 +362,13 @@ func UserOrNewApiUserAuth() func(c *gin.Context) {
 		session := sessions.Default(c)
 		userIdInterface := session.Get("id")
 		authHeader := c.Request.Header.Get("Authorization")
-		
+
 		if userIdInterface != nil || authHeader != "" {
 			// 有 session 或 token，使用 UserAuth 逻辑
 			UserAuth()(c)
 			return
 		}
-		
+
 		// 没有 session 和 token，尝试 New-Api-User header
 		apiUserIdStr := c.Request.Header.Get("New-Api-User")
 		if apiUserIdStr != "" {
@@ -302,7 +376,7 @@ func UserOrNewApiUserAuth() func(c *gin.Context) {
 			NewApiUserAuth()(c)
 			return
 		}
-		
+
 		// 两种认证都失败
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,

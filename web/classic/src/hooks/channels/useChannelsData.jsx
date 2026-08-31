@@ -564,8 +564,9 @@ export const useChannelsData = () => {
     try {
       let res = await API.get(`/api/group/`);
       if (res === undefined) return;
+      const groups = Array.isArray(res?.data?.data) ? res.data.data : [];
       setGroupOptions(
-        res.data.data.map((group) => ({
+        groups.map((group) => ({
           label: group,
           value: group,
         })),

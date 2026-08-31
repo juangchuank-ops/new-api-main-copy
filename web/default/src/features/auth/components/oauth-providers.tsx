@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import {
   IconDiscord,
   IconGithub,
+  IconGoogle,
   IconLinuxDo,
   IconWeChat,
 } from '@/assets/brand-icons'
@@ -63,6 +64,7 @@ export function OAuthProviders({
     handleDiscordLogin,
     handleOIDCLogin,
     handleLinuxDOLogin,
+    handleGoogleLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
   } = useOAuthLogin(status)
@@ -95,6 +97,15 @@ export function OAuthProviders({
       label: t('Continue with Discord'),
       onClick: handleDiscordLogin,
       icon: <IconDiscord className='h-4 w-4' />,
+    })
+  }
+
+  if (status?.google_oauth) {
+    providerButtons.push({
+      key: 'google',
+      label: t('Continue with Google'),
+      onClick: handleGoogleLogin,
+      icon: <IconGoogle className='h-4 w-4' />,
     })
   }
 

@@ -80,7 +80,14 @@ export const useUserPermissions = () => {
     return true;
   };
 
-  // 获取允许的边栏区域列表
+  const isAdminModuleAllowed = (moduleKey) => {
+    if (permissions?.admin_modules && permissions.admin_modules[moduleKey] === false) {
+      return false;
+    }
+    return true;
+  };
+
+  // 获取允许访问的边栏区域
   const getAllowedSidebarSections = () => {
     if (!permissions?.sidebar_modules) return [];
 

@@ -5,8 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestNormalizeAvatarURL(t *testing.T) {
@@ -41,4 +46,51 @@ func TestNormalizeAvatarURL(t *testing.T) {
 			assert.Equal(t, test.expected, actual)
 		})
 	}
+}
+
+func TestSyncOAuthAvatar(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+
+	previousDB := model.DB
+	previousRedisEnabled := common.RedisEnabled
+	model.DB = db
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.RedisEnabled = previousRedisEnabled
+	})
+
+	user := model.User{
+		Username:    "oauth_avatar_user",
+		DisplayName: "OAuth Avatar User",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	user.SetSetting(dto.UserSetting{
+		Language:  "zh",
+		AvatarUrl: "https://cdn.example.com/old.png",
+	})
+	require.NoError(t, db.Create(&user).Error)
+
+	t.Run("valid avatar updates and preserves other settings", func(t *testing.T) {
+		syncOAuthAvatar(&user, " https://cdn.example.com/new.png ")
+
+		var stored model.User
+		require.NoError(t, db.First(&stored, user.Id).Error)
+		settings := stored.GetSetting()
+		assert.Equal(t, "https://cdn.example.com/new.png", settings.AvatarUrl)
+		assert.Equal(t, "zh", settings.Language)
+		assert.Equal(t, settings, user.GetSetting())
+	})
+
+	t.Run("empty and invalid avatars leave current avatar unchanged", func(t *testing.T) {
+		syncOAuthAvatar(&user, "")
+		syncOAuthAvatar(&user, "javascript:alert(1)")
+
+		var stored model.User
+		require.NoError(t, db.First(&stored, user.Id).Error)
+		assert.Equal(t, "https://cdn.example.com/new.png", stored.GetSetting().AvatarUrl)
+	})
 }

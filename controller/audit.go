@@ -46,6 +46,10 @@ var auditContentTemplates = map[string]string{
 	"channel.upstream_apply_all": "Applied upstream model changes to ${count} channels",
 
 	"redemption.create": "Created ${count} redemption codes named ${name} (${quota} each)",
+	"ip_ban.create":     "Created IP ban ${rule} (ID: ${id})",
+	"ip_ban.update":     "Updated IP ban ${rule} (ID: ${id})",
+	"ip_ban.toggle":     "Set IP ban ${rule} enabled=${enabled} (ID: ${id})",
+	"ip_ban.delete":     "Deleted IP ban ${rule} (ID: ${id})",
 }
 
 // auditContentEN 按 action 模板渲染英文兜底文本；未登记的 action 退回 action 本身。

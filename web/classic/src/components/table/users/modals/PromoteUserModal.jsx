@@ -17,19 +17,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Modal } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+import { Modal, Select } from '@douyinfe/semi-ui';
 
-const PromoteUserModal = ({ visible, onCancel, onConfirm, user, t }) => {
+const PromoteUserModal = ({ visible, onCancel, onConfirm, t }) => {
+  const [role, setRole] = useState('5');
+
+  useEffect(() => {
+    if (visible) {
+      setRole('5');
+    }
+  }, [visible]);
+
   return (
     <Modal
-      title={t('确定要提升此用户吗？')}
+      title={t('提升用户权限')}
       visible={visible}
       onCancel={onCancel}
-      onOk={onConfirm}
+      onOk={() => onConfirm(Number(role))}
       type='warning'
     >
-      {t('此操作将提升用户的权限级别')}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span>{t('请选择提升后的角色')}</span>
+        <Select value={role} onChange={setRole} style={{ width: '100%' }}>
+          <Select.Option value='5'>{t('权限管理员')}</Select.Option>
+          <Select.Option value='10'>{t('管理员')}</Select.Option>
+        </Select>
+      </div>
     </Modal>
   );
 };

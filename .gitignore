@@ -76,3 +76,9 @@ page.html
 # Runtime logs
 new-api.stderr.log
 new-api.stdout.log
+
+# Binary / deploy artifacts
+*.deploy
+*.deploy.gz
+*.gz
+*.bak

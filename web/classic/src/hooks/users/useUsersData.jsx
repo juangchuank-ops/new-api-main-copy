@@ -72,7 +72,18 @@ export const useUsersData = () => {
   // Load users data
   const loadUsers = async (startIdx, pageSize) => {
     setLoading(true);
-    const res = await API.get(`/api/user/?p=${startIdx}&page_size=${pageSize}`);
+    // skipErrorHandler 避免全局拦截器在调用方（如权限保存后的静默刷新）
+    // 再弹一次错误提示；失败统一由这里提示一次。
+    let res;
+    try {
+      res = await API.get(`/api/user/?p=${startIdx}&page_size=${pageSize}`, {
+        skipErrorHandler: true,
+      });
+    } catch (error) {
+      showError(error?.response?.data?.message || error.message);
+      setLoading(false);
+      return;
+    }
     const { success, message, data } = res.data;
     if (success) {
       const newPageData = data.items;
@@ -105,9 +116,17 @@ export const useUsersData = () => {
       return;
     }
     setSearching(true);
-    const res = await API.get(
-      `/api/user/search?keyword=${searchKeyword}&group=${searchGroup}&p=${startIdx}&page_size=${pageSize}`,
-    );
+    let res;
+    try {
+      res = await API.get(
+        `/api/user/search?keyword=${searchKeyword}&group=${searchGroup}&p=${startIdx}&page_size=${pageSize}`,
+        { skipErrorHandler: true },
+      );
+    } catch (error) {
+      showError(error?.response?.data?.message || error.message);
+      setSearching(false);
+      return;
+    }
     const { success, message, data } = res.data;
     if (success) {
       const newPageData = data.items;
@@ -125,11 +144,18 @@ export const useUsersData = () => {
     // Trigger loading state to force table re-render
     setLoading(true);
 
-    const res = await API.post('/api/user/manage', {
-      id: userId,
-      action,
-      ...extra,
-    });
+    let res;
+    try {
+      res = await API.post('/api/user/manage', {
+        id: userId,
+        action,
+        ...extra,
+      }, { skipErrorHandler: true });
+    } catch (error) {
+      showError(error?.response?.data?.message || error.message);
+      setLoading(false);
+      return false;
+    }
 
     const { success, message } = res.data;
     if (success) {
@@ -148,11 +174,13 @@ export const useUsersData = () => {
       });
 
       setUsers(newUsers);
-    } else {
-      showError(message);
+      setLoading(false);
+      return true;
     }
 
+    showError(message);
     setLoading(false);
+    return false;
   };
 
   const resetUserPasskey = async (user) => {
@@ -242,8 +270,9 @@ export const useUsersData = () => {
       if (res === undefined) {
         return;
       }
+      const groups = Array.isArray(res?.data?.data) ? res.data.data : [];
       setGroupOptions(
-        res.data.data.map((group) => ({
+        groups.map((group) => ({
           label: group,
           value: group,
         })),

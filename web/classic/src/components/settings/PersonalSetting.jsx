@@ -585,6 +585,7 @@ const PersonalSetting = () => {
                 passkeyDeleteLoading={passkeyDeleteLoading}
                 onPasskeyRegister={handleRegisterPasskey}
                 onPasskeyDelete={handleRemovePasskey}
+                onUserInfoChanged={getUserData}
               />
 
               {/* 偏好设置（语言等） */}

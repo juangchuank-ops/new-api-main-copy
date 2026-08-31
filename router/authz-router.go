@@ -15,5 +15,7 @@ func registerAuthzRoutes(apiRouter *gin.RouterGroup) {
 	authzRoute.Use(middleware.AdminAuth())
 	{
 		authzRoute.GET("/catalog", controller.GetPermissionCatalog)
+		authzRoute.GET("/users/:id", middleware.RootAuth(), controller.GetPermissionAdmin)
+		authzRoute.PUT("/users/:id", middleware.RootAuth(), controller.UpdatePermissionAdmin)
 	}
 }

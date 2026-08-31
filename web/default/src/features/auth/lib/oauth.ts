@@ -23,6 +23,7 @@ export {
   buildDiscordOAuthUrl,
   buildOIDCOAuthUrl,
   buildLinuxDOOAuthUrl,
+  buildGoogleOAuthUrl,
 } from '@/lib/oauth'
 
 // ============================================================================
@@ -54,6 +55,15 @@ export function getAvailableOAuthProviders(
       type: 'discord',
       enabled: true,
       clientId: status.discord_client_id,
+    })
+  }
+
+  if (status.google_oauth) {
+    providers.push({
+      name: 'Google',
+      type: 'google',
+      enabled: true,
+      clientId: status.google_client_id,
     })
   }
 
@@ -98,6 +108,7 @@ export function hasOAuthProviders(status: SystemStatus | null): boolean {
     status.oidc_enabled ||
     status.linuxdo_oauth ||
     status.telegram_oauth ||
+    status.google_oauth ||
     status.wechat_login
   )
 }

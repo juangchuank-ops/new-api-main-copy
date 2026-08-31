@@ -27,12 +27,13 @@ func init() {
 type LinuxDOProvider struct{}
 
 type linuxdoUser struct {
-	Id         int    `json:"id"`
-	Username   string `json:"username"`
-	Name       string `json:"name"`
-	Active     bool   `json:"active"`
-	TrustLevel int    `json:"trust_level"`
-	Silenced   bool   `json:"silenced"`
+	Id             int    `json:"id"`
+	Username       string `json:"username"`
+	Name           string `json:"name"`
+	Active         bool   `json:"active"`
+	TrustLevel     int    `json:"trust_level"`
+	Silenced       bool   `json:"silenced"`
+	AvatarTemplate string `json:"avatar_template"`
 }
 
 func (p *LinuxDOProvider) GetName() string {
@@ -168,12 +169,28 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 		ProviderUserID: strconv.Itoa(linuxdoUser.Id),
 		Username:       linuxdoUser.Username,
 		DisplayName:    linuxdoUser.Name,
+		AvatarURL:      linuxdoAvatarURL(linuxdoUser.AvatarTemplate),
 		Extra: map[string]any{
 			"trust_level": linuxdoUser.TrustLevel,
 			"active":      linuxdoUser.Active,
 			"silenced":    linuxdoUser.Silenced,
 		},
 	}, nil
+}
+
+func linuxdoAvatarURL(template string) string {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return ""
+	}
+	template = strings.ReplaceAll(template, "{size}", "120")
+	if strings.HasPrefix(template, "//") {
+		return "https:" + template
+	}
+	if strings.HasPrefix(template, "/") {
+		return "https://linux.do" + template
+	}
+	return template
 }
 
 func (p *LinuxDOProvider) IsUserIDTaken(providerUserID string) bool {

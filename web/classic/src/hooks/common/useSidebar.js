@@ -43,6 +43,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     topup: true,
     personal: true,
+    transfer: true,
   },
   admin: {
     enabled: true,
@@ -55,8 +56,10 @@ export const DEFAULT_ADMIN_CONFIG = {
     subscription: true,
     setting: true,
     'system-info': true,
-    'banner': true,
+    banner: true,
     'upstream-account': true,
+    'ip-ban': true,
+    'browser-fingerprint-ban': true,
   },
 };
 
@@ -86,6 +89,7 @@ export const useSidebar = () => {
   const [loading, setLoading] = useState(true);
   const instanceIdRef = useRef(null);
   const hasLoadedOnceRef = useRef(false);
+  const userConfigRequestRef = useRef(null);
 
   if (!instanceIdRef.current) {
     const randomPart = Math.random().toString(16).slice(2);
@@ -107,65 +111,105 @@ export const useSidebar = () => {
 
   // 加载用户配置的通用方法
   const loadUserConfig = async ({ withLoading } = {}) => {
-    const shouldShowLoader =
-      typeof withLoading === 'boolean'
-        ? withLoading
-        : !hasLoadedOnceRef.current;
+    if (userConfigRequestRef.current) {
+      return userConfigRequestRef.current;
+    }
 
-    try {
-      if (shouldShowLoader) {
-        setLoading(true);
-      }
+    const request = (async () => {
+      const shouldShowLoader =
+        typeof withLoading === 'boolean'
+          ? withLoading
+          : !hasLoadedOnceRef.current;
 
-      const res = await API.get('/api/user/self');
-      if (res.data.success && res.data.data.sidebar_modules) {
-        let config;
-        // 检查sidebar_modules是字符串还是对象
-        if (typeof res.data.data.sidebar_modules === 'string') {
-          config = JSON.parse(res.data.data.sidebar_modules);
-        } else {
-          config = res.data.data.sidebar_modules;
+      try {
+        if (shouldShowLoader) {
+          setLoading(true);
         }
-        setUserConfig(config);
-      } else {
-        // 当用户没有配置时，生成一个基于管理员配置的默认用户配置
-        // 这样可以确保权限控制正确生效
+
+        const res = await API.get('/api/user/self');
+        const selfData = res.data.data;
+        if (selfData?.role !== undefined || selfData?.sidebar_modules !== undefined) {
+          try {
+            const cachedUser = JSON.parse(localStorage.getItem('user') || '{}');
+            const nextUser = {
+              ...cachedUser,
+              ...(selfData?.role !== undefined ? { role: selfData.role } : {}),
+              ...(selfData?.id !== undefined ? { id: selfData.id } : {}),
+              ...(selfData?.sidebar_modules !== undefined
+                ? { sidebar_modules: selfData.sidebar_modules }
+                : {}),
+            };
+            const userChanged =
+              cachedUser.role !== nextUser.role ||
+              cachedUser.id !== nextUser.id ||
+              JSON.stringify(cachedUser.sidebar_modules) !==
+                JSON.stringify(nextUser.sidebar_modules);
+            if (userChanged) {
+              localStorage.setItem('user', JSON.stringify(nextUser));
+              window.dispatchEvent(new Event('user-updated'));
+            }
+          } catch (e) {
+            // Ignore malformed local user data; sidebar config still applies.
+          }
+        }
+        if (res.data.success && res.data.data.sidebar_modules) {
+          let config;
+          // 检查sidebar_modules是字符串还是对象
+          if (typeof res.data.data.sidebar_modules === 'string') {
+            config = JSON.parse(res.data.data.sidebar_modules);
+          } else {
+            config = res.data.data.sidebar_modules;
+          }
+          setUserConfig(config);
+        } else {
+          // 当用户没有配置时，生成一个基于管理员配置的默认用户配置
+          // 这样可以确保权限控制正确生效
+          const defaultUserConfig = {};
+          Object.keys(adminConfig).forEach((sectionKey) => {
+            if (adminConfig[sectionKey]?.enabled) {
+              defaultUserConfig[sectionKey] = { enabled: true };
+              // 为每个管理员允许的模块设置默认值为true
+              Object.keys(adminConfig[sectionKey]).forEach((moduleKey) => {
+                if (
+                  moduleKey !== 'enabled' &&
+                  adminConfig[sectionKey][moduleKey]
+                ) {
+                  defaultUserConfig[sectionKey][moduleKey] = true;
+                }
+              });
+            }
+          });
+          setUserConfig(defaultUserConfig);
+        }
+      } catch (error) {
+        // 出错时也生成默认配置，而不是设置为空对象
         const defaultUserConfig = {};
         Object.keys(adminConfig).forEach((sectionKey) => {
           if (adminConfig[sectionKey]?.enabled) {
             defaultUserConfig[sectionKey] = { enabled: true };
-            // 为每个管理员允许的模块设置默认值为true
             Object.keys(adminConfig[sectionKey]).forEach((moduleKey) => {
-              if (
-                moduleKey !== 'enabled' &&
-                adminConfig[sectionKey][moduleKey]
-              ) {
+              if (moduleKey !== 'enabled' && adminConfig[sectionKey][moduleKey]) {
                 defaultUserConfig[sectionKey][moduleKey] = true;
               }
             });
           }
         });
         setUserConfig(defaultUserConfig);
-      }
-    } catch (error) {
-      // 出错时也生成默认配置，而不是设置为空对象
-      const defaultUserConfig = {};
-      Object.keys(adminConfig).forEach((sectionKey) => {
-        if (adminConfig[sectionKey]?.enabled) {
-          defaultUserConfig[sectionKey] = { enabled: true };
-          Object.keys(adminConfig[sectionKey]).forEach((moduleKey) => {
-            if (moduleKey !== 'enabled' && adminConfig[sectionKey][moduleKey]) {
-              defaultUserConfig[sectionKey][moduleKey] = true;
-            }
-          });
+      } finally {
+        if (shouldShowLoader) {
+          setLoading(false);
         }
-      });
-      setUserConfig(defaultUserConfig);
-    } finally {
-      if (shouldShowLoader) {
-        setLoading(false);
+        hasLoadedOnceRef.current = true;
       }
-      hasLoadedOnceRef.current = true;
+    })();
+
+    userConfigRequestRef.current = request;
+    try {
+      return await request;
+    } finally {
+      if (userConfigRequestRef.current === request) {
+        userConfigRequestRef.current = null;
+      }
     }
   };
 
@@ -215,6 +259,18 @@ export const useSidebar = () => {
     };
   }, [adminConfig]);
 
+  // Keep an already-mounted sidebar in sync when the current user's role changes.
+  useEffect(() => {
+    const handleUserUpdated = () => {
+      if (Object.keys(adminConfig).length > 0) {
+        loadUserConfig({ withLoading: false });
+      }
+    };
+
+    window.addEventListener('user-updated', handleUserUpdated);
+    return () => window.removeEventListener('user-updated', handleUserUpdated);
+  }, [adminConfig]);
+
   // 计算最终的显示配置
   const finalConfig = useMemo(() => {
     const result = {};
@@ -250,9 +306,14 @@ export const useSidebar = () => {
         if (moduleKey === 'enabled') return;
 
         const adminAllowed = adminSection[moduleKey];
-        // 当userSection存在时检查模块状态，否则默认为true
+        // 权限管理员保存的是完整的 admin 配置；配置中缺失的模块必须视为未授权。
+        // 其余区域是用户个人偏好，缺失的键默认可见（与 useUserPermissions 的
+        // isSidebarModuleAllowed 一致），否则新增模块对已保存配置的老用户永远不可见。
+        const strictUserConfig = sectionKey === 'admin';
         const userAllowed = userSection
-          ? userSection[moduleKey] !== false
+          ? strictUserConfig
+            ? userSection[moduleKey] === true
+            : userSection[moduleKey] !== false
           : true;
 
         result[sectionKey][moduleKey] =

@@ -24,6 +24,7 @@ import { VChart } from '@visactor/react-vchart';
 import VChartErrorBoundary from '../common/VChartErrorBoundary';
 import { ensureVChartBrowserEnv } from '../../helpers/vchart-env';
 import { useChartTheme } from '../../hooks/useChartTheme';
+import FlowPanel from './FlowPanel';
 
 const ChartsPanel = ({
   activeChartTab,
@@ -34,6 +35,8 @@ const ChartsPanel = ({
   spec_rank_bar,
   spec_user_rank,
   spec_user_trend,
+  flowData,
+  flowLoading,
   isAdminUser,
   CARD_PROPS,
   CHART_CONFIG,
@@ -78,12 +81,16 @@ const ChartsPanel = ({
             {isAdminUser && (
               <TabPane tab={<span>{t('用户消耗趋势')}</span>} itemKey='6' />
             )}
+            {isAdminUser && (
+              <TabPane tab={<span>{t('分流')}</span>} itemKey='7' />
+            )}
           </Tabs>
         </div>
       }
       bodyStyle={{ padding: 0 }}
     >
-      <div className='h-96 p-2'>
+      {/* 分流桑基图需要更多纵向空间展示节点标签 */}
+      <div className={activeChartTab === '7' ? 'h-[560px] p-2' : 'h-96 p-2'}>
         {activeChartTab === '1' && (
           <VChartErrorBoundary><VChart key={`line-${theme}`} spec={renderSpec(spec_line)} option={CHART_CONFIG} /></VChartErrorBoundary>
         )}
@@ -101,6 +108,9 @@ const ChartsPanel = ({
         )}
         {activeChartTab === '6' && isAdminUser && (
           <VChartErrorBoundary><VChart key={`user-trend-${theme}`} spec={renderSpec(spec_user_trend)} option={CHART_CONFIG} /></VChartErrorBoundary>
+        )}
+        {activeChartTab === '7' && isAdminUser && (
+          <FlowPanel flowData={flowData} flowLoading={flowLoading} t={t} />
         )}
       </div>
     </Card>

@@ -93,6 +93,7 @@ const Dashboard = () => {
       if (userData && userData.length > 0) {
         dashboardCharts.updateUserChartData(userData);
       }
+      await dashboardData.loadFlowData();
     }
   };
 
@@ -197,6 +198,8 @@ const Dashboard = () => {
             spec_rank_bar={dashboardCharts.spec_rank_bar}
             spec_user_rank={dashboardCharts.spec_user_rank}
             spec_user_trend={dashboardCharts.spec_user_trend}
+            flowData={dashboardData.flowData}
+            flowLoading={dashboardData.flowLoading}
             isAdminUser={dashboardData.isAdminUser}
             CARD_PROPS={CARD_PROPS}
             CHART_CONFIG={CHART_CONFIG}

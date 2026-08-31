@@ -377,13 +377,13 @@ function PriceInput({ unitCost, field, index, onUpdate, placeholder }) {
 // ---------------------------------------------------------------------------
 
 const CACHE_FIELDS_TIMED = [
-  { field: 'cache_read_unit_cost', labelKey: '缓存读取价格' },
+  { field: 'cache_read_unit_cost', labelKey: '输入（命中）' },
   { field: 'cache_create_unit_cost', labelKey: '缓存创建价格（5分钟）' },
   { field: 'cache_create_1h_unit_cost', labelKey: '缓存创建价格（1小时）' },
 ];
 
 const CACHE_FIELDS_GENERIC = [
-  { field: 'cache_read_unit_cost', labelKey: '缓存读取价格' },
+  { field: 'cache_read_unit_cost', labelKey: '输入（命中）' },
   { field: 'cache_create_unit_cost', labelKey: '缓存创建价格' },
 ];
 
@@ -642,22 +642,22 @@ function VisualTierCard({ tier, index, isLast, isOnly, onUpdate, onRemove, t }) 
       >
         <div>
           <Text size='small' style={{ color: 'var(--semi-color-text-2)' }}>
-            {t('输入价格')}
+            {t('输出')}
           </Text>
           <PriceInput
-            unitCost={tier.input_unit_cost}
-            field='input_unit_cost'
+            unitCost={tier.output_unit_cost}
+            field='output_unit_cost'
             index={index}
             onUpdate={onUpdate}
           />
         </div>
         <div>
           <Text size='small' style={{ color: 'var(--semi-color-text-2)' }}>
-            {t('输出价格')}
+            {t('输入（未命中）')}
           </Text>
           <PriceInput
-            unitCost={tier.output_unit_cost}
-            field='output_unit_cost'
+            unitCost={tier.input_unit_cost}
+            field='input_unit_cost'
             index={index}
             onUpdate={onUpdate}
           />

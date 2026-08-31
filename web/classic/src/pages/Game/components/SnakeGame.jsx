@@ -217,11 +217,10 @@ const SnakeGame = ({ t }) => {
             this.rects.push(rect);
           } else {
             this.cells.pop();
-            const removedRect = this.rects.pop();
-            removedRect.destroy();
           }
 
-          // 每个图形跟随同索引的蛇节移动，避免把尾部图形瞬移到头部造成闪烁。
+          // 蛇未进食时复用全部蛇节图形，避免每移动一步就丢失一节。
+          // 每个图形跟随同索引的蛇节移动，保持补间动画连续。
           this.rects.forEach((r, i) => {
             this.tweens.killTweensOf(r);
             r.setFillStyle(i === 0 ? 0x4a7ba6 : 0x487fb4);

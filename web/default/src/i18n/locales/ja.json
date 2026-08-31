@@ -1942,7 +1942,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "構文的に有効な JSON 応答を強制",
@@ -5002,6 +5002,13 @@
     "This will permanently delete {{count}} selected invitation codes.": "選択した {{count}} 件の招待コードを完全に削除します。",
     "This will permanently delete this invitation code.": "この招待コードを完全に削除します。",
     "Failed to delete invitation code": "招待コードの削除に失敗しました",
-    "Failed to load invitation codes": "招待コードの読み込みに失敗しました"
+    "Failed to load invitation codes": "招待コードの読み込みに失敗しました",
+    "Continue with Google": "Googleで続行",
+    "Failed to start Google login": "Googleログインの開始に失敗しました",
+    "Enable Google OAuth": "Google OAuthを有効化",
+    "Allow users to sign in with Google": "ユーザーがGoogleでサインインできるようにする",
+    "Your Google OAuth Client ID": "Google OAuth クライアント ID",
+    "Your Google OAuth Client Secret": "Google OAuth クライアントシークレット",
+    "Google": "Google"
   }
 }

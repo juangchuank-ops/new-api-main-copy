@@ -50,6 +50,12 @@ const renderRole = (role, t) => {
           {t('普通用户')}
         </Tag>
       );
+    case 5:
+      return (
+        <Tag color='purple' shape='circle'>
+          {t('权限管理员')}
+        </Tag>
+      );
     case 10:
       return (
         <Tag color='yellow' shape='circle'>
@@ -211,6 +217,7 @@ const renderOperations = (
     setEditingUser,
     setShowEditUser,
     showPromoteModal,
+    showPermissionAdminModal,
     showDemoteModal,
     showEnableDisableModal,
     showDeleteModal,
@@ -299,6 +306,15 @@ const renderOperations = (
       >
         {t('提升')}
       </Button>
+      {isRoot() && record.role === 5 && (
+        <Button
+          type='primary'
+          size='small'
+          onClick={() => showPermissionAdminModal(record)}
+        >
+          {t('权限配置')}
+        </Button>
+      )}
       <Button
         type='secondary'
         size='small'
@@ -321,6 +337,7 @@ export const getUsersColumns = ({
   setEditingUser,
   setShowEditUser,
   showPromoteModal,
+  showPermissionAdminModal,
   showDemoteModal,
   showEnableDisableModal,
   showDeleteModal,
@@ -389,6 +406,7 @@ export const getUsersColumns = ({
           setEditingUser,
           setShowEditUser,
           showPromoteModal,
+          showPermissionAdminModal,
           showDemoteModal,
           showEnableDisableModal,
           showDeleteModal,

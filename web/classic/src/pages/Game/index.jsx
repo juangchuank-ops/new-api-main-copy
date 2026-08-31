@@ -18,15 +18,59 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, Input, Select, Space, Spin, Tag, Typography } from '@douyinfe/semi-ui';
+import {
+  Button,
+  Card,
+  Input,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from '@douyinfe/semi-ui';
 import { IconRefresh, IconSave, IconUndo } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import {
+  Blocks,
+  ChartCandlestick,
+  CircleDot,
+  Flame,
+  Gamepad2,
+  Gem,
+  Grid3X3,
+  Pickaxe,
+  ScanLine,
+  Spade,
+  TrendingUp,
+  Worm,
+} from 'lucide-react';
 import { API, showError, showSuccess } from '../../helpers';
 import { isRoot } from '../../helpers/utils';
 import GameHelpButton from './components/GameHelpButton';
+import './game-paper.css';
 
 const { Text, Title } = Typography;
+
+const GAME_ICONS = {
+  texas: Spade,
+  roulette: CircleDot,
+  snake: Worm,
+  longnight: Flame,
+  g1024: Grid3X3,
+  tetris: Blocks,
+  stock: ChartCandlestick,
+  futures: TrendingUp,
+  goldminer: Gem,
+  mining: Pickaxe,
+  roguelike: ScanLine,
+};
+
+const getExchangeLabel = (gameKey, t) => {
+  if (gameKey === 'stock' || gameKey === 'futures') return t('真实额度交易');
+  if (gameKey === 'roguelike') return t('100000 分 = 1 额度');
+  return t('1000 分 = 1 额度');
+};
 
 const Game = () => {
   const { t } = useTranslation();
@@ -34,7 +78,6 @@ const Game = () => {
   const [loading, setLoading] = useState(true);
   const [games, setGames] = useState([]);
   const [adminMode, setAdminMode] = useState(false);
-  // 管理模式下的草稿（标题 + 各游戏状态），保存前只存在本地
   const [draftTitle, setDraftTitle] = useState('');
   const [draftStatuses, setDraftStatuses] = useState({});
   const [saving, setSaving] = useState(false);
@@ -48,13 +91,13 @@ const Game = () => {
         setGames(data);
         setDraftTitle(data[0]?.page_title || '纸上游乐场');
         setDraftStatuses(
-          Object.fromEntries(data.map((g) => [g.game_key, g.status])),
+          Object.fromEntries(data.map((game) => [game.game_key, game.status])),
         );
       } else {
         showError(res.data.message);
       }
-    } catch (e) {
-      showError(e.message);
+    } catch (error) {
+      showError(error.message);
     }
     setLoading(false);
   }, []);
@@ -64,12 +107,14 @@ const Game = () => {
   }, [loadGames]);
 
   const canAdmin = isRoot();
+  const availableCount = games.filter(
+    (game) => game.status === 'available',
+  ).length;
 
-  // 未保存变更检测：标题或任一状态与服务器不一致
   const hasUnsavedChanges = useMemo(() => {
     if (!adminMode) return false;
     if ((games[0]?.page_title || '纸上游乐场') !== draftTitle) return true;
-    return games.some((g) => draftStatuses[g.game_key] !== g.status);
+    return games.some((game) => draftStatuses[game.game_key] !== game.status);
   }, [adminMode, games, draftTitle, draftStatuses]);
 
   const handleSave = async () => {
@@ -77,12 +122,12 @@ const Game = () => {
     try {
       const payload = {
         title: draftTitle.trim() || '纸上游乐场',
-        games: games.map((g) => ({
-          game_key: g.game_key,
-          name: g.name,
-          description: g.description,
-          status: draftStatuses[g.game_key] || g.status,
-          sort_order: g.sort_order,
+        games: games.map((game) => ({
+          game_key: game.game_key,
+          name: game.name,
+          description: game.description,
+          status: draftStatuses[game.game_key] || game.status,
+          sort_order: game.sort_order,
         })),
       };
       const res = await API.post('/api/user/game/manage', payload);
@@ -92,13 +137,13 @@ const Game = () => {
         setGames(data);
         setDraftTitle(data[0]?.page_title || '纸上游乐场');
         setDraftStatuses(
-          Object.fromEntries(data.map((g) => [g.game_key, g.status])),
+          Object.fromEntries(data.map((game) => [game.game_key, game.status])),
         );
       } else {
         showError(res.data.message);
       }
-    } catch (e) {
-      showError(e.message);
+    } catch (error) {
+      showError(error.message);
     }
     setSaving(false);
   };
@@ -106,31 +151,18 @@ const Game = () => {
   const handleDiscard = () => {
     setDraftTitle(games[0]?.page_title || '纸上游乐场');
     setDraftStatuses(
-      Object.fromEntries(games.map((g) => [g.game_key, g.status])),
+      Object.fromEntries(games.map((game) => [game.game_key, game.status])),
     );
   };
 
   return (
-    <div className='relative mt-[60px] px-2'>
-      {/* 未保存横幅：离导航栏留一点空 */}
+    <div className='game-paper-page game-lobby relative mt-[60px]'>
       {adminMode && hasUnsavedChanges && (
-        <div className='sticky top-[60px] z-40 mb-4'>
-          <div
-            className='flex items-center justify-between rounded-lg border px-4 py-2'
-            style={{
-              background: 'var(--semi-color-warning-light-default)',
-              borderColor: 'var(--semi-color-warning)',
-            }}
-          >
-            <Text strong style={{ color: 'var(--semi-color-warning)' }}>
-              {t('有操作未保存')}
-            </Text>
+        <div className='game-unsaved-wrap sticky top-[60px] z-40'>
+          <div className='game-unsaved-banner flex items-center justify-between gap-3'>
+            <Text strong>{t('有操作未保存')}</Text>
             <Space>
-              <Button
-                size='small'
-                icon={<IconUndo />}
-                onClick={handleDiscard}
-              >
+              <Button size='small' icon={<IconUndo />} onClick={handleDiscard}>
                 {t('取消')}
               </Button>
               <Button
@@ -148,73 +180,102 @@ const Game = () => {
         </div>
       )}
 
-      <div className='pb-8'>
-        <Card className='mb-4'>
-          <div className='flex items-center justify-between flex-wrap gap-3'>
-            <div>
+      <main className='game-paper-shell'>
+        <section className='game-masthead'>
+          <div className='game-masthead__copy'>
+            <Text className='game-eyebrow'>{t('游戏档案 · ARCADE INDEX')}</Text>
+            <div className='game-masthead__title-row'>
               <Title heading={3} className='!m-0'>
                 {adminMode ? (
                   <Input
                     value={draftTitle}
                     onChange={setDraftTitle}
-                    style={{ width: 260 }}
+                    className='game-title-input'
                     maxLength={40}
                   />
                 ) : (
                   games[0]?.page_title || t('纸上游乐场')
                 )}
               </Title>
-              <Text type='secondary'>
-                {t('普通计分游戏 1000 分 = 1 额度 · NEON-PULSE 10000 分 = 1 额度')}
+              <Text className='game-handnote'>
+                {t('play, collect, redeem')}
               </Text>
             </div>
-            <Space>
+            <Text type='secondary' className='game-masthead__description'>
+              {t(
+                '普通计分游戏 1000 分 = 1 额度 · NEON-PULSE 100000 分 = 1 额度',
+              )}
+            </Text>
+          </div>
+          <div className='game-masthead__tools'>
+            <div className='game-summary' aria-label={t('游戏概览')}>
+              <div className='game-summary__item'>
+                <span>{t('收录')}</span>
+                <strong>{String(games.length).padStart(2, '0')}</strong>
+              </div>
+              <div className='game-summary__item'>
+                <span>{t('上线')}</span>
+                <strong>{String(availableCount).padStart(2, '0')}</strong>
+              </div>
+            </div>
+            <Space className='game-toolbar'>
               {canAdmin && (
                 <Button
                   theme={adminMode ? 'solid' : 'light'}
                   type={adminMode ? 'warning' : 'primary'}
-                  onClick={() => setAdminMode((v) => !v)}
+                  onClick={() => setAdminMode((value) => !value)}
                 >
                   {adminMode ? t('退出管理模式') : t('进入管理模式')}
                 </Button>
               )}
-              <Button icon={<IconRefresh />} onClick={loadGames} loading={loading}>
+              <Button
+                icon={<IconRefresh />}
+                onClick={loadGames}
+                loading={loading}
+              >
                 {t('刷新')}
               </Button>
             </Space>
           </div>
-        </Card>
+        </section>
+
+        <div className='game-section-heading'>
+          <Text className='game-eyebrow'>{t('可用游戏')}</Text>
+          <span />
+          <Text type='tertiary' className='game-section-heading__count'>
+            {availableCount} / {games.length}
+          </Text>
+        </div>
 
         {loading ? (
-          <div className='flex justify-center py-20'>
+          <div className='game-loading flex justify-center py-20'>
             <Spin size='large' />
           </div>
         ) : (
-          <div className='grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'>
-            {games.map((game) => {
+          <div className='game-paper-grid'>
+            {games.map((game, index) => {
               const isAvailable = adminMode
                 ? true
                 : game.status === 'available';
+              const GameIcon = GAME_ICONS[game.game_key] || Gamepad2;
               return (
                 <Card
                   key={game.game_key}
-                  style={{
-                    opacity: isAvailable ? 1 : 0.55,
-                    border: '1px solid var(--semi-color-border)',
-                  }}
+                  className={`game-paper-card game-paper-card--tilt-${(index % 3) + 1}`}
+                  style={{ opacity: isAvailable ? 1 : 0.58 }}
                 >
-                  <div className='flex items-center justify-between mb-2'>
-                    <Text type='tertiary' size='small'>
+                  <div className='game-card__folio flex items-center justify-between'>
+                    <Text type='tertiary' size='small' className='game-mono'>
                       NO. {String(game.sort_order).padStart(2, '0')}
                     </Text>
                     {adminMode ? (
                       <Select
                         size='small'
                         value={draftStatuses[game.game_key]}
-                        onChange={(v) =>
-                          setDraftStatuses((prev) => ({
-                            ...prev,
-                            [game.game_key]: v,
+                        onChange={(value) =>
+                          setDraftStatuses((previous) => ({
+                            ...previous,
+                            [game.game_key]: value,
                           }))
                         }
                         optionList={[
@@ -224,24 +285,45 @@ const Game = () => {
                         style={{ width: 100 }}
                       />
                     ) : (
-                      <Tag color={isAvailable ? 'green' : 'grey'} shape='circle'>
+                      <Tag
+                        color={isAvailable ? 'green' : 'grey'}
+                        shape='circle'
+                      >
                         {isAvailable ? t('已上线') : t('未上线')}
                       </Tag>
                     )}
                   </div>
-                  <div className='inline-flex items-center gap-2 mb-1'>
-                    <Title heading={5} className='!m-0'>
-                      {game.name}
-                    </Title>
-                    <GameHelpButton
-                      gameKey={game.game_key}
-                      gameName={game.name}
-                      t={t}
-                    />
+                  <div className='game-card__identity'>
+                    <div className='game-card__icon' aria-hidden='true'>
+                      <GameIcon size={23} strokeWidth={1.6} />
+                    </div>
+                    <div className='game-card__title'>
+                      <div className='inline-flex items-center gap-2'>
+                        <Title heading={5} className='!m-0'>
+                          {game.name}
+                        </Title>
+                        <GameHelpButton
+                          gameKey={game.game_key}
+                          gameName={game.name}
+                          t={t}
+                        />
+                      </div>
+                      <Text className='game-card__key game-mono'>
+                        {game.game_key}
+                      </Text>
+                    </div>
                   </div>
-                  <Text type='secondary' size='small' className='block mb-3' style={{ minHeight: 32 }}>
+                  <Text
+                    type='secondary'
+                    size='small'
+                    className='game-card__description'
+                  >
                     {game.description}
                   </Text>
+                  <div className='game-card__meta'>
+                    <span>{t('兑换')}</span>
+                    <strong>{getExchangeLabel(game.game_key, t)}</strong>
+                  </div>
                   <Button
                     theme='solid'
                     type='primary'
@@ -256,7 +338,7 @@ const Game = () => {
             })}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };

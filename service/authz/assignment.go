@@ -10,6 +10,8 @@ var resolveSubjectRoles = func(userID int, systemRole int) []string {
 		return []string{BuiltInRoleRoot}
 	case systemRole >= common.RoleAdminUser:
 		return []string{BuiltInRoleAdmin}
+	case systemRole == common.RolePermissionAdmin:
+		return []string{BuiltInRoleAdmin}
 	default:
 		return nil
 	}

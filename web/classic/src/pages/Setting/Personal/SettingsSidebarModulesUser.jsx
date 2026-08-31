@@ -95,6 +95,7 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         topup: isSidebarModuleAllowed('personal', 'topup'),
         personal: isSidebarModuleAllowed('personal', 'personal'),
+        transfer: isSidebarModuleAllowed('personal', 'transfer'),
       };
     }
 
@@ -329,6 +330,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'personal',
           title: t('个人设置'),
           description: t('个人信息设置'),
+        },
+        {
+          key: 'transfer',
+          title: t('余额转账'),
+          description: t('向其他用户转账余额'),
         },
       ],
     },

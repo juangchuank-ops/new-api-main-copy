@@ -21,11 +21,11 @@ const (
 const GameScorePerUnit = 1000.0
 const GameUSDPerUnit = 1.0
 
-// 肉鸽 NEON-PULSE 兑换比例：10000 分 = 1 美元额度
-const RoguelikeScorePerUnit = 10000.0
+// 肉鸽 NEON-PULSE 兑换比例：100000 分 = 1 美元额度
+const RoguelikeScorePerUnit = 100000.0
 
 // 每小时最多兑换次数，防止无成本刷分
-const GameRedeemHourlyLimit = 20
+const GameRedeemHourlyLimit = 100
 
 type GameConfig struct {
 	Id          int    `json:"id"`
@@ -63,9 +63,11 @@ var defaultGames = []GameConfig{
 	{GameKey: "stock", Name: "TOKEN股市", Description: "完全模拟真实交易时间的股市，K线行情、买卖持仓。", Status: GameStatusAvailable, SortOrder: 7, MaxScore: 0},
 	{GameKey: "futures", Name: "TOKEN永续合约", Description: "带杠杆的永续合约交易，做多做空。", Status: GameStatusAvailable, SortOrder: 8, MaxScore: 0},
 	{GameKey: "goldminer", Name: "黄金矿工", Description: "钩取金块换取分数。", Status: GameStatusAvailable, SortOrder: 9, MaxScore: 100000},
-	{GameKey: "mining", Name: "TOKEN挖矿", Description: "挂机挖矿产出 TOKEN 分数。", Status: GameStatusAvailable, SortOrder: 10, MaxScore: 100000},
-	{GameKey: "roguelike", Name: "肉鸽 NEON-PULSE", Description: "接入 NEON-PULSE 的排行榜挑战。", Status: GameStatusAvailable, SortOrder: 11, MaxScore: 100000},
-	{GameKey: "match3", Name: "消消乐", Description: "三连消除的休闲游戏。", Status: GameStatusAvailable, SortOrder: 12, MaxScore: 100000},
+	// 挖矿：前端分数上限 100 万分，到顶强制结算整笔兑换，MaxScore 需同步放开
+	{GameKey: "mining", Name: "TOKEN挖矿", Description: "挂机挖矿产出 TOKEN 分数。", Status: GameStatusAvailable, SortOrder: 10, MaxScore: 1000000},
+	// 肉鸽：前端跨局累计得分后按余额整笔兑换。原来的 100000 与兑换门槛相同，
+	// 累计余额一旦超过 10 万分就会被拒收，导致永远无法提现；上限提到一百亿。
+	{GameKey: "roguelike", Name: "肉鸽 NEON-PULSE", Description: "接入 NEON-PULSE 的排行榜挑战。", Status: GameStatusAvailable, SortOrder: 11, MaxScore: 10000000000},
 }
 
 func InitGameConfigs() error {

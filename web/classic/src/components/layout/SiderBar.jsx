@@ -25,7 +25,7 @@ import { ChevronLeft } from 'lucide-react';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { isAdmin, isRoot, showError } from '../../helpers';
+import { isAdminOrPermissionAdmin, isRoot, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
@@ -38,13 +38,16 @@ const routerMap = {
   'invitation-code': '/console/invitation-code',
   topup: '/console/topup',
   user: '/console/user',
+  transfer: '/console/transfer',
   subscription: '/console/subscription',
   log: '/console/log',
   midjourney: '/console/midjourney',
   setting: '/console/setting',
   'system-info': '/console/system-info',
-  'banner': '/console/banner',
+  banner: '/console/banner',
   'upstream-account': '/console/upstream-account',
+  'ip-ban': '/console/ip-ban',
+  'browser-fingerprint-ban': '/console/browser-fingerprint-ban',
   about: '/about',
   detail: '/console',
   pricing: '/pricing',
@@ -138,6 +141,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'personal',
         to: '/personal',
       },
+      {
+        text: t('余额转账'),
+        itemKey: 'transfer',
+        to: '/transfer',
+      },
     ];
 
     // 根据配置过滤项目
@@ -150,48 +158,52 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   }, [t, isModuleVisible]);
 
   const adminItems = useMemo(() => {
+    const hasUserBanItems =
+      isModuleVisible('admin', 'ip-ban') ||
+      isModuleVisible('admin', 'browser-fingerprint-ban');
+
     const items = [
       {
         text: t('渠道管理'),
         itemKey: 'channel',
         to: '/channel',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('模型管理'),
         itemKey: 'models',
         to: '/console/models',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('模型部署'),
         itemKey: 'deployment',
         to: '/deployment',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('兑换码管理'),
         itemKey: 'redemption',
         to: '/redemption',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('邀请码管理'),
         itemKey: 'invitation-code',
         to: '/invitation-code',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('用户管理'),
         itemKey: 'user',
         to: '/user',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('系统设置'),
@@ -209,24 +221,42 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('横幅管理'),
         itemKey: 'banner',
         to: '/banner',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('上游账号'),
         itemKey: 'upstream-account',
         to: '/upstream-account',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('用户封禁'),
+        itemKey: 'user-ban',
+        items: [
+          {
+            text: t('IP封禁'),
+            itemKey: 'ip-ban',
+            to: '/ip-ban',
+          },
+          {
+            text: t('浏览器指纹封禁'),
+            itemKey: 'browser-fingerprint-ban',
+            to: '/browser-fingerprint-ban',
+          },
+        ].filter((item) => isModuleVisible('admin', item.itemKey)),
+        className: isAdminOrPermissionAdmin() && hasUserBanItems ? '' : 'tableHiddle',
       },
     ];
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
+      if (item.itemKey === 'user-ban') return hasUserBanItems;
       const configVisible = isModuleVisible('admin', item.itemKey);
       return configVisible;
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [isAdminOrPermissionAdmin(), isRoot(), t, isModuleVisible]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -370,7 +400,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
   // 渲染子菜单项
   const renderSubItem = (item) => {
-    if (item.items && item.items.length > 0) {
+    const subItems = Array.isArray(item.items) ? item.items : [];
+    if (subItems.length > 0) {
       const isSelected = selectedKeys.includes(item.itemKey);
       const textColor = isSelected ? SELECTED_COLOR : 'inherit';
 
@@ -392,7 +423,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             </div>
           }
         >
-          {item.items.map((subItem) => {
+          {subItems.map((subItem) => {
             const isSubSelected = selectedKeys.includes(subItem.itemKey);
             const subTextColor = isSubSelected ? SELECTED_COLOR : 'inherit';
 
@@ -407,6 +438,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
                   >
                     {subItem.text}
                   </span>
+                }
+                icon={
+                  <div className='sidebar-icon-container flex-shrink-0'>
+                    {getLucideIcon(subItem.itemKey, isSubSelected)}
+                  </div>
                 }
               />
             );
@@ -430,7 +466,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         type='sidebar'
         className=''
         collapsed={collapsed}
-        showAdmin={isAdmin()}
+        showAdmin={isAdminOrPermissionAdmin()}
       >
         <Nav
           className='sidebar-nav'
@@ -508,14 +544,14 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
-          {isAdmin() && hasSectionVisibleModules('admin') && (
+          {isAdminOrPermissionAdmin() && hasSectionVisibleModules('admin') && (
             <>
               <Divider className='sidebar-divider' />
               <div>
                 {!collapsed && (
                   <div className='sidebar-group-label'>{t('管理员')}</div>
                 )}
-                {adminItems.map((item) => renderNavItem(item))}
+                {adminItems.map((item) => renderSubItem(item))}
               </div>
             </>
           )}

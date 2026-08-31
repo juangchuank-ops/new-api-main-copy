@@ -1942,7 +1942,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Buộc phản hồi JSON hợp lệ về cú pháp",
@@ -5002,6 +5002,13 @@
     "This will permanently delete {{count}} selected invitation codes.": "Thao tác này sẽ xóa vĩnh viễn {{count}} mã mời đã chọn.",
     "This will permanently delete this invitation code.": "Thao tác này sẽ xóa vĩnh viễn mã mời này.",
     "Failed to delete invitation code": "Không thể xóa mã mời",
-    "Failed to load invitation codes": "Không thể tải mã mời"
+    "Failed to load invitation codes": "Không thể tải mã mời",
+    "Continue with Google": "Tiếp tục với Google",
+    "Failed to start Google login": "Không thể bắt đầu đăng nhập Google",
+    "Enable Google OAuth": "Bật Google OAuth",
+    "Allow users to sign in with Google": "Cho phép người dùng đăng nhập bằng Google",
+    "Your Google OAuth Client ID": "Google OAuth Client ID của bạn",
+    "Your Google OAuth Client Secret": "Google OAuth Client Secret của bạn",
+    "Google": "Google"
   }
 }

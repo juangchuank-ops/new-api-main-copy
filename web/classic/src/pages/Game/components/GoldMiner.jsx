@@ -9,7 +9,9 @@ const W = 560;
 const H = 420;
 const HOOK_X = W / 2;
 const HOOK_Y = 64;
-const GROUND_Y = 130;
+const GROUND_Y = 150;
+// 摆动绳长：钩尖最低点 64+78=142，恰好在草线(144)之上，弧宽约 ±75px
+const SWING_ROPE_LEN = 78;
 
 const ITEM_TYPES = [
   { key: 'small', r: 11, value: 50, weight: 1, color: 0xfbbf24, label: '小金' },
@@ -73,7 +75,7 @@ const GoldMiner = ({ t }) => {
           // 摆锤状态：角度 + 角速度（真实钟摆物理）
           this.angle = 0;
           this.angVel = 1.6;
-          this.ropeLen = 42;
+          this.ropeLen = SWING_ROPE_LEN;
           this.mode = 'swing'; // swing | down | up
           this.caught = null;
 
@@ -117,7 +119,7 @@ const GoldMiner = ({ t }) => {
           this.running = true;
           this.mode = 'swing';
           this.caught = null;
-          this.ropeLen = 42;
+          this.ropeLen = SWING_ROPE_LEN;
           this.hooks.onStatus('running');
           this.timeEvent = this.time.addEvent({ delay: 1000, repeat: 59, callback: () => {
             this.timeLeft -= 1;
@@ -171,7 +173,7 @@ const GoldMiner = ({ t }) => {
           } else if (this.mode === 'up') {
             const speed = this.caught ? Math.max(70, 300 - this.caught.weight * 34) : 300;
             this.ropeLen -= speed * dt;
-            if (this.ropeLen <= 42) {
+            if (this.ropeLen <= SWING_ROPE_LEN) {
               if (this.caught) {
                 let value = this.caught.value;
                 if (this.caught.mystery) value = [ -50, 150, 350, 888 ][Math.floor(Math.random() * 4)];

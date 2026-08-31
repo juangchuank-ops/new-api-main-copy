@@ -174,13 +174,13 @@ const Game1024 = ({ t }) => {
             while (result.length < N) result.push(null);
             return result;
           });
-          // 重新判定 moved：对比行序列
+          // 重新判定 moved：逐格对比 tile 对象身份。
+          // 只比较数值序列会把"纯滑动不合并"（如 [空,2,空,空] 左移）误判为未移动，
+          // 导致棋盘在无合并方向上完全不动。
           moved = false;
-          for (let r = 0; r < N; r++) {
-            const before = arr[r].filter(Boolean).map((x) => x.value);
-            const after = nextArr[r].filter(Boolean).map((x) => x.value);
-            if (before.join(',') !== after.join(',')) moved = true;
-          }
+          outer: for (let r = 0; r < N; r++)
+            for (let c = 0; c < N; c++)
+              if (arr[r][c] !== nextArr[r][c]) { moved = true; break outer; }
 
           // 反旋转回原方向
           let out = nextArr;

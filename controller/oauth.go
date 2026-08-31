@@ -124,6 +124,7 @@ func HandleOAuth(c *gin.Context) {
 			session.Set("pending_oauth_username", oauthUser.Username)
 			session.Set("pending_oauth_display_name", oauthUser.DisplayName)
 			session.Set("pending_oauth_email", oauthUser.Email)
+			session.Set("pending_oauth_avatar_url", oauthUser.AvatarURL)
 			if err := session.Save(); err != nil {
 				common.SysError(fmt.Sprintf("[OAuth] Failed to save pending OAuth session: %s", err.Error()))
 			}
@@ -147,7 +148,10 @@ func HandleOAuth(c *gin.Context) {
 		return
 	}
 
-	// 9. Setup login
+	// 9. Sync the provider avatar without making avatar errors block login.
+	syncOAuthAvatar(user, oauthUser.AvatarURL)
+
+	// 10. Setup login
 	setupLogin(user, c)
 }
 
@@ -206,6 +210,7 @@ func CompleteOAuthRegistration(c *gin.Context) {
 	oauthUsername, _ := session.Get("pending_oauth_username").(string)
 	oauthDisplayName, _ := session.Get("pending_oauth_display_name").(string)
 	oauthEmail, _ := session.Get("pending_oauth_email").(string)
+	oauthAvatarURL, _ := session.Get("pending_oauth_avatar_url").(string)
 
 	// Build user object
 	user := &model.User{}
@@ -275,6 +280,7 @@ func CompleteOAuthRegistration(c *gin.Context) {
 				"linux_do_id": user.LinuxDOId,
 				"wechat_id":   user.WeChatId,
 				"telegram_id": user.TelegramId,
+				"google_id":   user.GoogleId,
 			}).Error; err != nil {
 				return err
 			}
@@ -292,10 +298,46 @@ func CompleteOAuthRegistration(c *gin.Context) {
 	}
 
 	// Clean up pending OAuth data from session
+	recordRegistrationAudit(user, c, "oauth:"+providerName)
 	clearPendingOAuthSession(session)
+
+	syncOAuthAvatar(user, oauthAvatarURL)
 
 	// Setup login session
 	setupLogin(user, c)
+}
+
+func syncOAuthAvatar(user *model.User, avatarURL string) {
+	avatarURL = strings.TrimSpace(avatarURL)
+	if user == nil || user.Id == 0 || avatarURL == "" {
+		return
+	}
+
+	normalizedAvatarURL, err := normalizeAvatarURL(avatarURL)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("[OAuth] Ignoring invalid avatar URL for user %d: %s", user.Id, err.Error()))
+		return
+	}
+
+	settings, err := model.GetUserSetting(user.Id, true)
+	if err != nil {
+		common.SysError(fmt.Sprintf("[OAuth] Failed to load settings for avatar sync, user %d: %s", user.Id, err.Error()))
+		return
+	}
+	if settings.AvatarUrl == normalizedAvatarURL {
+		user.SetSetting(settings)
+		return
+	}
+
+	settings.AvatarUrl = normalizedAvatarURL
+	user.SetSetting(settings)
+	if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("setting", user.Setting).Error; err != nil {
+		common.SysError(fmt.Sprintf("[OAuth] Failed to sync avatar for user %d: %s", user.Id, err.Error()))
+		return
+	}
+	if err := model.InvalidateUserCache(user.Id); err != nil {
+		common.SysLog("failed to invalidate user cache after OAuth avatar sync: " + err.Error())
+	}
 }
 
 // clearPendingOAuthSession removes all pending OAuth registration data from session
@@ -305,6 +347,7 @@ func clearPendingOAuthSession(session sessions.Session) {
 	session.Delete("pending_oauth_username")
 	session.Delete("pending_oauth_display_name")
 	session.Delete("pending_oauth_email")
+	session.Delete("pending_oauth_avatar_url")
 	session.Delete("invitation_code")
 	session.Save()
 }
@@ -513,6 +556,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				"linux_do_id": user.LinuxDOId,
 				"wechat_id":   user.WeChatId,
 				"telegram_id": user.TelegramId,
+				"google_id":   user.GoogleId,
 			}).Error; err != nil {
 				return err
 			}
@@ -539,6 +583,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		}
 	}
 
+	recordRegistrationAudit(user, c, "oauth:"+provider.GetName())
 	return user, nil
 }
 

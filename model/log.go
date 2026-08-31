@@ -191,11 +191,9 @@ func buildOpField(action string, params map[string]interface{}) map[string]inter
 	return op
 }
 
-// RecordLoginLog 记录用户登录成功的审计日志（type=LogTypeLogin）。
-// username 由调用方传入（登录流程已持有用户对象），避免额外的数据库查询。
-// content 为英文兜底文本（用于导出/经典前端）；action+params 供前端本地化渲染。
-// extra 可携带 login_method、user_agent 等附加信息（普通用户可见）。
-func RecordLoginLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, extra map[string]interface{}) {
+// RecordAuthLog records a successful authentication event such as registration or login.
+// The caller already has the user identity, so this does not query the primary database.
+func RecordAuthLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, extra map[string]interface{}) {
 	other := map[string]interface{}{}
 	for k, v := range extra {
 		other[k] = v
@@ -211,8 +209,13 @@ func RecordLoginLog(userId int, username string, content string, ip string, acti
 		Other:     common.MapToJsonStr(other),
 	}
 	if err := createLog(log); err != nil {
-		common.SysLog("failed to record login log: " + err.Error())
+		common.SysLog("failed to record authentication log: " + err.Error())
 	}
+}
+
+// RecordLoginLog preserves the existing login audit API.
+func RecordLoginLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, extra map[string]interface{}) {
+	RecordAuthLog(userId, username, content, ip, action, params, extra)
 }
 
 // RecordOperationAuditLog 记录管理/高危操作审计日志（type=LogTypeManage）。
@@ -462,7 +465,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
-		tx = LOG_DB
+		// "全部"时排除操作审计与登录审计日志，它们属于独立审计范畴，
+		// 不应混入使用日志列表。单独选择"管理"类型时仍可查看审计记录。
+		tx = LOG_DB.Where("logs.type NOT IN ?", []int{LogTypeManage, LogTypeLogin})
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
@@ -558,7 +563,8 @@ const logSearchCountLimit = 10000
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
+		// "全部"时排除操作审计与登录审计日志（与 GetAllLogs 保持一致）。
+		tx = LOG_DB.Where("logs.user_id = ? AND logs.type NOT IN ?", userId, []int{LogTypeManage, LogTypeLogin})
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}

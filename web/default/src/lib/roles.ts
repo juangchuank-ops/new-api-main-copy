@@ -21,6 +21,7 @@ import { t } from 'i18next'
 export const ROLE = {
   GUEST: 0, // 后续如果需要用到这个角色那就再加，同语先留一下
   USER: 1,
+  PERMISSION_ADMIN: 5,
   ADMIN: 10,
   SUPER_ADMIN: 100,
 } as const
@@ -31,9 +32,18 @@ const DEFAULT_ROLE = ROLE.GUEST
 
 const ROLE_LABEL_KEYS: Record<RoleValue, string> = {
   [ROLE.SUPER_ADMIN]: 'Super Admin',
+  [ROLE.PERMISSION_ADMIN]: 'Permission Admin',
   [ROLE.ADMIN]: 'Admin',
   [ROLE.USER]: 'User',
   [ROLE.GUEST]: 'Guest',
+}
+
+export function isPermissionAdmin(role?: number): boolean {
+  return role === ROLE.PERMISSION_ADMIN
+}
+
+export function isAdmin(role?: number): boolean {
+  return role !== undefined && role >= ROLE.PERMISSION_ADMIN
 }
 
 export function getRoleLabelKey(role?: number): string {

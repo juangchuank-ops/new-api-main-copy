@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, InputNumber, Select, Space, Table, Tag, Typography } from '@douyinfe/semi-ui';
+import {
+  Button,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from '@douyinfe/semi-ui';
 import { API, showError, showSuccess } from '../../../helpers';
 
 const { Text } = Typography;
@@ -45,7 +54,28 @@ const FuturesTrading = ({ t }) => {
   }, [load]);
 
   // 额度换算：quota_per_unit 默认 500000
-  const quotaPerUnit = parseFloat(localStorage.getItem('quota_per_unit')) || 500000;
+  const quotaPerUnit =
+    parseFloat(localStorage.getItem('quota_per_unit')) || 500000;
+
+  const confirmLeverage = (value) => {
+    if (value <= 100) {
+      setLeverage(value);
+      return;
+    }
+
+    Modal.confirm({
+      className: 'game-paper-modal',
+      title: t('确认使用高杠杆？'),
+      content: t(
+        '{{leverage}} 倍杠杆风险极高，价格出现极小幅度的不利波动就可能损失全部保证金。请确认你已了解高杠杆风险。',
+        { leverage: value },
+      ),
+      okText: t('确认使用 {{leverage}}x', { leverage: value }),
+      cancelText: t('取消'),
+      okButtonProps: { type: 'danger' },
+      onOk: () => setLeverage(value),
+    });
+  };
 
   const openPosition = async () => {
     if (!stockId) return;
@@ -102,12 +132,32 @@ const FuturesTrading = ({ t }) => {
   const selected = stocks.find((s) => s.id === stockId);
 
   const openColumns = [
-    { title: t('方向'), dataIndex: 'side', render: (v) => <Tag color={v === 'long' ? 'red' : 'green'}>{v === 'long' ? t('做多') : t('做空')}</Tag> },
+    {
+      title: t('方向'),
+      dataIndex: 'side',
+      render: (v) => (
+        <Tag color={v === 'long' ? 'red' : 'green'}>
+          {v === 'long' ? t('做多') : t('做空')}
+        </Tag>
+      ),
+    },
     { title: t('杠杆'), dataIndex: 'leverage', render: (v) => `${v}x` },
-    { title: t('开仓价'), dataIndex: 'entry_price', render: (v) => `$${v.toFixed(2)}` },
-    { title: t('标记价'), dataIndex: 'mark_price', render: (v) => (v ? `$${v.toFixed(2)}` : '-') },
+    {
+      title: t('开仓价'),
+      dataIndex: 'entry_price',
+      render: (v) => `$${v.toFixed(2)}`,
+    },
+    {
+      title: t('标记价'),
+      dataIndex: 'mark_price',
+      render: (v) => (v ? `$${v.toFixed(2)}` : '-'),
+    },
     { title: t('仓位'), dataIndex: 'size', render: (v) => v.toFixed(2) },
-    { title: t('保证金'), dataIndex: 'margin_usd', render: (v) => `$${v.toFixed(2)}` },
+    {
+      title: t('保证金'),
+      dataIndex: 'margin_usd',
+      render: (v) => `$${v.toFixed(2)}`,
+    },
     {
       title: t('浮动盈亏'),
       dataIndex: 'pnl_usd',
@@ -120,7 +170,13 @@ const FuturesTrading = ({ t }) => {
     {
       title: t('操作'),
       render: (_, r) => (
-        <Button size='small' theme='solid' type='warning' loading={busy} onClick={() => closePosition(r.id)}>
+        <Button
+          size='small'
+          theme='solid'
+          type='warning'
+          loading={busy}
+          onClick={() => closePosition(r.id)}
+        >
           {t('平仓')}
         </Button>
       ),
@@ -128,21 +184,41 @@ const FuturesTrading = ({ t }) => {
   ];
 
   const historyColumns = [
-    { title: t('方向'), dataIndex: 'side', render: (v) => <Tag color={v === 'long' ? 'red' : 'green'}>{v === 'long' ? t('做多') : t('做空')}</Tag> },
+    {
+      title: t('方向'),
+      dataIndex: 'side',
+      render: (v) => (
+        <Tag color={v === 'long' ? 'red' : 'green'}>
+          {v === 'long' ? t('做多') : t('做空')}
+        </Tag>
+      ),
+    },
     { title: t('杠杆'), dataIndex: 'leverage', render: (v) => `${v}x` },
-    { title: t('开仓价'), dataIndex: 'entry_price', render: (v) => `$${v.toFixed(2)}` },
-    { title: t('平仓价'), dataIndex: 'close_price', render: (v) => `$${v.toFixed(2)}` },
+    {
+      title: t('开仓价'),
+      dataIndex: 'entry_price',
+      render: (v) => `$${v.toFixed(2)}`,
+    },
+    {
+      title: t('平仓价'),
+      dataIndex: 'close_price',
+      render: (v) => `$${v.toFixed(2)}`,
+    },
     {
       title: t('盈亏'),
       dataIndex: 'pnl_usd',
-      render: (v) => <Text type={v >= 0 ? 'success' : 'danger'}>${v.toFixed(4)}</Text>,
+      render: (v) => (
+        <Text type={v >= 0 ? 'success' : 'danger'}>${v.toFixed(4)}</Text>
+      ),
     },
   ];
 
   return (
     <div>
       <Text type='secondary' className='block mb-3'>
-        {t('用余额做保证金开仓，做多做空均可。亏损达到保证金即强平。盈亏随标记价格实时变动。')}
+        {t(
+          '用余额做保证金开仓，做多做空均可。亏损达到保证金即强平。盈亏随标记价格实时变动。',
+        )}
       </Text>
 
       {/* 开仓面板 */}
@@ -154,7 +230,10 @@ const FuturesTrading = ({ t }) => {
           <Select
             value={stockId}
             onChange={setStockId}
-            optionList={stocks.map((s) => ({ value: s.id, label: `${s.code} · $${s.last_price.toFixed(2)}` }))}
+            optionList={stocks.map((s) => ({
+              value: s.id,
+              label: `${s.code} · $${s.last_price.toFixed(2)}`,
+            }))}
             style={{ width: 180 }}
           />
           <Select
@@ -168,9 +247,11 @@ const FuturesTrading = ({ t }) => {
           />
           <Select
             value={leverage}
-            onChange={setLeverage}
-            optionList={[1, 2, 5, 10, 20, 50, 100].map((v) => ({ value: v, label: `${v}x` }))}
-            style={{ width: 90 }}
+            onChange={confirmLeverage}
+            optionList={[
+              1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000,
+            ].map((value) => ({ value, label: `${value}x` }))}
+            style={{ width: 110 }}
           />
           <InputNumber
             value={marginUsd}
@@ -181,19 +262,29 @@ const FuturesTrading = ({ t }) => {
             style={{ width: 140 }}
             prefix={t('保证金')}
           />
-          <Button theme='solid' type='primary' loading={busy} onClick={openPosition}>
+          <Button
+            theme='solid'
+            type='primary'
+            loading={busy}
+            onClick={openPosition}
+          >
             {t('开仓')}
           </Button>
         </Space>
         {selected && (
           <Text type='secondary' size='small' className='block mt-2'>
-            {t('仓位规模')}：{((marginUsd * leverage) / (selected?.last_price || 1)).toFixed(2)} {t('股')} = ${marginUsd.toFixed(2)} × {leverage}x ÷ ${selected.last_price.toFixed(2)}
+            {t('仓位规模')}：
+            {((marginUsd * leverage) / (selected?.last_price || 1)).toFixed(2)}{' '}
+            {t('股')} = ${marginUsd.toFixed(2)} × {leverage}x ÷ $
+            {selected.last_price.toFixed(2)}
           </Text>
         )}
       </div>
 
       <div className='mb-4'>
-        <Text strong className='block mb-2'>{t('当前持仓')}</Text>
+        <Text strong className='block mb-2'>
+          {t('当前持仓')}
+        </Text>
         <Table
           columns={openColumns}
           dataSource={openPositions}
@@ -204,7 +295,9 @@ const FuturesTrading = ({ t }) => {
       </div>
 
       <div>
-        <Text strong className='block mb-2'>{t('历史平仓')}</Text>
+        <Text strong className='block mb-2'>
+          {t('历史平仓')}
+        </Text>
         <Table
           columns={historyColumns}
           dataSource={history.slice(0, 20)}

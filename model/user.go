@@ -49,6 +49,7 @@ type User struct {
 	InvitationCode   string         `json:"invitation_code" gorm:"-:all"` // for registration only, not persisted
 	DeletedAt        gorm.DeletedAt `gorm:"index"`
 	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	GoogleId         string         `json:"google_id" gorm:"column:google_id;index"`
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
@@ -57,24 +58,24 @@ type User struct {
 
 	// AutoBan fields (additive, ported from new-api-reference). The ban takes
 	// effect via auto_ban_until checked by the auth middleware.
-	AutoBanUntil          int64  `json:"auto_ban_until" gorm:"default:0;column:auto_ban_until"`
-	AutoBanRule           string `json:"auto_ban_rule" gorm:"type:varchar(32);default:'';column:auto_ban_rule"`
-	AutoBanRecordId       int64  `json:"auto_ban_record_id" gorm:"default:0;column:auto_ban_record_id"`
-	AutoBanResponseStatus int    `json:"auto_ban_response_status" gorm:"default:0;column:auto_ban_response_status"`
-	AutoBanResponseCode   string `json:"auto_ban_response_code" gorm:"type:varchar(64);default:'';column:auto_ban_response_code"`
+	AutoBanUntil           int64  `json:"auto_ban_until" gorm:"default:0;column:auto_ban_until"`
+	AutoBanRule            string `json:"auto_ban_rule" gorm:"type:varchar(32);default:'';column:auto_ban_rule"`
+	AutoBanRecordId        int64  `json:"auto_ban_record_id" gorm:"default:0;column:auto_ban_record_id"`
+	AutoBanResponseStatus  int    `json:"auto_ban_response_status" gorm:"default:0;column:auto_ban_response_status"`
+	AutoBanResponseCode    string `json:"auto_ban_response_code" gorm:"type:varchar(64);default:'';column:auto_ban_response_code"`
 	AutoBanResponseMessage string `json:"auto_ban_response_message" gorm:"type:varchar(500);default:'';column:auto_ban_response_message"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Role:     user.Role,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:                     user.Id,
+		Group:                  user.Group,
+		Quota:                  user.Quota,
+		Status:                 user.Status,
+		Role:                   user.Role,
+		Username:               user.Username,
+		Setting:                user.Setting,
+		Email:                  user.Email,
 		AutoBanUntil:           user.AutoBanUntil,
 		AutoBanRule:            user.AutoBanRule,
 		AutoBanRecordId:        user.AutoBanRecordId,
@@ -145,7 +146,17 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	}
 
 	// 管理员区域 - 根据角色决定
-	if userRole == common.RoleAdminUser {
+	if userRole == common.RolePermissionAdmin {
+		defaultConfig["admin"] = map[string]interface{}{
+			"enabled":      true,
+			"channel":      false,
+			"models":       false,
+			"redemption":   false,
+			"user":         true,
+			"setting":      false,
+			"subscription": false,
+		}
+	} else if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
 		defaultConfig["admin"] = map[string]interface{}{
 			"enabled":    true,
@@ -712,6 +723,18 @@ func (user *User) FillUserByTelegramId() error {
 		return errors.New("该 Telegram 账户未绑定")
 	}
 	return nil
+}
+
+func (user *User) FillUserByGoogleId() error {
+	if user.GoogleId == "" {
+		return errors.New("Google id 为空！")
+	}
+	DB.Where(User{GoogleId: user.GoogleId}).First(user)
+	return nil
+}
+
+func IsGoogleIdAlreadyTaken(googleId string) bool {
+	return DB.Unscoped().Where("google_id = ?", googleId).Find(&User{}).RowsAffected > 0
 }
 
 func IsEmailAlreadyTaken(email string) bool {

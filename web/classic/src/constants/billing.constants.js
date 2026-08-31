@@ -11,10 +11,10 @@
  */
 
 export const BILLING_VARS = [
-  { key: 'p', field: 'inputPrice', tierField: 'input_unit_cost', label: '输入价格', shortLabel: '输入', side: 'input', isBase: true },
-  { key: 'c', field: 'outputPrice', tierField: 'output_unit_cost', label: '补全价格', shortLabel: '补全', side: 'output', isBase: true },
+  { key: 'c', field: 'outputPrice', tierField: 'output_unit_cost', label: '输出', shortLabel: '输出', side: 'output', isBase: true },
+  { key: 'p', field: 'inputPrice', tierField: 'input_unit_cost', label: '输入（未命中）', shortLabel: '输入', side: 'input', isBase: true },
   { key: 'len', field: null, tierField: null, label: '输入长度', shortLabel: '长度', side: 'condition', isConditionOnly: true },
-  { key: 'cr', field: 'cacheReadPrice', tierField: 'cache_read_unit_cost', label: '缓存读取价格', shortLabel: '缓存读', side: 'input', group: 'cache' },
+  { key: 'cr', field: 'cacheReadPrice', tierField: 'cache_read_unit_cost', label: '输入（命中）', shortLabel: '命中', side: 'input', group: 'cache' },
   { key: 'cc', field: 'cacheCreatePrice', tierField: 'cache_create_unit_cost', label: '缓存创建价格', shortLabel: '缓存创建', side: 'input', group: 'cache' },
   { key: 'cc1h', field: 'cacheCreate1hPrice', tierField: 'cache_create_1h_unit_cost', label: '1h缓存创建价格', shortLabel: '1h缓存创建', side: 'input', group: 'cache' },
   { key: 'img', field: 'imagePrice', tierField: 'image_unit_cost', label: '图片输入价格', shortLabel: '图片输入', side: 'input', group: 'media' },

@@ -11,7 +11,7 @@ func registerBannerRoutes(apiRouter *gin.RouterGroup) {
 	apiRouter.GET("/banners", controller.GetPublicBanners)
 
 	bannerRoute := apiRouter.Group("/banner")
-	bannerRoute.Use(middleware.AdminAuth())
+	bannerRoute.Use(middleware.PermissionAdminAuth(), middleware.ModuleAuth("banner"))
 	{
 		bannerRoute.GET("", controller.GetBanners)
 		bannerRoute.POST("", controller.CreateBanner)

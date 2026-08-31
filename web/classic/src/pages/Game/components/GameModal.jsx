@@ -1,5 +1,30 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
 import React, { useEffect, useState } from 'react';
-import { SideSheet, Button, Space, Typography, InputNumber } from '@douyinfe/semi-ui';
+import {
+  SideSheet,
+  Button,
+  Space,
+  Typography,
+  InputNumber,
+} from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../../helpers';
 
@@ -16,7 +41,6 @@ import FuturesTrading from './FuturesTrading';
 import GoldMiner from './GoldMiner';
 import TokenMining from './TokenMining';
 import RoguelikeBoard from './RoguelikeBoard';
-import Match3 from './Match3';
 
 const GAME_COMPONENTS = {
   texas: TexasHoldem,
@@ -30,13 +54,12 @@ const GAME_COMPONENTS = {
   goldminer: GoldMiner,
   mining: TokenMining,
   roguelike: RoguelikeBoard,
-  match3: Match3,
 };
 
-// 兑换面板：普通计分游戏 1000 分 = 1 额度，肉鸽 10000 分 = 1 额度
+// 兑换面板：普通计分游戏 1000 分 = 1 额度，肉鸽 100000 分 = 1 额度
 export const RedeemPanel = ({ gameKey, score, onRedeemed, t }) => {
   const [redeeming, setRedeeming] = useState(false);
-  const scorePerUnit = gameKey === 'roguelike' ? 10000 : 1000;
+  const scorePerUnit = gameKey === 'roguelike' ? 100000 : 1000;
   const usd = (score / scorePerUnit).toFixed(4);
 
   const redeem = async () => {
@@ -49,7 +72,9 @@ export const RedeemPanel = ({ gameKey, score, onRedeemed, t }) => {
       });
       if (res.data.success) {
         showSuccess(
-          t('兑换成功：获得 {{usd}} 美元额度', { usd: res.data.data.usd.toFixed(4) }),
+          t('兑换成功：获得 {{usd}} 美元额度', {
+            usd: res.data.data.usd.toFixed(4),
+          }),
         );
         onRedeemed?.();
       } else {
@@ -62,12 +87,11 @@ export const RedeemPanel = ({ gameKey, score, onRedeemed, t }) => {
   };
 
   return (
-    <div
-      className='flex items-center justify-between rounded-lg px-4 py-3 mt-3'
-      style={{ background: 'var(--semi-color-fill-0)' }}
-    >
+    <div className='game-redeem-panel'>
       <div>
-        <Text strong>{t('当前得分')}：{Math.floor(score)}</Text>
+        <Text strong className='game-redeem-panel__score'>
+          {t('当前得分')}：{Math.floor(score)}
+        </Text>
         <Text type='secondary' className='block'>
           {t('可兑换')} ≈ ${usd}（{scorePerUnit} {t('分')} = 1 {t('额度')}）
         </Text>
@@ -93,9 +117,12 @@ const GameModal = ({ game, onClose, t }) => {
 
   return (
     <SideSheet
+      className='game-paper-sheet'
       title={
         <Space>
-          <Title heading={5} className='!m-0'>{game.name}</Title>
+          <Title heading={5} className='!m-0'>
+            {game.name}
+          </Title>
         </Space>
       }
       visible={!!game}

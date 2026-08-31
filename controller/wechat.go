@@ -130,6 +130,7 @@ func WeChatAuth(c *gin.Context) {
 				return
 			}
 			user.FinalizeUserCreation(0)
+			recordRegistrationAudit(&user, c, "wechat")
 
 			if common.InvitationCodeEnabled {
 				session := sessions.Default(c)

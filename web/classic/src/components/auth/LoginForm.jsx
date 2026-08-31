@@ -35,6 +35,7 @@ import {
   onDiscordOAuthClicked,
   onOIDCClicked,
   onLinuxDOOAuthClicked,
+  onGoogleOAuthClicked,
   onCustomOAuthClicked,
   prepareCredentialRequestOptions,
   buildAssertionResult,
@@ -65,7 +66,7 @@ import WeChatIcon from '../common/logo/WeChatIcon';
 import LinuxDoIcon from '../common/logo/LinuxDoIcon';
 import TwoFAVerification from './TwoFAVerification';
 import { useTranslation } from 'react-i18next';
-import { SiDiscord } from 'react-icons/si';
+import { SiDiscord, SiGoogle } from 'react-icons/si';
 
 const LoginForm = () => {
   let navigate = useNavigate();
@@ -95,6 +96,7 @@ const LoginForm = () => {
   const [discordLoading, setDiscordLoading] = useState(false);
   const [oidcLoading, setOidcLoading] = useState(false);
   const [linuxdoLoading, setLinuxdoLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [emailLoginLoading, setEmailLoginLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
@@ -135,12 +137,13 @@ const LoginForm = () => {
     (status.custom_oauth_providers || []).length > 0;
   const hasOAuthLoginOptions = Boolean(
     status.github_oauth ||
-      status.discord_oauth ||
-      status.oidc_enabled ||
-      status.wechat_login ||
-      status.linuxdo_oauth ||
-      status.telegram_oauth ||
-      hasCustomOAuthProviders,
+    status.discord_oauth ||
+    status.oidc_enabled ||
+    status.wechat_login ||
+    status.linuxdo_oauth ||
+    status.telegram_oauth ||
+    status.google_oauth ||
+    hasCustomOAuthProviders,
   );
 
   useEffect(() => {
@@ -387,6 +390,21 @@ const LoginForm = () => {
     }
   };
 
+  // 包装的Google登录点击处理
+  const handleGoogleClick = () => {
+    if ((hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms) {
+      showInfo(t('请先阅读并同意用户协议和隐私政策'));
+      return;
+    }
+    setGoogleLoading(true);
+    try {
+      onGoogleOAuthClicked(status.google_client_id, { shouldLogout: true });
+    } finally {
+      // 由于重定向，这里不会执行到，但为了完整性添加
+      setTimeout(() => setGoogleLoading(false), 3000);
+    }
+  };
+
   // 包装的自定义OAuth登录点击处理
   const handleCustomOAuthClick = (provider) => {
     if ((hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms) {
@@ -566,6 +584,27 @@ const LoginForm = () => {
                     loading={discordLoading}
                   >
                     <span className='ml-3'>{t('使用 Discord 继续')}</span>
+                  </Button>
+                )}
+
+                {status.google_oauth && (
+                  <Button
+                    theme='outline'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
+                    type='tertiary'
+                    icon={
+                      <SiGoogle
+                        style={{
+                          color: '#4285F4',
+                          width: '20px',
+                          height: '20px',
+                        }}
+                      />
+                    }
+                    onClick={handleGoogleClick}
+                    loading={googleLoading}
+                  >
+                    <span className='ml-3'>{t('使用 Google 继续')}</span>
                   </Button>
                 )}
 
@@ -958,8 +997,7 @@ const LoginForm = () => {
         style={{ top: '50%', left: '-120px' }}
       />
       <div className='w-full max-w-sm mt-[60px]'>
-        {showEmailLogin ||
-        !hasOAuthLoginOptions
+        {showEmailLogin || !hasOAuthLoginOptions
           ? renderEmailLoginForm()
           : renderOAuthOptions()}
         {renderWeChatLoginModal()}

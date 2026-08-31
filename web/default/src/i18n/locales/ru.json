@@ -1942,7 +1942,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Для частных развертываний, формат: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Принудительно возвращать синтаксически корректный JSON",
@@ -5002,6 +5002,13 @@
     "This will permanently delete {{count}} selected invitation codes.": "Выбранные коды приглашений ({{count}}) будут удалены без возможности восстановления.",
     "This will permanently delete this invitation code.": "Этот код приглашения будет удален без возможности восстановления.",
     "Failed to delete invitation code": "Не удалось удалить код приглашения",
-    "Failed to load invitation codes": "Не удалось загрузить коды приглашений"
+    "Failed to load invitation codes": "Не удалось загрузить коды приглашений",
+    "Continue with Google": "Продолжить с Google",
+    "Failed to start Google login": "Не удалось начать вход через Google",
+    "Enable Google OAuth": "Включить Google OAuth",
+    "Allow users to sign in with Google": "Разрешить пользователям входить через Google",
+    "Your Google OAuth Client ID": "Ваш Client ID Google OAuth",
+    "Your Google OAuth Client Secret": "Ваш Client Secret Google OAuth",
+    "Google": "Google"
   }
 }

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Card,
   Tag,
@@ -41,6 +41,7 @@ import {
   formatDynamicPriceSummary,
   getLobeHubIcon,
 } from '../../../../../helpers';
+import { API } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
@@ -83,6 +84,30 @@ const PricingCardView = ({
     startIndex,
     startIndex + pageSize,
   );
+
+  // 近 24 小时按模型的性能统计（延迟/吞吐/成功率），与表格视图共用同一接口
+  const [perfSummaryMap, setPerfSummaryMap] = useState({});
+
+  useEffect(() => {
+    let ignore = false;
+    API.get('/api/perf-metrics/summary', {
+      params: { hours: 24 },
+      skipErrorHandler: true,
+    })
+      .then((res) => {
+        if (ignore || !res.data?.success) return;
+        const models = res.data?.data?.models ?? [];
+        const map = {};
+        for (const m of models) {
+          if (m.model_name) map[m.model_name] = m;
+        }
+        setPerfSummaryMap(map);
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
+  }, []);
   const getModelKey = (model) => model.key ?? model.model_name ?? model.id;
   const isMobile = useIsMobile();
 
@@ -315,6 +340,42 @@ const PricingCardView = ({
 
                 {/* 底部区域 */}
                 <div className='mt-auto'>
+                  {/* 性能指标（近 24 小时）：延迟 / tps / 成功率 */}
+                  {(() => {
+                    const perf = perfSummaryMap[model.model_name];
+                    const stats = [
+                      {
+                        label: t('延迟'),
+                        value: perf ? `${(perf.avg_latency_ms / 1000).toFixed(2)}s` : '-',
+                      },
+                      {
+                        label: 'tps',
+                        value: perf ? `${Number(perf.avg_tps).toFixed(2)} t/s` : '-',
+                      },
+                      {
+                        label: t('成功率'),
+                        value: perf ? `${Number(perf.success_rate).toFixed(1)}%` : '-',
+                      },
+                    ];
+                    return (
+                      <div
+                        className='grid grid-cols-3 gap-2 mb-3 pb-3'
+                        style={{ borderBottom: '1px solid var(--semi-color-border)' }}
+                      >
+                        {stats.map((item) => (
+                          <div key={item.label} className='text-center'>
+                            <div className='text-[11px]' style={{ color: 'var(--semi-color-text-2)' }}>
+                              {item.label}
+                            </div>
+                            <div className='text-xs font-medium mt-0.5'>
+                              {item.value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   {/* 标签区域 */}
                   {renderTags(model)}
 

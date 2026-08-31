@@ -81,6 +81,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [uptimeLoading, setUptimeLoading] = useState(false);
   const [activeUptimeTab, setActiveUptimeTab] = useState('');
 
+  // ========== 分流数据（仅管理员，/api/data/flow） ==========
+  const [flowData, setFlowData] = useState([]);
+  const [flowLoading, setFlowLoading] = useState(false);
+
   // ========== 常量 ==========
   const now = new Date();
   const isAdminUser = isAdmin();
@@ -170,33 +174,47 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
         url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
 
-      const res = await API.get(url);
+      // skipErrorHandler: 401 时不走全局拦截器跳登录页（access token 可能仍有效），
+      // 避免数据接口的 session 过期把整个页面拖入重定向循环。
+      const res = await API.get(url, { skipErrorHandler: true });
       const { success, message, data } = res.data;
       if (success) {
-        setQuotaData(data);
-        if (data.length === 0) {
-          data.push({
+        const quotaItems = Array.isArray(data) ? data : [];
+        setQuotaData(quotaItems);
+        if (quotaItems.length === 0) {
+          quotaItems.push({
             count: 0,
             model_name: '无数据',
             quota: 0,
             created_at: now.getTime() / 1000,
           });
         }
-        data.sort((a, b) => a.created_at - b.created_at);
-        return data;
+        quotaItems.sort((a, b) => a.created_at - b.created_at);
+        return quotaItems;
       } else {
         showError(message);
         return [];
       }
+    } catch (error) {
+      // 401/403 只提示，不触发全局跳转
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        showError(t('无权查看此数据'));
+      } else {
+        showError(error?.response?.data?.message || error.message);
+      }
+      return [];
     } finally {
       setLoading(false);
     }
-  }, [inputs, dataExportDefaultTime, isAdminUser, now]);
+  }, [inputs, dataExportDefaultTime, isAdminUser, now, t]);
 
   const loadUptimeData = useCallback(async () => {
     setUptimeLoading(true);
     try {
-      const res = await API.get('/api/uptime/status');
+      const res = await API.get('/api/uptime/status', {
+        skipErrorHandler: true,
+      });
       const { success, message, data } = res.data;
       if (success) {
         setUptimeData(data || []);
@@ -220,7 +238,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
       const localStartTimestamp = Date.parse(start_timestamp) / 1000;
       const localEndTimestamp = Date.parse(end_timestamp) / 1000;
       const url = `/api/data/users?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
-      const res = await API.get(url);
+      const res = await API.get(url, { skipErrorHandler: true });
       const { success, message, data } = res.data;
       if (success) {
         return data || [];
@@ -233,6 +251,39 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
       return [];
     }
   }, [inputs, isAdminUser]);
+
+  const loadFlowData = useCallback(async () => {
+    if (!isAdminUser) return [];
+    setFlowLoading(true);
+    try {
+      const { start_timestamp, end_timestamp, username } = inputs;
+      const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+      const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+      const url = `/api/data/flow?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&username=${encodeURIComponent(username || '')}`;
+      const res = await API.get(url, { skipErrorHandler: true });
+      const { success, message, data } = res.data;
+      if (success) {
+        const items = Array.isArray(data) ? data : [];
+        setFlowData(items);
+        return items;
+      } else {
+        showError(message);
+        setFlowData([]);
+        return [];
+      }
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        showError(t('无权查看此数据'));
+      } else {
+        showError(error?.response?.data?.message || error.message);
+      }
+      setFlowData([]);
+      return [];
+    } finally {
+      setFlowLoading(false);
+    }
+  }, [inputs, isAdminUser, t]);
 
   const getUserData = useCallback(async () => {
     let res = await API.get(`/api/user/self`);
@@ -315,6 +366,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     activeUptimeTab,
     setActiveUptimeTab,
 
+    // 分流数据
+    flowData,
+    flowLoading,
+
     // 计算值
     timeOptions,
     performanceMetrics,
@@ -333,6 +388,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     handleCloseModal,
     loadQuotaData,
     loadUserQuotaData,
+    loadFlowData,
     loadUptimeData,
     getUserData,
     refresh,

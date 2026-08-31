@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -192,8 +193,25 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 		"login_method": method,
 		"user_agent":   c.Request.UserAgent(),
 	}
+	if fingerprint, err := model.NormalizeBrowserFingerprintHash(c.GetHeader("X-Browser-Fingerprint")); err == nil {
+		extra["browser_fingerprint"] = fingerprint
+	}
 	content := fmt.Sprintf("Logged in successfully via %s", method)
 	model.RecordLoginLog(user.Id, user.Username, content, ip, "login", map[string]interface{}{
+		"method": method,
+	}, extra)
+}
+
+func recordRegistrationAudit(user *model.User, c *gin.Context, method string) {
+	extra := map[string]interface{}{
+		"registration_method": method,
+		"user_agent":          c.Request.UserAgent(),
+	}
+	if fingerprint, err := model.NormalizeBrowserFingerprintHash(c.GetHeader("X-Browser-Fingerprint")); err == nil {
+		extra["browser_fingerprint"] = fingerprint
+	}
+	content := fmt.Sprintf("Registered successfully via %s", method)
+	model.RecordAuthLog(user.Id, user.Username, content, c.ClientIP(), "register", map[string]interface{}{
 		"method": method,
 	}, extra)
 }
@@ -368,6 +386,7 @@ func Register(c *gin.Context) {
 	}
 
 	cleanUser.FinalizeUserCreation(inviterId)
+	recordRegistrationAudit(&cleanUser, c, "password")
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -564,32 +583,33 @@ func GetSelf(c *gin.Context) {
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"avatar_url":        userSetting.AvatarUrl,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"id":                 user.Id,
+		"username":           user.Username,
+		"display_name":       user.DisplayName,
+		"role":               user.Role,
+		"status":             user.Status,
+		"email":              user.Email,
+		"github_id":          user.GitHubId,
+		"discord_id":         user.DiscordId,
+		"oidc_id":            user.OidcId,
+		"wechat_id":          user.WeChatId,
+		"telegram_id":        user.TelegramId,
+		"group":              user.Group,
+		"quota":              user.Quota,
+		"used_quota":         user.UsedQuota,
+		"request_count":      user.RequestCount,
+		"aff_code":           user.AffCode,
+		"aff_count":          user.AffCount,
+		"aff_quota":          user.AffQuota,
+		"aff_history_quota":  user.AffHistoryQuota,
+		"inviter_id":         user.InviterId,
+		"linux_do_id":        user.LinuxDOId,
+		"setting":            user.Setting,
+		"avatar_url":         userSetting.AvatarUrl,
+		"stripe_customer":    user.StripeCustomer,
+		"sidebar_modules":    userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":        permissions,                // 新增权限字段
+		"authz_capabilities": authz.Capabilities(user.Id, user.Role),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -607,6 +627,12 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
 		// 超级管理员不需要边栏设置功能
+		permissions["sidebar_settings"] = false
+		permissions["sidebar_modules"] = map[string]interface{}{}
+	} else if userRole == common.RolePermissionAdmin {
+		// 权限管理员的模块权限由 Root 通过 /api/authz/users/:id 写入
+		// user.Setting.SidebarModules，侧边栏隐藏与后端 ModuleAuth 都以该值为准。
+		// 这里不再硬编码默认模块，避免与实际保存的配置冲突。
 		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{}
 	} else if userRole == common.RoleAdminUser {
@@ -934,6 +960,18 @@ func UpdateSelf(c *gin.Context) {
 		return
 	}
 
+	// 用户名不可在此接口修改：改名需走 /api/user/rename 收费通道
+	if user.Username != "" {
+		var currentUser model.User
+		if err := model.DB.Select("username").Where("id = ?", c.GetInt("id")).First(&currentUser).Error; err == nil {
+			if user.Username != currentUser.Username {
+				common.ApiErrorMsg(c, "用户名修改请使用余额转账页的改名功能（收费）")
+				return
+			}
+		}
+		user.Username = ""
+	}
+
 	cleanUser := model.User{
 		Id:          c.GetInt("id"),
 		Username:    user.Username,
@@ -1078,11 +1116,12 @@ func CreateUser(c *gin.Context) {
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
-	Action string `json:"action"`
-	Value  int    `json:"value"`
-	Mode   string `json:"mode"`
-	NewRole int   `json:"new_role"`
+	Id             int                        `json:"id"`
+	Action         string                     `json:"action"`
+	Value          int                        `json:"value"`
+	Mode           string                     `json:"mode"`
+	NewRole        int                        `json:"new_role"`
+	SidebarModules map[string]map[string]bool `json:"sidebar_modules"`
 }
 
 // ManageUser Only admin user can do this
@@ -1148,6 +1187,39 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleAdminUser
+	case "permission_admin":
+		if myRole != common.RoleRootUser || user.Role >= common.RoleAdminUser {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		user.Role = common.RolePermissionAdmin
+		// 同时保存 Root 配置的侧边栏模块权限，与角色变更在同一请求内完成
+		if req.SidebarModules != nil {
+			setting := user.GetSetting()
+			bytes, err := common.Marshal(req.SidebarModules)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			setting.SidebarModules = string(bytes)
+			user.SetSetting(setting)
+		}
+	case "update_permission_admin":
+		// 仅更新已有权限管理员的模块权限，不改角色。Root 专用。
+		if myRole != common.RoleRootUser || user.Role != common.RolePermissionAdmin {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		if req.SidebarModules != nil {
+			setting := user.GetSetting()
+			bytes, err := common.Marshal(req.SidebarModules)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			setting.SidebarModules = string(bytes)
+			user.SetSetting(setting)
+		}
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDemoteRootUser)
@@ -1253,7 +1325,7 @@ func ManageUser(c *gin.Context) {
 	// 避免在 Redis TTL 过期前仍使用旧状态（尤其是禁用后仍可发起请求的问题）。
 	// InvalidateUserCache 会让下一次 GetUserCache 从数据库重新加载，
 	// InvalidateUserTokensCache 则确保令牌侧的缓存也同步刷新。
-	if req.Action == "disable" || req.Action == "promote" || req.Action == "demote" || req.Action == "transfer_root" {
+	if req.Action == "disable" || req.Action == "promote" || req.Action == "demote" || req.Action == "transfer_root" || req.Action == "permission_admin" || req.Action == "update_permission_admin" {
 		if err := model.InvalidateUserCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate user cache for user %d: %s", user.Id, err.Error()))
 		}

@@ -179,20 +179,23 @@ func AdvanceGameStockTick() {
 	if err != nil || len(stocks) == 0 {
 		return
 	}
+	advanced := false
 	for _, stock := range stocks {
 		var lastKline GameStockKline
 		err := DB.Where("stock_id = ? AND ts = ?", stock.Id, ts).First(&lastKline).Error
 		if err == nil {
 			continue // 本分钟已有K线
 		}
-		// 今天的首根K线：开盘价 = 昨收 ± 2% 内跳空
+		// 今天的首根K线：开盘不再跳空低开（用户要求取消），
+		// 开盘 = 昨收平开或 0~1% 内小幅高开
 		openPrice := stock.LastPrice
 		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 		var todayFirst GameStockKline
 		hasToday := DB.Where("stock_id = ? AND ts >= ?", stock.Id, todayStart).First(&todayFirst).Error == nil
 		if !hasToday {
-			gap := (rand.Float64() - 0.5) * 0.04
+			gap := rand.Float64() * 0.01
 			openPrice = clampPrice(stock.PrevClose*(1+gap), stock.PrevClose)
+			stock.LastPrice = openPrice
 			stock.OpenPrice = openPrice
 			stock.HighPrice = openPrice
 			stock.LowPrice = openPrice
@@ -233,6 +236,7 @@ func AdvanceGameStockTick() {
 		if err := DB.Create(kline).Error; err != nil {
 			continue
 		}
+		advanced = true
 
 		stock.LastPrice = closePrice
 		if high > stock.HighPrice || stock.HighPrice == 0 {
@@ -260,10 +264,12 @@ func AdvanceGameStockTick() {
 		}
 	}
 
-	// 事件引擎：新闻事件与宏观事件随 tick 触发
-	MaybeTriggerStockEvents(stocks, now)
-	// 公司行为（分红/拆股/并购退市）：极低概率
-	TriggerCorporateActions(now)
+	// 事件引擎：新闻事件与宏观事件随新K线触发，避免20秒tick在同一分钟重复触发
+	if advanced {
+		MaybeTriggerStockEvents(stocks, now)
+		// 公司行为（分红/拆股/并购退市）：极低概率
+		TriggerCorporateActions(now)
+	}
 }
 
 func GetGameStockKlines(stockId int, limit int) ([]*GameStockKline, error) {
@@ -445,8 +451,8 @@ func OpenFutures(userId int, side string, leverage int, marginQuota int, stockId
 	if side != "long" && side != "short" {
 		return nil, errors.New("invalid side")
 	}
-	if leverage < 1 || leverage > 100 {
-		return nil, errors.New("杠杆倍数需在 1-100 之间")
+	if leverage < 1 || leverage > 10000 {
+		return nil, errors.New("杠杆倍数需在 1-10000 之间")
 	}
 	if marginQuota <= 0 {
 		return nil, errors.New("保证金必须大于0")

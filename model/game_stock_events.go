@@ -104,6 +104,7 @@ const (
 
 const marketRegimeOptionKey = "game_stock_market_regime"
 const marketRegimeSetTimeKey = "game_stock_market_regime_time"
+const StockEventImpactLimitPct = 3.0
 
 func GetMarketRegime() string {
 	var option Option
@@ -175,8 +176,13 @@ func recordStockEvent(stockId int, stockCode, category, eventType, title, body s
 	}).Error
 }
 
-// applyPriceImpact 以事件冲击更新股价（带涨跌停约束），返回实际变化后价格。
+// applyPriceImpact 以事件冲击更新股价（单次冲击限制在±3%，再带涨跌停约束），返回实际变化后价格。
 func applyPriceImpact(stock *GameStock, impactPct float64) float64 {
+	if impactPct > StockEventImpactLimitPct {
+		impactPct = StockEventImpactLimitPct
+	} else if impactPct < -StockEventImpactLimitPct {
+		impactPct = -StockEventImpactLimitPct
+	}
 	target := stock.LastPrice * (1 + impactPct/100)
 	return clampPrice(target, stock.PrevClose)
 }

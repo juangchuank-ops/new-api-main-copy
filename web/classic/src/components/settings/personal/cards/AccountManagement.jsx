@@ -38,7 +38,7 @@ import {
   IconLock,
   IconDelete,
 } from '@douyinfe/semi-icons';
-import { SiTelegram, SiWechat, SiLinux, SiDiscord } from 'react-icons/si';
+import { SiTelegram, SiWechat, SiLinux, SiDiscord, SiGoogle } from 'react-icons/si';
 import { UserPlus, ShieldCheck } from 'lucide-react';
 import TelegramLoginButton from 'react-telegram-login';
 import {
@@ -46,6 +46,7 @@ import {
   showError,
   showSuccess,
   onGitHubOAuthClicked,
+  onGoogleOAuthClicked,
   onOIDCClicked,
   onLinuxDOOAuthClicked,
   onDiscordOAuthClicked,
@@ -71,6 +72,7 @@ const AccountManagement = ({
   passkeyDeleteLoading,
   onPasskeyRegister,
   onPasskeyDelete,
+  onUserInfoChanged,
 }) => {
   const renderAccountInfo = (accountId, label) => {
     if (!accountId || accountId === '') {
@@ -101,6 +103,52 @@ const AccountManagement = ({
     React.useState(false);
   const [customOAuthBindings, setCustomOAuthBindings] = React.useState([]);
   const [customOAuthLoading, setCustomOAuthLoading] = React.useState({});
+
+  // 改用户名（收费）
+  const [newUsername, setNewUsername] = React.useState('');
+  const [renaming, setRenaming] = React.useState(false);
+
+  const handleRename = () => {
+    const trimmed = newUsername.trim();
+    if (!trimmed) {
+      showError(t('请输入新用户名'));
+      return;
+    }
+    if (trimmed === userState.user?.username) {
+      showError(t('新用户名与当前用户名相同'));
+      return;
+    }
+    Modal.confirm({
+      title: t('确认修改用户名'),
+      content: t(
+        '确定将用户名由 {{old}} 改为 {{new}} 吗？每次修改收取 1000 额度。',
+        { old: userState.user?.username, new: trimmed },
+      ),
+      onOk: async () => {
+        setRenaming(true);
+        try {
+          const res = await API.post('/api/user/rename', {
+            username: trimmed,
+          });
+          if (res.data.success) {
+            showSuccess(
+              t('用户名已修改为 {{name}}，收取费用 1000 额度', {
+                name: trimmed,
+              }),
+            );
+            setNewUsername('');
+            onUserInfoChanged?.();
+          } else {
+            showError(res.data.message);
+          }
+        } catch (e) {
+          showError(e.response?.data?.message || e.message);
+        } finally {
+          setRenaming(false);
+        }
+      },
+    });
+  };
 
   // Fetch custom OAuth bindings
   const loadCustomOAuthBindings = async () => {
@@ -198,6 +246,52 @@ const AccountManagement = ({
         >
           <div className='py-4'>
             <div className='grid grid-cols-1 lg:grid-cols-2 gap-4'>
+              {/* 修改用户名（收费） */}
+              <Card className='!rounded-xl lg:col-span-2'>
+                <div className='flex flex-col md:flex-row md:items-center justify-between gap-3'>
+                  <div className='flex items-center flex-1 min-w-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                      <UserPlus
+                        size={18}
+                        className='text-slate-600 dark:text-slate-300'
+                      />
+                    </div>
+                    <div className='flex-1 min-w-0'>
+                      <div className='font-medium text-gray-900'>
+                        {t('修改用户名')}
+                      </div>
+                      <div className='text-sm text-gray-500 truncate'>
+                        {t('当前用户名')}：{userState.user?.username || '-'}
+                        <span className='ml-2 text-amber-600'>
+                          {t('每次修改收取 1000 额度')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className='flex items-center gap-2 flex-shrink-0'>
+                    <Input
+                      value={newUsername}
+                      onChange={(v) => setNewUsername(v)}
+                      placeholder={t('请输入新用户名')}
+                      maxLength={20}
+                      showClear
+                      style={{ width: 180 }}
+                      disabled={renaming}
+                    />
+                    <Button
+                      type='primary'
+                      theme='outline'
+                      size='small'
+                      loading={renaming}
+                      disabled={!newUsername.trim()}
+                      onClick={handleRename}
+                    >
+                      {t('修改')}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+
               {/* 邮箱绑定 */}
               <Card className='!rounded-xl'>
                 <div className='flex items-center justify-between gap-3'>
@@ -353,6 +447,47 @@ const AccountManagement = ({
                       }
                     >
                       {status.discord_oauth ? t('绑定') : t('未启用')}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Google绑定 */}
+              <Card className='!rounded-xl'>
+                <div className='flex items-center justify-between gap-3'>
+                  <div className='flex items-center flex-1 min-w-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                      <SiGoogle
+                        size={18}
+                        className='text-slate-600 dark:text-slate-300'
+                      />
+                    </div>
+                    <div className='flex-1 min-w-0'>
+                      <div className='font-medium text-gray-900'>
+                        {t('Google')}
+                      </div>
+                      <div className='text-sm text-gray-500 truncate'>
+                        {renderAccountInfo(
+                          userState.user?.google_id,
+                          t('Google ID'),
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className='flex-shrink-0'>
+                    <Button
+                      type='primary'
+                      theme='outline'
+                      size='small'
+                      onClick={() =>
+                        onGoogleOAuthClicked(status.google_client_id)
+                      }
+                      disabled={
+                        isBound(userState.user?.google_id) ||
+                        !status.google_oauth
+                      }
+                    >
+                      {status.google_oauth ? t('绑定') : t('未启用')}
                     </Button>
                   </div>
                 </div>

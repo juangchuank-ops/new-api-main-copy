@@ -29,6 +29,7 @@ import type { z } from 'zod'
 import {
   IconDiscord,
   IconGithub,
+  IconGoogle,
   IconLinuxDo,
   IconWeChat,
 } from '@/assets/brand-icons'
@@ -123,6 +124,7 @@ export function SignUpForm({
     handleDiscordLogin,
     handleOIDCLogin,
     handleLinuxDOLogin,
+    handleGoogleLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
   } = useOAuthLogin(status, invitationCode)
@@ -149,6 +151,7 @@ export function SignUpForm({
     return !!(
       status?.github_oauth ||
       status?.discord_oauth ||
+      status?.google_oauth ||
       status?.oidc_enabled ||
       status?.wechat_login ||
       status?.linuxdo_oauth ||
@@ -160,6 +163,7 @@ export function SignUpForm({
     oauthRegisterEnabled,
     status?.github_oauth,
     status?.discord_oauth,
+    status?.google_oauth,
     status?.oidc_enabled,
     status?.wechat_login,
     status?.linuxdo_oauth,
@@ -352,6 +356,17 @@ export function SignUpForm({
           void runRegistrationAction(handleDiscordLogin)
         },
         icon: <IconDiscord className='h-4 w-4' />,
+      })
+    }
+
+    if (status?.google_oauth) {
+      buttons.push({
+        key: 'google',
+        label: t('Continue with Google'),
+        onClick: () => {
+          void runRegistrationAction(handleGoogleLogin)
+        },
+        icon: <IconGoogle className='h-4 w-4' />,
       })
     }
 

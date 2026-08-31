@@ -38,7 +38,7 @@ func TestRedeemGameScoreAwardsOneQuotaUnitPerThousandPoints(t *testing.T) {
 	assert.Equal(t, 1.0, scoreLog.UsdAwarded)
 }
 
-func TestRedeemRoguelikeScoreAwardsOneQuotaUnitPerTenThousandPoints(t *testing.T) {
+func TestRedeemRoguelikeScoreAwardsOneQuotaUnitPerOneHundredThousandPoints(t *testing.T) {
 	truncateTables(t)
 	require.NoError(t, DB.AutoMigrate(&GameConfig{}, &GameScoreLog{}))
 	t.Cleanup(func() {
@@ -52,7 +52,7 @@ func TestRedeemRoguelikeScoreAwardsOneQuotaUnitPerTenThousandPoints(t *testing.T
 		GameKey: "roguelike", Name: "肉鸽 NEON-PULSE", Status: GameStatusAvailable, MaxScore: 100000,
 	}).Error)
 
-	quota, usd, err := RedeemGameScore(user.Id, user.Username, "roguelike", 10000)
+	quota, usd, err := RedeemGameScore(user.Id, user.Username, "roguelike", 100000)
 	require.NoError(t, err)
 	assert.Equal(t, int(common.QuotaPerUnit), quota)
 	assert.Equal(t, 1.0, usd)
@@ -64,7 +64,7 @@ func TestRedeemRoguelikeScoreAwardsOneQuotaUnitPerTenThousandPoints(t *testing.T
 	var scoreLog GameScoreLog
 	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&scoreLog).Error)
 	assert.Equal(t, "roguelike", scoreLog.GameKey)
-	assert.Equal(t, 10000, scoreLog.Score)
+	assert.Equal(t, 100000, scoreLog.Score)
 	assert.Equal(t, int(common.QuotaPerUnit), scoreLog.QuotaAwarded)
 	assert.Equal(t, 1.0, scoreLog.UsdAwarded)
 }

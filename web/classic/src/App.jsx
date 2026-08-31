@@ -50,9 +50,12 @@ import ModelHealth from './pages/ModelHealth';
 import SystemInfo from './pages/SystemInfo';
 import Banner from './pages/Banner';
 import UpstreamAccount from './pages/UpstreamAccount';
+import IpBan from './pages/IpBan';
+import BrowserFingerprintBan from './pages/BrowserFingerprintBan';
 import Game from './pages/Game';
 import GameRoom from './pages/Game/components/GameRoom';
 import Rankings from './pages/Rankings';
+import RankingsV2 from './pages/RankingsV2';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -61,6 +64,7 @@ import SetupCheck from './components/layout/SetupCheck';
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
+const TransferPage = lazy(() => import('./pages/Transfer'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 
@@ -87,6 +91,28 @@ function App() {
 
         // 如果是对象格式，使用requireAuth配置
         return modules.pricing?.requireAuth === true;
+      } catch (error) {
+        console.error('解析顶栏模块配置失败:', error);
+        return false; // 默认不需要登录
+      }
+    }
+    return false; // 默认不需要登录
+  }, [statusState?.status?.HeaderNavModules]);
+
+  // 获取排行榜权限配置
+  const rankingsRequireAuth = useMemo(() => {
+    const headerNavModulesConfig = statusState?.status?.HeaderNavModules;
+    if (headerNavModulesConfig) {
+      try {
+        const modules = JSON.parse(headerNavModulesConfig);
+
+        // 处理向后兼容性：如果rankings是boolean，默认不需要登录
+        if (typeof modules.rankings === 'boolean') {
+          return false; // 默认不需要登录鉴权
+        }
+
+        // 如果是对象格式，使用requireAuth配置
+        return modules.rankings?.requireAuth === true;
       } catch (error) {
         console.error('解析顶栏模块配置失败:', error);
         return false; // 默认不需要登录
@@ -152,6 +178,22 @@ function App() {
           element={
             <AdminRoute>
               <UpstreamAccount />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/ip-ban'
+          element={
+            <AdminRoute>
+              <IpBan />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/browser-fingerprint-ban'
+          element={
+            <AdminRoute>
+              <BrowserFingerprintBan />
             </AdminRoute>
           }
         />
@@ -316,6 +358,16 @@ function App() {
           }
         />
         <Route
+          path='/console/transfer'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TransferPage />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
           path='/console/topup'
           element={
             <PrivateRoute>
@@ -379,6 +431,18 @@ function App() {
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Pricing />
               </Suspense>
+            )
+          }
+        />
+        <Route
+          path='/rankings'
+          element={
+            rankingsRequireAuth ? (
+              <PrivateRoute>
+                <RankingsV2 />
+              </PrivateRoute>
+            ) : (
+              <RankingsV2 />
             )
           }
         />

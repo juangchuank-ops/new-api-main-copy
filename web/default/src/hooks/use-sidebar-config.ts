@@ -167,7 +167,8 @@ function parseUserSidebarConfig(
 function isModuleEnabled(
   url: string,
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  permissionModules?: Record<string, unknown>
 ): boolean {
   const mapping = URL_TO_CONFIG_MAP[url]
   if (!mapping) {
@@ -177,6 +178,19 @@ function isModuleEnabled(
 
   const { section, module } = mapping
   const adminSection = adminConfig[section]
+
+  if (permissionModules && mapping.section === 'admin') {
+    const permissionAdminSection = permissionModules.admin
+    if (
+      permissionAdminSection === false ||
+      (permissionAdminSection &&
+        typeof permissionAdminSection === 'object' &&
+        (permissionAdminSection as Record<string, unknown>)[module] === false)
+    ) {
+      return false
+    }
+  }
+
   const adminAllowed = Boolean(
     adminSection && adminSection.enabled && adminSection[module] === true
   )
@@ -196,7 +210,8 @@ function isModuleEnabled(
 function isNavItemVisible(
   item: NavItem,
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  permissionModules?: Record<string, unknown>
 ): boolean {
   // Handle dynamic chat presets type — also runs the admin × user AND gate
   if ('type' in item && item.type === 'chat-presets') {
@@ -214,7 +229,7 @@ function isNavItemVisible(
   if ('url' in item && item.url) {
     const configUrls = item.configUrls ?? [item.url]
     return configUrls.some((url) =>
-      isModuleEnabled(url as string, adminConfig, userConfig)
+      isModuleEnabled(url as string, adminConfig, userConfig, permissionModules)
     )
   }
 
@@ -222,7 +237,7 @@ function isNavItemVisible(
   if ('items' in item && item.items) {
     // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
-      isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+      isModuleEnabled(subItem.url as string, adminConfig, userConfig, permissionModules)
     )
   }
 
@@ -235,14 +250,15 @@ function isNavItemVisible(
 function filterNavItems(
   items: NavItem[],
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  permissionModules?: Record<string, unknown>
 ): NavItem[] {
   return items
     .map((item) => {
       // If collapsible item, also filter its sub-items
       if ('items' in item && item.items) {
         const filteredSubItems = item.items.filter((subItem) =>
-          isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+          isModuleEnabled(subItem.url as string, adminConfig, userConfig, permissionModules)
         )
 
         return {
@@ -252,7 +268,7 @@ function filterNavItems(
       }
       return item
     })
-    .filter((item) => isNavItemVisible(item, adminConfig, userConfig))
+    .filter((item) => isNavItemVisible(item, adminConfig, userConfig, permissionModules))
 }
 
 /**
@@ -295,15 +311,17 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
     return parseUserSidebarConfig(auth?.user?.sidebar_modules)
   }, [auth?.user?.permissions?.sidebar_settings, auth?.user?.sidebar_modules])
 
+  const permissionModules = auth?.user?.permissions?.sidebar_modules
+
   const filteredNavGroups = useMemo(
     () =>
       navGroups
         .map((group) => ({
           ...group,
-          items: filterNavItems(group.items, adminConfig, userConfig),
+          items: filterNavItems(group.items, adminConfig, userConfig, permissionModules),
         }))
         .filter((group) => group.items.length > 0), // Only show navigation groups with visible items
-    [navGroups, adminConfig, userConfig]
+    [navGroups, adminConfig, userConfig, permissionModules]
   )
 
   return filteredNavGroups
@@ -326,5 +344,10 @@ export function useIsSidebarModuleVisible(url: string): boolean {
       ? null
       : parseUserSidebarConfig(auth?.user?.sidebar_modules)
 
-  return isModuleEnabled(url, adminConfig, userConfig)
+  return isModuleEnabled(
+    url,
+    adminConfig,
+    userConfig,
+    auth?.user?.permissions?.sidebar_modules
+  )
 }

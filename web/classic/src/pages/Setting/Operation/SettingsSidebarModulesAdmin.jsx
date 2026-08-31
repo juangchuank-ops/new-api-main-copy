@@ -69,7 +69,10 @@ export default function SettingsSidebarModulesAdmin(props) {
       subscription: true,
       setting: true,
       'system-info': true,
-      'banner': true,
+      banner: true,
+      'upstream-account': true,
+      'ip-ban': true,
+      'browser-fingerprint-ban': true,
     },
   });
 
@@ -133,6 +136,10 @@ export default function SettingsSidebarModulesAdmin(props) {
         subscription: true,
         setting: true,
         'system-info': true,
+        banner: true,
+        'upstream-account': true,
+        'ip-ban': true,
+      'browser-fingerprint-ban': true,
       },
     };
     setSidebarModulesAdmin(defaultModules);
@@ -204,6 +211,11 @@ export default function SettingsSidebarModulesAdmin(props) {
             subscription: true,
             setting: true,
             'system-info': true,
+            banner: true,
+            'upstream-account': true,
+            'ip-ban': true,
+      'browser-fingerprint-ban': true,
+            'browser-fingerprint-ban': true,
           },
         };
         setSidebarModulesAdmin(defaultModules);
@@ -297,6 +309,21 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'banner',
           title: t('横幅管理'),
           description: t('公共横幅公告管理'),
+        },
+        {
+          key: 'upstream-account',
+          title: t('上游账号'),
+          description: t('上游账号管理'),
+        },
+        {
+          key: 'ip-ban',
+          title: t('IP封禁'),
+          description: t('管理禁止访问的 IP 和网段'),
+        },
+        {
+          key: 'browser-fingerprint-ban',
+          title: t('浏览器指纹封禁'),
+          description: t('管理禁止访问的浏览器指纹'),
         },
       ],
     },

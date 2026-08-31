@@ -30,12 +30,65 @@ export let API = axios.create({
   baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
     ? import.meta.env.VITE_REACT_APP_SERVER_URL
     : '',
+  withCredentials: true,
   headers: {
     'New-API-User': getUserIdFromLocalStorage(),
     'Cache-Control': 'no-store',
   },
 });
 
+let browserFingerprintPromise;
+
+function getBrowserFingerprint() {
+  if (typeof window === 'undefined' || !window.crypto?.subtle) return null;
+  if (!browserFingerprintPromise) {
+    const signals = [
+      navigator.userAgent,
+      navigator.language,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      `${window.screen?.width || 0}x${window.screen?.height || 0}x${window.screen?.colorDepth || 0}`,
+      navigator.platform,
+      navigator.hardwareConcurrency || 0,
+      navigator.maxTouchPoints || 0,
+    ].join('|');
+    browserFingerprintPromise = window.crypto.subtle
+      .digest('SHA-256', new TextEncoder().encode(signals))
+      .then((buffer) =>
+        Array.from(new Uint8Array(buffer))
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join(''),
+      )
+      .catch(() => null);
+  }
+  return browserFingerprintPromise;
+}
+
+function attachBrowserFingerprint(instance) {
+  instance.interceptors.request.use(async (config) => {
+    const fingerprint = await getBrowserFingerprint();
+    if (fingerprint) {
+      config.headers = config.headers || {};
+      config.headers['X-Browser-Fingerprint'] = fingerprint;
+    }
+    return config;
+  });
+}
+
+function attachResponseErrorHandler(instance) {
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.config && error.config.skipErrorHandler) {
+        return Promise.reject(error);
+      }
+      showError(error);
+      return Promise.reject(error);
+    },
+  );
+}
+
+attachBrowserFingerprint(API);
+attachResponseErrorHandler(API);
 
 function redirectToOAuthUrl(url, options = {}) {
   const { openInNewTab = false } = options;
@@ -48,7 +101,6 @@ function redirectToOAuthUrl(url, options = {}) {
 
   window.location.assign(targetUrl);
 }
-
 
 function patchAPIInstance(instance) {
   const originalGet = instance.get.bind(instance);
@@ -81,30 +133,25 @@ function patchAPIInstance(instance) {
 patchAPIInstance(API);
 
 export function updateAPI() {
+  // 登录或刷新后重建 Axios 实例；同时清除 401 死循环标记，
+  // 允许 AuthRedirect 在新 session 生效后正常跳回 /console。
+  sessionStorage.removeItem('session-expired');
   API = axios.create({
     baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
       ? import.meta.env.VITE_REACT_APP_SERVER_URL
       : '',
+    withCredentials: true,
     headers: {
       'New-API-User': getUserIdFromLocalStorage(),
       'Cache-Control': 'no-store',
     },
   });
 
+  attachBrowserFingerprint(API);
+  attachResponseErrorHandler(API);
   patchAPIInstance(API);
 }
 
-API.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // 如果请求配置中显式要求跳过全局错误处理，则不弹出默认错误提示
-    if (error.config && error.config.skipErrorHandler) {
-      return Promise.reject(error);
-    }
-    showError(error);
-    return Promise.reject(error);
-  },
-);
 
 // playground
 
@@ -278,7 +325,9 @@ async function prepareOAuthState(options = {}) {
 export async function checkInvitationCode(code) {
   if (!code) return { valid: false, message: '' };
   try {
-    const res = await API.get(`/api/invitation-code/check?key=${encodeURIComponent(code)}`);
+    const res = await API.get(
+      `/api/invitation-code/check?key=${encodeURIComponent(code)}`,
+    );
     if (res.data.success) return { valid: true };
     return { valid: false, message: res.data.message || '邀请码无效' };
   } catch {
@@ -330,6 +379,17 @@ export async function onLinuxDOOAuthClicked(
   if (!state) return;
   redirectToOAuthUrl(
     `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${linuxdo_client_id}&state=${state}`,
+  );
+}
+
+export async function onGoogleOAuthClicked(google_client_id, options = {}) {
+  const state = await prepareOAuthState(options);
+  if (!state) return;
+  const redirect_uri = `${window.location.origin}/oauth/google`;
+  const response_type = 'code';
+  const scope = 'openid+email+profile';
+  redirectToOAuthUrl(
+    `https://accounts.google.com/o/oauth2/v2/auth?client_id=${google_client_id}&redirect_uri=${redirect_uri}&response_type=${response_type}&scope=${scope}&state=${state}`,
   );
 }
 

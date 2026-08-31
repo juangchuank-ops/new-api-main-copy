@@ -56,6 +56,7 @@ import {
   onGitHubOAuthClicked,
   onLinuxDOOAuthClicked,
   onOIDCClicked,
+  onGoogleOAuthClicked,
   checkInvitationCode,
 } from '../../helpers';
 import OIDCIcon from '../common/logo/OIDCIcon';
@@ -65,7 +66,7 @@ import TelegramLoginButton from 'react-telegram-login/src';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 import { useTranslation } from 'react-i18next';
-import { SiDiscord } from 'react-icons/si';
+import { SiDiscord, SiGoogle } from 'react-icons/si';
 
 const RegisterForm = () => {
   let navigate = useNavigate();
@@ -97,6 +98,7 @@ const RegisterForm = () => {
   const [discordLoading, setDiscordLoading] = useState(false);
   const [oidcLoading, setOidcLoading] = useState(false);
   const [linuxdoLoading, setLinuxdoLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [emailRegisterLoading, setEmailRegisterLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
   const [verificationCodeLoading, setVerificationCodeLoading] = useState(false);
@@ -153,6 +155,7 @@ const RegisterForm = () => {
     status.wechat_login ||
     status.linuxdo_oauth ||
     status.telegram_oauth ||
+    status.google_oauth ||
     hasCustomOAuthProviders,
   );
 
@@ -426,6 +429,33 @@ const RegisterForm = () => {
     }
   };
 
+  const handleGoogleClick = async () => {
+    if (status?.invitation_code_enabled && !inputs.invitation_code) {
+      showInfo(t('请先输入邀请码'));
+      return;
+    }
+    setGoogleLoading(true);
+
+    // Validate invitation code via API before OAuth redirect
+    if (status?.invitation_code_enabled) {
+      const result = await checkInvitationCode(inputs.invitation_code);
+      if (!result.valid) {
+        showError(result.message || t('邀请码无效'));
+        setGoogleLoading(false);
+        return;
+      }
+    }
+
+    try {
+      onGoogleOAuthClicked(status.google_client_id, {
+        shouldLogout: true,
+        invitationCode: inputs.invitation_code,
+      });
+    } finally {
+      setTimeout(() => setGoogleLoading(false), 3000);
+    }
+  };
+
   const handleCustomOAuthClick = async (provider) => {
     if (status?.invitation_code_enabled && !inputs.invitation_code) {
       showInfo(t('请先输入邀请码'));
@@ -571,6 +601,27 @@ const RegisterForm = () => {
                   </Button>
                 )}
 
+                {status.google_oauth && (
+                  <Button
+                    theme='outline'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
+                    type='tertiary'
+                    icon={
+                      <SiGoogle
+                        style={{
+                          color: '#4285F4',
+                          width: '20px',
+                          height: '20px',
+                        }}
+                      />
+                    }
+                    onClick={handleGoogleClick}
+                    loading={googleLoading}
+                  >
+                    <span className='ml-3'>{t('使用 Google 继续')}</span>
+                  </Button>
+                )}
+
                 {status.oidc_enabled && (
                   <Button
                     theme='outline'
@@ -700,6 +751,20 @@ const RegisterForm = () => {
             </div>
             <div className='px-2 py-8'>
               <Form className='space-y-3'>
+                {status?.invitation_code_enabled &&
+                  !hasOAuthRegisterOptions && (
+                    <Form.Input
+                      field='invitation_code'
+                      label={t('邀请码')}
+                      placeholder={t('请输入邀请码')}
+                      name='invitation_code'
+                      onChange={(value) =>
+                        handleChange('invitation_code', value)
+                      }
+                      prefix={<IconKey />}
+                    />
+                  )}
+
                 <Form.Input
                   field='username'
                   label={t('用户名')}
