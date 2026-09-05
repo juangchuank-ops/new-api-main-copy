@@ -62,7 +62,7 @@ func TestIPBanMiddlewareBlocksAndBypassesRecoveryPaths(t *testing.T) {
 				assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 			}
 			if test.path == "/api/user/self" {
-				assert.JSONEq(t, `{"error":"ip_banned","message":"IP address is banned"}`, response.Body.String())
+				assert.JSONEq(t, `{"error":"ip_banned","message":"您的账号/ip/指纹已被封禁，请联系管理员"}`, response.Body.String())
 				assert.NotContains(t, response.Body.String(), "<html")
 			}
 

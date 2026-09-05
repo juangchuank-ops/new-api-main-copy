@@ -1,6 +1,6 @@
 # New API
 
-> An AI API gateway and asset management platform that unifies access to multiple AI services.
+> A unified AI API gateway and asset management platform for multiple AI services.
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-orange.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](./go.mod)
@@ -8,38 +8,62 @@
 
 **Language:** [简体中文](./README.md) · [繁體中文](./README.zh_TW.md) · **English** · [Français](./README.fr.md) · [日本語](./README.ja.md)
 
-New API is an AI API gateway maintained by **QuantumNous**. It exposes OpenAI, Claude, Gemini, Azure, AWS Bedrock and other upstream providers behind a unified interface, with channel management, smart routing, authentication, quota and cost accounting, logging, user management, and an admin dashboard.
+New API is an AI API gateway maintained by **QuantumNous**. It connects 40+ upstream services including OpenAI, Claude, Gemini, Azure, and AWS Bedrock behind a unified interface, and provides channel management, intelligent routing, authentication, quota and cost accounting, logging, user management, and dual-frontend admin consoles.
 
 > [!IMPORTANT]
-> This project is intended for lawfully authorized API gateways, internal organization authentication, multi-model management, usage statistics, cost accounting, and private deployment. You must obtain upstream service access legitimately and comply with upstream terms of service and applicable local laws.
+> This project is intended solely for legally authorized API gateways, organizational authentication, multi-model management, usage tracking, cost accounting, and private deployments. Users must obtain upstream service permissions in compliance with upstream terms and local laws and regulations.
 
 ## Key Features
 
-- **Unified Interface**: OpenAI Compatible, Responses, Realtime, Claude Messages, Gemini, Rerank, plus multiple image, audio and task interfaces.
-- **Multi-channel Routing**: channel priority and weights, failure retry, model mapping, batch keys and availability testing.
-- **Access Control**: JWT, OAuth, OIDC, WebAuthn/Passkey, 2FA, user groups, token and model permissions.
-- **Usage & Cost**: quota management, model ratios, tiered/dynamic pricing, top-up and subscription, usage logs and statistics dashboard.
-- **Operations**: SQLite, MySQL, PostgreSQL, Redis cache, multi-node deployment, health checks and system monitoring.
-- **Dual Frontend**: the modern `default` console, plus the compatibility-preserving `classic` console.
-- **Internationalization**: backend in Chinese and English; the default frontend supports Chinese, English, French, Japanese, Russian and Vietnamese.
+- **Unified Interface**: Supports OpenAI Compatible, Responses, Realtime, Claude Messages, Gemini, Rerank, and multiple image, audio, video, and task interfaces.
+- **Multi-Channel Routing**: 40+ upstream provider adapters, channel priority and weight, failure retry, model mapping, batch keys, availability testing, and channel affinity.
+- **Access Control**: JWT, OAuth, OIDC, WebAuthn/Passkey, 2FA, user groups, token and model permissions, IP blacklist, browser fingerprint blacklist, and auto-blocking.
+- **Usage & Cost**: Quota management, model multipliers, tiered/dynamic pricing (expression-based billing), top-up and subscription, usage logs, statistics dashboards, and leaderboards.
+- **Value-Added Features**: Daily check-in, invitation codes, redemption codes, transfers, balance top-up, subscription plans, gaming center (Texas Hold'em, stock/futures simulation, Minesweeper, and more).
+- **Ops Capabilities**: SQLite, MySQL, PostgreSQL, ClickHouse log database, Redis cache, multi-node deployment, health checks, system monitoring, and performance metrics.
+- **Dual Frontends**: Modern `default` console (React 19 + Tailwind) and compatibility-retaining `classic` console (Semi Design).
+- **Internationalization**: Backend supports Chinese and English; default frontend supports Chinese, English, French, Japanese, Russian, and Vietnamese.
 
 ## Architecture
 
 ```text
-Router -> Controller -> Service -> Model
-                         |
-                         +-> Relay -> Provider adapters
+                    ┌──────────────────────────────┐
+                    │         HTTP Requests          │
+                    └──────────────┬───────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  router/  Route Registration (API / Relay / Web) │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  middleware/  Auth, Rate Limiting, Logging, Security │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  controller/  HTTP Controllers (Business Entry) │
+              └────────────────────┬────────────────────┘
+               ┌───────────────────┼───────────────────┐
+               ▼                   ▼                   ▼
+      ┌──────────────────┐ ┌───────────────┐ ┌──────────────────┐
+      │ service/  Business Logic│ │ relay/  Protocol Relay│ │ relay/channel/   │
+      └────────┬─────────┘ └───────┬───────┘ │  40+ Provider Adapters │
+               │                   │         └──────────────────┘
+               ▼                   ▼
+      ┌──────────────────┐  ┌──────────────────┐
+      │ model/  GORM Data│  │ oauth/  Third-Party Login│
+      │ Layer / Migration│  └──────────────────┘
+      └──────────────────┘
 ```
 
-| Layer | Stack & Directory |
+| Layer | Technology & Directories |
 | --- | --- |
-| Backend | Go, Gin, GORM; `router/`, `controller/`, `service/`, `model/` |
-| Protocol relay | Provider adapters under `relay/` and `relay/channel/` |
-| Default frontend | React 19, TypeScript, Base UI, Tailwind CSS, Rsbuild; `web/default/` |
-| Classic frontend | React, Semi Design; `web/classic/` |
-| Data & cache | SQLite / MySQL / PostgreSQL, Redis |
+| Backend | Go 1.25, Gin, GORM; `router/`, `controller/`, `service/`, `model/` |
+| Protocol Relay | `relay/` and `relay/channel/` provider adapters; `relaykit/` standalone protocol conversion module |
+| Default Frontend | React 19, TypeScript, Base UI, Tailwind CSS, Rsbuild; `web/default/` |
+| Classic Frontend | React, Semi Design; `web/classic/` |
+| Data & Cache | SQLite / MySQL / PostgreSQL, ClickHouse log database, Redis |
 
-## Quick Start
+## Quick Deployment
 
 ### Docker Compose
 
@@ -50,7 +74,7 @@ Router -> Controller -> Service -> Model
    cd new-api-main-copy
    ```
 
-2. Change the database and Redis passwords and `SESSION_SECRET` in [`docker-compose.yml`](./docker-compose.yml). Never keep the example passwords in production.
+2. Edit [`docker-compose.yml`](./docker-compose.yml) to set the database, Redis password, and `SESSION_SECRET`. Do not use the example passwords in production.
 
 3. Start the services:
 
@@ -58,9 +82,9 @@ Router -> Controller -> Service -> Model
    docker compose up -d
    ```
 
-4. Open <http://localhost:3000> and create the administrator account through the setup wizard.
+4. Open <http://localhost:3000> and follow the setup wizard to create an administrator.
 
-The default Compose configuration uses PostgreSQL and Redis. Persistent data is stored in Docker volumes and in the local `data/` and `logs/` directories.
+The default Compose configuration uses PostgreSQL and Redis. Storage volumes and local `data/` and `logs/` directories persist data.
 
 ### Single Container (SQLite)
 
@@ -76,27 +100,27 @@ docker run --name new-api -d --restart always \
 
 ### Prerequisites
 
-- Go version as declared in [`go.mod`](./go.mod)
+- Go version as specified in [`go.mod`](./go.mod)
 - [Bun](https://bun.sh/) 1.x
-- Docker (recommended for PostgreSQL and Redis development environments)
+- Docker (recommended for PostgreSQL and Redis development environment)
 - GNU Make (optional, for project shortcuts)
 
-### Starting the Development Environment
+### Start Development Environment
 
 ```bash
-# Start the backend, PostgreSQL and Redis
+# Start backend, PostgreSQL, and Redis
 make dev-api
 
-# Start both the default and classic frontends
+# Start both default and classic frontends
 make dev-web
 ```
 
-The default frontend runs at <http://localhost:5173>, the Classic frontend at <http://localhost:5174>, and the backend API at <http://localhost:3000>.
+The default frontend is at <http://localhost:5173>, the Classic frontend at <http://localhost:5174>, and the backend API at <http://localhost:3000>.
 
 You can also start them individually:
 
 ```bash
-# Backend (SQLite by default; database and other settings can go in a local .env)
+# Backend (uses SQLite by default; database and other config can be set in local .env)
 go run main.go
 
 # Default frontend
@@ -106,10 +130,10 @@ cd default
 bun run dev
 ```
 
-## Building & Checks
+## Build & Quality Checks
 
 ```bash
-# Build the default and classic frontends
+# Build both default and classic frontends
 make build-all-frontends
 
 # Backend tests
@@ -123,7 +147,7 @@ bun run format:check
 bun run build
 ```
 
-Building the full container image builds both frontends first, then embeds the static assets into the Go service:
+Full container image build builds both frontends sequentially, then embeds static assets into the Go service:
 
 ```bash
 docker build -t new-api:local .
@@ -131,54 +155,64 @@ docker build -t new-api:local .
 
 ## Configuration
 
-Common environment variables are shown in [`.env.example`](./.env.example). At minimum, review the following before deploying:
+Common environment variables are listed in [`.env.example`](./.env.example). Before deploying, review at least:
 
 | Variable | Purpose |
 | --- | --- |
-| `SQL_DSN` | MySQL or PostgreSQL primary database connection string; falls back to SQLite when unset |
+| `SQL_DSN` | MySQL or PostgreSQL main database connection string; uses SQLite if not set |
+| `LOG_SQL_DSN` | ClickHouse or MySQL log database connection string (optional) |
 | `REDIS_CONN_STRING` | Redis connection string |
-| `SESSION_SECRET` | Session signing secret for multi-node deployments; must be a strong random value in production |
-| `PORT` | HTTP listen port, defaults to `3000` |
+| `SESSION_SECRET` | Multi-node session signing key; must use a strong random value in production |
+| `PORT` | HTTP listen port, default `3000` |
 | `TZ` | Container or service timezone |
+| `NODE_TYPE` | Multi-node role; `master` for the primary node |
 
-Do not commit `.env`, database files, credentials, cookies, access tokens, or build artifacts. The repository's [`.gitignore`](./.gitignore) already covers these common local artifacts.
+Do not commit `.env`, database files, login credentials, cookies, access tokens, or build artifacts. The repository's [`.gitignore`](./.gitignore) covers these common local artifacts.
 
-## Project Layout
+## Project Directory
 
 ```text
-common/       Shared config, JSON, cache, crypto and network utilities
-constant/     Constants and channel types
-controller/   HTTP controllers
-docs/         Installation, channel and OpenAPI documentation
-dto/          Request/response data structures
+common/       Common utilities: JSON, cache, crypto, and networking tools
+constant/     Constants and channel types (API types, channel types, endpoint types, etc.)
+controller/   HTTP controllers (users, channels, tokens, top-ups, subscriptions, leaderboards, etc.)
+docs/         Installation, channel, OpenAPI, and per-file manifest documentation
+dto/          Request and response data structures
 i18n/         Backend internationalization resources
-middleware/   Auth, rate limiting, logging, CORS and other middleware
-model/        GORM models, migrations and data access
+logger/       Leveled logging package
+middleware/   Auth, rate limiting, logging, CORS, and other middleware
+model/        GORM models, migrations, and data access
 oauth/        OAuth / OIDC provider implementations
-relay/        Protocol conversion, billing and upstream channel adapters
-router/       API, relay, dashboard and web routes
+relay/        Protocol conversion, billing, and upstream channel adaptation
+relaykit/     Standalone Go module (protocol DTO and format conversion)
+router/       API, Relay, Dashboard, and Web routes
 service/      Business logic
-setting/      System, model, ratio, performance and other settings
+setting/      System, model, multiplier, billing, performance, and other configuration
+types/        Type definitions
+pkg/          Internal reusable packages (billingexpr, cachex, ionet, etc.)
 web/default/  Default React 19 console
 web/classic/  Classic compatibility console
+docs/file-map.md  Per-file manifest: purpose of every backend Go file
 ```
+
+For each directory's core responsibilities and per-file descriptions, see [**Per-File Manifest (docs/file-map.md)**](./docs/file-map.md).
 
 ## Documentation & Support
 
-- [Classic homepage public banner update](./docs/updates/classic-public-banners.md)
-- [简体中文完整说明](./README.zh_CN.md)
-- [OpenAPI definitions](./docs/openapi/)
-- [Additional channel settings](./docs/channel/other_setting.md)
-- [BT Panel installation](./docs/installation/BT.md)
-- [Security policy](./.github/SECURITY.md)
-- [Issues](https://github.com/juangchuank-ops/new-api-main-copy/issues)
+- [Per-File Manifest](./docs/file-map.md)
+- [Classic Homepage Public Banner Update](./docs/updates/classic-public-banners.md)
+- [Simplified Chinese README](./README.zh_CN.md)
+- [OpenAPI Definitions](./docs/openapi/)
+- [Channel Configuration Notes](./docs/channel/other_setting.md)
+- [BT Panel Installation](./docs/installation/BT.md)
+- [Security Policy](./.github/SECURITY.md)
+- [Issue Tracker](https://github.com/juangchuank-ops/new-api-main-copy/issues)
 
 ## Contributing
 
-Read [`AGENTS.md`](./AGENTS.md) and the relevant subdirectory conventions before submitting changes. Backend changes must remain compatible with SQLite, MySQL and PostgreSQL; user-facing frontend text must be internationalized. Pull Requests should use the [project template](./.github/PULL_REQUEST_TEMPLATE.md).
+Before submitting changes, read [`AGENTS.md`](./AGENTS.md) and relevant subdirectory conventions. Backend changes must be compatible with SQLite, MySQL, and PostgreSQL; frontend user-facing text must be internationalized. Please use the [project template](./.github/PULL_REQUEST_TEMPLATE.md) for pull requests.
 
 ## License & Attribution
 
 This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE). Third-party components and their licenses are listed in [`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md) and [`NOTICE`](./NOTICE).
 
-The New API project and **QuantumNous** names, logos, copyright and attribution information are retained.
+The New API project and **QuantumNous**-related names, marks, copyright, and attribution information are retained.

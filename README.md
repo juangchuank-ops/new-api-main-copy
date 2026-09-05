@@ -8,36 +8,60 @@
 
 **语言：** [简体中文](./README.md) · [繁體中文](./README.zh_TW.md) · [English](./README.en.md) · [Français](./README.fr.md) · [日本語](./README.ja.md)
 
-New API 是由 **QuantumNous** 维护的 AI API 网关。它将 OpenAI、Claude、Gemini、Azure、AWS Bedrock 等上游服务接入统一接口，并提供渠道管理、智能路由、鉴权、额度与成本核算、日志、用户管理和管理控制台。
+New API 是由 **QuantumNous** 维护的 AI API 网关。它将 OpenAI、Claude、Gemini、Azure、AWS Bedrock 等 40+ 上游服务接入统一接口，并提供渠道管理、智能路由、鉴权、额度与成本核算、日志、用户管理和双前端管理控制台。
 
 > [!IMPORTANT]
 > 本项目仅适用于合法授权的 API 网关、组织内部鉴权、多模型管理、用量统计、成本核算和私有化部署。使用者必须合法取得上游服务权限，并遵守上游条款及所在地法律法规。
 
 ## 主要能力
 
-- **统一接口**：支持 OpenAI Compatible、Responses、Realtime、Claude Messages、Gemini、Rerank 及多种图像、音频和任务接口。
-- **多渠道路由**：渠道优先级与权重、失败重试、模型映射、批量密钥和可用性测试。
-- **访问控制**：JWT、OAuth、OIDC、WebAuthn/Passkey、2FA、用户分组、令牌和模型权限。
-- **用量与成本**：额度管理、模型倍率、分层/动态定价、充值与订阅、使用日志和统计看板。
-- **运维能力**：SQLite、MySQL、PostgreSQL，Redis 缓存，多节点部署，健康检查和系统监控。
-- **双前端**：现代化 `default` 控制台，以及保留兼容性的 `classic` 控制台。
+- **统一接口**：支持 OpenAI Compatible、Responses、Realtime、Claude Messages、Gemini、Rerank 及多种图像、音频、视频和任务接口。
+- **多渠道路由**：40+ 上游供应商适配器，渠道优先级与权重、失败重试、模型映射、批量密钥、可用性测试与渠道亲和性。
+- **访问控制**：JWT、OAuth、OIDC、WebAuthn/Passkey、2FA、用户分组、令牌与模型权限、IP 黑名单、浏览器指纹黑名单与自动封禁。
+- **用量与成本**：额度管理、模型倍率、分层/动态定价（表达式计费）、充值与订阅、使用日志、统计看板与排行榜。
+- **增值功能**：每日签到、邀请码、兑换码、转账、余额充值、订阅计划、游戏中心（德州扑克、股票/期货模拟、扫雷等吸星玩法）。
+- **运维能力**：SQLite、MySQL、PostgreSQL、ClickHouse 日志库、Redis 缓存、多节点部署、健康检查、系统监控与性能指标。
+- **双前端**：现代化 `default` 控制台（React 19 + Tailwind），以及保留兼容性的 `classic` 控制台（Semi Design）。
 - **国际化**：后端支持中英文；默认前端支持中文、英文、法语、日语、俄语和越南语。
 
 ## 技术架构
 
 ```text
-Router -> Controller -> Service -> Model
-                         |
-                         +-> Relay -> Provider adapters
+                    ┌──────────────────────────────┐
+                    │         HTTP 请求             │
+                    └──────────────┬───────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  router/  路由注册（API / Relay / Web）  │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  middleware/ 鉴权、限流、日志、安全拦截   │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  controller/  HTTP 控制器（业务入口）    │
+              └────────────────────┬────────────────────┘
+               ┌───────────────────┼───────────────────┐
+               ▼                   ▼                   ▼
+      ┌──────────────────┐ ┌───────────────┐ ┌──────────────────┐
+      │ service/ 业务逻辑 │ │ relay/ 协议转发│ │ relay/channel/   │
+      └────────┬─────────┘ └───────┬───────┘ │  40+ 供应商适配器 │
+               │                   │         └──────────────────┘
+               ▼                   ▼
+      ┌──────────────────┐  ┌──────────────────┐
+      │ model/ GORM 数据  │  │ oauth/ 第三方登录│
+      │ 层 / 迁移         │  └──────────────────┘
+      └──────────────────┘
 ```
 
 | 层级 | 技术与目录 |
 | --- | --- |
-| 后端 | Go、Gin、GORM；`router/`、`controller/`、`service/`、`model/` |
-| 协议转发 | `relay/` 与 `relay/channel/` 中的供应商适配器 |
+| 后端 | Go 1.25、Gin、GORM；`router/`、`controller/`、`service/`、`model/` |
+| 协议转发 | `relay/` 与 `relay/channel/` 供应商适配器；`relaykit/` 独立协议转换模块 |
 | 默认前端 | React 19、TypeScript、Base UI、Tailwind CSS、Rsbuild；`web/default/` |
 | 经典前端 | React、Semi Design；`web/classic/` |
-| 数据与缓存 | SQLite / MySQL / PostgreSQL、Redis |
+| 数据与缓存 | SQLite / MySQL / PostgreSQL、ClickHouse 日志库、Redis |
 
 ## 快速部署
 
@@ -60,7 +84,7 @@ Router -> Controller -> Service -> Model
 
 4. 打开 <http://localhost:3000>，按照初始化向导创建管理员。
 
-默认 Compose 配置使用 PostgreSQL 和 Redis。持久化数据分别保存在 Docker 卷和本地 `data/`、`logs/` 目录中。
+默认 Compose 配置使用 PostgreSQL 和 Redis。存储卷与本地 `data/`、`logs/` 目录保存持久化数据。
 
 ### 单容器（SQLite）
 
@@ -136,10 +160,12 @@ docker build -t new-api:local .
 | 变量 | 用途 |
 | --- | --- |
 | `SQL_DSN` | MySQL 或 PostgreSQL 主数据库连接串；未设置时使用 SQLite |
+| `LOG_SQL_DSN` | ClickHouse 或 MySQL 日志数据库连接串（可选） |
 | `REDIS_CONN_STRING` | Redis 连接串 |
 | `SESSION_SECRET` | 多节点会话签名密钥，生产环境必须使用高强度随机值 |
 | `PORT` | HTTP 监听端口，默认为 `3000` |
 | `TZ` | 容器或服务时区 |
+| `NODE_TYPE` | 多节点角色，主节点为 `master` |
 
 不要提交 `.env`、数据库文件、登录信息、Cookie、访问令牌或构建产物。仓库的 [`.gitignore`](./.gitignore) 已覆盖这些常见本地产物。
 
@@ -147,24 +173,32 @@ docker build -t new-api:local .
 
 ```text
 common/       通用配置、JSON、缓存、加密和网络工具
-constant/     常量与渠道类型
-controller/   HTTP 控制器
-docs/         安装、渠道和 OpenAPI 文档
+constant/     常量与渠道类型（API 类型、渠道类型、端点类型等）
+controller/   HTTP 控制器（用户、渠道、令牌、充值、订阅、排行榜等）
+docs/         安装、渠道、OpenAPI 与逐文件清单文档
 dto/          请求与响应数据结构
 i18n/         后端国际化资源
+logger/       分级日志包
 middleware/   鉴权、限流、日志、CORS 等中间件
 model/        GORM 模型、迁移与数据访问
 oauth/        OAuth / OIDC 提供商实现
 relay/        协议转换、计费与上游渠道适配
+relaykit/     独立 Go 模块（协议 DTO 与格式互转）
 router/       API、Relay、Dashboard 和 Web 路由
 service/      业务逻辑
-setting/      系统、模型、倍率、性能等配置
+setting/      系统、模型、倍率、计费、性能等配置
+types/        类型定义
+pkg/          内部复用包（billingexpr 计费表达式、cachex、ionet 等）
 web/default/  默认 React 19 控制台
 web/classic/  Classic 兼容控制台
+docs/file-map.md  逐文件清单：每个后端 Go 文件的用途说明
 ```
+
+每个目录的核心职责与逐文件说明，请参阅 [**逐文件清单（docs/file-map.md）**](./docs/file-map.md)。
 
 ## 文档与支持
 
+- [逐文件清单](./docs/file-map.md)
 - [Classic 首页公共横幅更新说明](./docs/updates/classic-public-banners.md)
 - [简体中文完整说明](./README.zh_CN.md)
 - [OpenAPI 定义](./docs/openapi/)

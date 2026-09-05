@@ -4597,6 +4597,23 @@
     "过去几周内各模型供应商的 Token 份额": "Part des tokens par auteur de modèle sur les dernières semaines",
     "过去一个月内各模型供应商的 Token 份额": "Part des tokens par auteur de modèle sur le dernier mois",
     "过去一年内各模型供应商的 Token 份额": "Part des tokens par auteur de modèle sur la dernière année",
-    "延迟": "Latence"
+    "延迟": "Latence",
+    "UA限制": "Restrictions UA",
+    "UA 黑名单": "Liste noire UA",
+    "启用 UA 黑名单": "Activer la liste noire UA",
+    "开启后，命中黑名单的客户端将无法调用 API": "Une fois activé, les clients dont le User-Agent correspond à la liste noire ne peuvent pas appeler l'API",
+    "每行一条。普通文本按子串匹配(不区分大小写)，含正则元字符时按正则匹配。": "Une entrée par ligne. Le texte simple est comparé comme sous-chaîne (insensible à la casse) ; les entrées contenant des métacaractères regex sont comparées comme expressions régulières.",
+    "命中后的动作": "Action en cas de correspondance",
+    "仅拒绝请求(403)": "Rejeter uniquement la requête (403)",
+    "保存 UA 限制设置": "Enregistrer les restrictions UA",
+    "黑名单为空，请先填写 UA 黑名单": "La liste noire est vide. Veuillez d'abord remplir la liste noire UA.",
+    "黑名单内容": "Contenu de la liste noire",
+    "封禁账号": "Bannir le compte",
+    "拒绝请求并封禁账号": "Rejeter la requête et bannir le compte",
+    "封禁账号并封锁全部IP": "Bannir le compte et bloquer toutes ses IP",
+    "命中黑名单的请求将按所选动作处理，封禁时长沿用自动封禁设置中 user_agent 规则的配置": "Les requêtes correspondant à la liste noire sont traitées selon l'action choisie ; la durée de bannissement suit la règle user_agent des paramètres de bannissement automatique.",
+    "命中黑名单的请求将按所选动作处理，账号封禁为永久，封锁IP不设期限": "Les requêtes correspondant à la liste noire sont traitées selon l'action choisie ; le bannissement du compte est permanent et le blocage IP n'expire jamais.",
+    "封禁原因（选填），填写后用户的请求会提示该原因": "Motif du bannissement (facultatif). S'il est rempli, les requêtes de l'utilisateur afficheront ce motif",
+    "例如：滥用资源": "ex. : abus de ressources"
   }
 }

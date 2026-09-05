@@ -186,7 +186,8 @@ func InitOptionMap() {
 	common.OptionMap["AutoBanConfig"] = setting.AutoBanConfig2JsonString()
 	common.OptionMap["RelayUserAgentBlacklistEnabled"] = strconv.FormatBool(false)
 	common.OptionMap["RelayUserAgentBlacklist"] = ""
-	_, _ = common.SetRelayUserAgentBlacklistConfig(false, "")
+	common.OptionMap["RelayUserAgentBlacklistAction"] = "403"
+	_, _ = common.SetRelayUserAgentBlacklistConfig(false, "", "403")
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
@@ -321,10 +322,11 @@ func updateOptionMap(key string, value string) (err error) {
 		}
 		return nil
 	}
-	if key == "RelayUserAgentBlacklist" || key == "RelayUserAgentBlacklistEnabled" {
+	if key == "RelayUserAgentBlacklist" || key == "RelayUserAgentBlacklistEnabled" || key == "RelayUserAgentBlacklistAction" {
 		_, err = common.SetRelayUserAgentBlacklistConfig(
 			common.OptionMap["RelayUserAgentBlacklistEnabled"] == "true",
 			common.OptionMap["RelayUserAgentBlacklist"],
+			common.OptionMap["RelayUserAgentBlacklistAction"],
 		)
 		if err != nil {
 			return err

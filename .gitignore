@@ -68,6 +68,9 @@ __pycache__/
 .sisyphus/
 .omo/
 .agents/
+.workbuddy/
+.zcode/
+.tmp_test_write
 
 # Generated PDF/HTML reports
 model-health-page.html

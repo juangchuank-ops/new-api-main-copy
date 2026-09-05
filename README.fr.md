@@ -1,6 +1,6 @@
 # New API
 
-> Une passerelle d'API IA et une plateforme de gestion d'actifs qui unifient l'accès à plusieurs services d'IA.
+> Une passerelle API unifiée et une plateforme de gestion d'actifs pour plusieurs services d'IA.
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-orange.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](./go.mod)
@@ -8,38 +8,62 @@
 
 **Langue :** [简体中文](./README.md) · [繁體中文](./README.zh_TW.md) · [English](./README.en.md) · **Français** · [日本語](./README.ja.md)
 
-New API est une passerelle d'API IA maintenue par **QuantumNous**. Elle expose OpenAI, Claude, Gemini, Azure, AWS Bedrock et d'autres fournisseurs en amont derrière une interface unifiée, avec gestion des canaux, routage intelligent, authentification, comptabilité des quotas et des coûts, journalisation, gestion des utilisateurs et un tableau de bord d'administration.
+New API est une passerelle d'API IA maintenue par **QuantumNous**. Elle connecte plus de 40 services en amont (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) derrière une interface unifiée et offre la gestion des canaux, le routage intelligent, l'authentification, la gestion des quotas et des coûts, la journalisation, la gestion des utilisateurs et des consoles d'administration à double interface.
 
 > [!IMPORTANT]
-> Ce projet est destiné aux passerelles d'API autorisées par la loi, à l'authentification interne des organisations, à la gestion multi-modèles, aux statistiques d'utilisation, à la comptabilité des coûts et au déploiement privé. Vous devez obtenir l'accès aux services en amont de manière légitime et vous conformer aux conditions d'utilisation de ces services ainsi qu'aux lois locales applicables.
+> Ce projet est destiné uniquement aux passerelles API légalement autorisées, à l'authentification interne des organisations, à la gestion multi-modèles, au suivi d'utilisation, à la comptabilité des coûts et aux déploiements privés. Les utilisateurs doivent obtenir les autorisations des services en amont de manière légale et respecter les conditions des fournisseurs ainsi que les lois et réglementations locales.
 
-## Principales fonctionnalités
+## Fonctionnalités principales
 
-- **Interface unifiée** : compatible OpenAI, Responses, Realtime, Claude Messages, Gemini, Rerank, ainsi que plusieurs interfaces d'images, d'audio et de tâches.
-- **Routage multi-canaux** : priorités et poids des canaux, nouvelle tentative en cas d'échec, mappage des modèles, clés par lot et test de disponibilité.
-- **Contrôle d'accès** : JWT, OAuth, OIDC, WebAuthn/Passkey, 2FA, groupes d'utilisateurs, jetons et permissions sur les modèles.
-- **Utilisation et coûts** : gestion des quotas, ratios des modèles, tarification par paliers/dynamique, rechargement et abonnement, journaux d'utilisation et tableau de bord statistique.
-- **Exploitation** : SQLite, MySQL, PostgreSQL, cache Redis, déploiement multi-nœuds, contrôles de santé et supervision du système.
-- **Double interface** : la console moderne `default`, plus la console `classic` qui préserve la compatibilité.
-- **Internationalisation** : le backend est en chinois et en anglais ; l'interface par défaut prend en charge le chinois, l'anglais, le français, le japonais, le russe et le vietnamien.
+- **Interface unifiée** : prend en charge OpenAI Compatible, Responses, Realtime, Claude Messages, Gemini, Rerank et de nombreuses interfaces d'images, d'audio, de vidéo et de tâches.
+- **Routage multi-canaux** : plus de 40 adaptateurs de fournisseurs en amont, priorité et pondération des canaux, nouvelle tentative en cas d'échec, mappage des modèles, clés par lot, tests de disponibilité et affinité des canaux.
+- **Contrôle d'accès** : JWT, OAuth, OIDC, WebAuthn/Passkey, 2FA, groupes d'utilisateurs, autorisations de jetons et de modèles, liste noire d'adresses IP, liste noire d'empreintes de navigateur et blocage automatique.
+- **Utilisation et coûts** : gestion des quotas, multiplicateurs de modèles, tarification par paliers/dynamique (facturation par expressions), recharges et abonnements, journaux d'utilisation, tableaux de bord statistiques et classements.
+- **Fonctionnalités à valeur ajoutée** : check-in quotidien, codes d'invitation, codes d'échange, transferts, recharges de solde, plans d'abonnement, centre de jeux (Texas Hold'em, simulation boursière/de contrats à terme, démineur, etc.).
+- **Capacités opérationnelles** : SQLite, MySQL, PostgreSQL, base de journaux ClickHouse, cache Redis, déploiement multi-nœuds, vérifications de santé, supervision système et métriques de performance.
+- **Double interface** : console `default` moderne (React 19 + Tailwind) et console `classic` compatible (Semi Design).
+- **Internationalisation** : le backend prend en charge le chinois et l'anglais ; l'interface par défaut prend en charge le chinois, l'anglais, le français, le japonais, le russe et le vietnamien.
 
 ## Architecture
 
 ```text
-Router -> Controller -> Service -> Model
-                         |
-                         +-> Relay -> Provider adapters
+                    ┌──────────────────────────────┐
+                    │         HTTP 请求             │
+                    └──────────────┬───────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  router/  路由注册（API / Relay / Web）  │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  middleware/ 鉴权、限流、日志、安全拦截   │
+              └────────────────────┬────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │  controller/  HTTP 控制器（业务入口）    │
+              └────────────────────┬────────────────────┘
+               ┌───────────────────┼───────────────────┐
+               ▼                   ▼                   ▼
+      ┌──────────────────┐ ┌───────────────┐ ┌──────────────────┐
+      │ service/ 业务逻辑 │ │ relay/ 协议转发│ │ relay/channel/   │
+      └────────┬─────────┘ └───────┬───────┘ │  40+ 供应商适配器 │
+               │                   │         └──────────────────┘
+               ▼                   ▼
+      ┌──────────────────┐  ┌──────────────────┐
+      │ model/ GORM 数据  │  │ oauth/ 第三方登录│
+      │ 层 / 迁移         │  └──────────────────┘
+      └──────────────────┘
 ```
 
-| Couche | Technologie et répertoire |
+| Couche | Technologies et répertoires |
 | --- | --- |
-| Backend | Go, Gin, GORM ; `router/`, `controller/`, `service/`, `model/` |
-| Relais de protocole | Adaptateurs de fournisseurs dans `relay/` et `relay/channel/` |
+| Backend | Go 1.25, Gin, GORM ; `router/`, `controller/`, `service/`, `model/` |
+| Relais de protocole | adaptateurs de fournisseurs `relay/` et `relay/channel/` ; module de conversion de protocole indépendant `relaykit/` |
 | Interface par défaut | React 19, TypeScript, Base UI, Tailwind CSS, Rsbuild ; `web/default/` |
 | Interface classique | React, Semi Design ; `web/classic/` |
-| Données et cache | SQLite / MySQL / PostgreSQL, Redis |
+| Données et cache | SQLite / MySQL / PostgreSQL, base de journaux ClickHouse, Redis |
 
-## Démarrage rapide
+## Déploiement rapide
 
 ### Docker Compose
 
@@ -50,7 +74,7 @@ Router -> Controller -> Service -> Model
    cd new-api-main-copy
    ```
 
-2. Modifiez les mots de passe de la base de données et de Redis ainsi que `SESSION_SECRET` dans [`docker-compose.yml`](./docker-compose.yml). Ne conservez jamais les mots de passe d'exemple en production.
+2. Modifiez [`docker-compose.yml`](./docker-compose.yml) pour définir la base de données, le mot de passe Redis et `SESSION_SECRET`. N'utilisez pas les mots de passe de l'exemple en production.
 
 3. Démarrez les services :
 
@@ -58,9 +82,9 @@ Router -> Controller -> Service -> Model
    docker compose up -d
    ```
 
-4. Ouvrez <http://localhost:3000> et créez le compte administrateur via l'assistant de configuration.
+4. Ouvrez <http://localhost:3000> et suivez l'assistant d'initialisation pour créer un administrateur.
 
-La configuration Compose par défaut utilise PostgreSQL et Redis. Les données persistantes sont stockées dans les volumes Docker et dans les répertoires locaux `data/` et `logs/`.
+La configuration Compose par défaut utilise PostgreSQL et Redis. Les volumes de stockage ainsi que les répertoires locaux `data/` et `logs/` conservent les données persistantes.
 
 ### Conteneur unique (SQLite)
 
@@ -76,10 +100,10 @@ docker run --name new-api -d --restart always \
 
 ### Prérequis
 
-- La version de Go déclarée dans [`go.mod`](./go.mod)
+- Version de Go indiquée dans [`go.mod`](./go.mod)
 - [Bun](https://bun.sh/) 1.x
-- Docker (recommandé pour les environnements de développement PostgreSQL et Redis)
-- GNU Make (facultatif, pour les raccourcis du projet)
+- Docker (recommandé pour l'environnement de développement PostgreSQL et Redis)
+- GNU Make (optionnel, pour les commandes rapides du projet)
 
 ### Démarrage de l'environnement de développement
 
@@ -91,12 +115,12 @@ make dev-api
 make dev-web
 ```
 
-L'interface par défaut s'exécute sur <http://localhost:5173>, l'interface classique sur <http://localhost:5174> et l'API backend sur <http://localhost:3000>.
+L'interface par défaut est à l'adresse <http://localhost:5173>, l'interface Classic à <http://localhost:5174> et l'API backend à <http://localhost:3000>.
 
-Vous pouvez aussi les démarrer individuellement :
+Vous pouvez aussi les lancer séparément :
 
 ```bash
-# Backend (SQLite par défaut ; la base de données et d'autres réglages peuvent aller dans un .env local)
+# Backend (utilise SQLite par défaut ; base de données et autres réglages dans .env local)
 go run main.go
 
 # Interface par défaut
@@ -112,10 +136,10 @@ bun run dev
 # Construit les interfaces default et classic
 make build-all-frontends
 
-# Tests du backend
+# Tests backend
 go test ./...
 
-# Vérifications de qualité de l'interface par défaut
+# Contrôle qualité de l'interface par défaut
 cd web/default
 bun run typecheck
 bun run lint
@@ -123,7 +147,7 @@ bun run format:check
 bun run build
 ```
 
-La construction de l'image conteneur complète construit d'abord les deux interfaces, puis intègre les ressources statiques dans le service Go :
+La construction complète de l'image conteneur construit les deux interfaces successivement, puis intègre les ressources statiques dans le service Go :
 
 ```bash
 docker build -t new-api:local .
@@ -131,53 +155,64 @@ docker build -t new-api:local .
 
 ## Configuration
 
-Les variables d'environnement courantes sont présentées dans [`.env.example`](./.env.example). Au minimum, vérifiez ce qui suit avant de déployer :
+Des exemples de variables d'environnement figurent dans [`.env.example`](./.env.example). Avant le déploiement, vérifiez au moins :
 
-| Variable | Rôle |
+| Variable | Utilité |
 | --- | --- |
-| `SQL_DSN` | Chaîne de connexion à la base de données principale MySQL ou PostgreSQL ; se replie sur SQLite si non définie |
+| `SQL_DSN` | Chaîne de connexion de la base principale MySQL ou PostgreSQL ; utilise SQLite si non définie |
+| `LOG_SQL_DSN` | Chaîne de connexion de la base de journaux ClickHouse ou MySQL (optionnel) |
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
-| `SESSION_SECRET` | Secret de signature de session pour les déploiements multi-nœuds ; doit être une valeur aléatoire forte en production |
-| `PORT` | Port d'écoute HTTP, par défaut `3000` |
+| `SESSION_SECRET` | Clé de signature de session multi-nœuds ; doit être une valeur aléatoire forte en production |
+| `PORT` | Port d'écoute HTTP, défini par défaut à `3000` |
 | `TZ` | Fuseau horaire du conteneur ou du service |
+| `NODE_TYPE` | Rôle multi-nœuds ; `master` pour le nœud principal |
 
-Ne commitez pas `.env`, les fichiers de base de données, les identifiants, les cookies, les jetons d'accès ou les artefacts de construction. Le [`.gitignore`](./.gitignore) du dépôt couvre déjà ces artefacts locaux courants.
+Ne committez pas `.env`, les fichiers de base de données, les identifiants de connexion, les cookies, les jetons d'accès ou les artefacts de construction. Le [`.gitignore`](./.gitignore) du dépôt couvre ces artefacts locaux courants.
 
-## Structure du projet
+## Répertoire du projet
 
 ```text
-common/       Configuration partagée, JSON, cache, chiffrement et utilitaires réseau
-constant/     Constantes et types de canaux
-controller/   Contrôleurs HTTP
-docs/         Documentation d'installation, de canaux et OpenAPI
-dto/          Structures de données de requête/réponse
-i18n/         Ressources d'internationalisation du backend
-middleware/   Authentification, limitation de débit, journalisation, CORS et autres intergiciels
-model/        Modèles GORM, migrations et accès aux données
-oauth/        Implémentations des fournisseurs OAuth / OIDC
-relay/        Conversion de protocole, facturation et adaptateurs de canaux en amont
-router/       Routes API, relay, tableau de bord et web
-service/      Logique métier
-setting/      Réglages système, de modèle, de ratio, de performance et autres
-web/default/  Console par défaut React 19
-web/classic/  Console de compatibilité classique
+common/        Utilitaires de configuration, JSON, cache, chiffrement et réseau
+constant/      Constantes et types de canaux (types d'API, types de canaux, types de points de terminaison, etc.)
+controller/    Contrôleurs HTTP (utilisateurs, canaux, jetons, recharges, abonnements, classements, etc.)
+docs/          Documentation d'installation, de canaux, OpenAPI et manifeste fichier par fichier
+dto/           Structures de données de requête et de réponse
+i18n/          Ressources d'internationalisation du backend
+logger/        Package de journalisation par niveaux
+middleware/    Authentification, limitation de débit, journalisation, CORS et autres intergiciels
+model/         Modèles GORM, migrations et accès aux données
+oauth/         Implémentations des fournisseurs OAuth / OIDC
+relay/         Conversion de protocole, facturation et adaptation des canaux en amont
+relaykit/      Module Go autonome (DTO de protocole et conversion de formats)
+router/        Routes API, Relay, Dashboard et Web
+service/       Logique métier
+setting/       Configuration système, modèles, multiplicateurs, facturation, performances, etc.
+types/         Définitions de types
+pkg/           Packages internes réutilisables (billingexpr, cachex, ionet, etc.)
+web/default/   Console React 19 par défaut
+web/classic/   Console de compatibilité Classic
+docs/file-map.md  Manifeste fichier par fichier : rôle de chaque fichier Go du backend
 ```
+
+Pour les responsabilités principales de chaque répertoire et les descriptions fichier par fichier, consultez le [**Manifeste fichier par fichier (docs/file-map.md)**](./docs/file-map.md).
 
 ## Documentation et support
 
+- [Manifeste fichier par fichier](./docs/file-map.md)
+- [Mise à jour de la bannière publique de l'accueil Classic](./docs/updates/classic-public-banners.md)
 - [Documentation complète en chinois simplifié](./README.zh_CN.md)
 - [Définitions OpenAPI](./docs/openapi/)
-- [Réglages supplémentaires des canaux](./docs/channel/other_setting.md)
-- [Installation via le panneau BT](./docs/installation/BT.md)
+- [Notes de configuration des canaux](./docs/channel/other_setting.md)
+- [Installation avec panneau BT](./docs/installation/BT.md)
 - [Politique de sécurité](./.github/SECURITY.md)
-- [Problèmes](https://github.com/juangchuank-ops/new-api-main-copy/issues)
+- [Suivi des problèmes](https://github.com/juangchuank-ops/new-api-main-copy/issues)
 
 ## Contribution
 
-Lisez [`AGENTS.md`](./AGENTS.md) et les conventions des sous-répertoires concernés avant de soumettre des modifications. Les modifications du backend doivent rester compatibles avec SQLite, MySQL et PostgreSQL ; le texte d'interface destiné aux utilisateurs doit être internationalisé. Les pull requests doivent utiliser le [modèle du projet](./.github/PULL_REQUEST_TEMPLATE.md).
+Avant de soumettre des modifications, lisez [`AGENTS.md`](./AGENTS.md) et les conventions des sous-répertoires concernés. Les changements du backend doivent être compatibles avec SQLite, MySQL et PostgreSQL ; les textes visibles de l'interface doivent être internationalisés. Utilisez le [modèle de projet](./.github/PULL_REQUEST_TEMPLATE.md) pour les pull requests.
 
 ## Licence et attribution
 
-Ce projet est sous licence [GNU Affero General Public License v3.0](./LICENSE). Les composants tiers et leurs licences sont listés dans [`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md) et [`NOTICE`](./NOTICE).
+Ce projet est sous licence [GNU Affero General Public License v3.0](./LICENSE). Les composants tiers et leurs licences figurent dans [`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md) et [`NOTICE`](./NOTICE).
 
-Les noms, logos, droits d'auteur et informations d'attribution du projet New API et de **QuantumNous** sont conservés.
+Le projet New API ainsi que les noms, marques, droits d'auteur et informations d'attribution liés à **QuantumNous** sont conservés.

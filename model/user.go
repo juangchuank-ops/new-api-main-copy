@@ -64,6 +64,10 @@ type User struct {
 	AutoBanResponseStatus  int    `json:"auto_ban_response_status" gorm:"default:0;column:auto_ban_response_status"`
 	AutoBanResponseCode    string `json:"auto_ban_response_code" gorm:"type:varchar(64);default:'';column:auto_ban_response_code"`
 	AutoBanResponseMessage string `json:"auto_ban_response_message" gorm:"type:varchar(500);default:'';column:auto_ban_response_message"`
+
+	// BanReason is the operator-provided reason returned to the user when the
+	// account was disabled manually from the user list.
+	BanReason string `json:"ban_reason" gorm:"type:varchar(255);default:'';column:ban_reason"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -82,6 +86,7 @@ func (user *User) ToBaseUser() *UserBase {
 		AutoBanResponseStatus:  user.AutoBanResponseStatus,
 		AutoBanResponseCode:    user.AutoBanResponseCode,
 		AutoBanResponseMessage: user.AutoBanResponseMessage,
+		BanReason:              user.BanReason,
 	}
 	return cache
 }

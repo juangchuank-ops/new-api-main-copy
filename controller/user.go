@@ -1121,6 +1121,7 @@ type ManageRequest struct {
 	Value          int                        `json:"value"`
 	Mode           string                     `json:"mode"`
 	NewRole        int                        `json:"new_role"`
+	Reason         string                     `json:"reason"`
 	SidebarModules map[string]map[string]bool `json:"sidebar_modules"`
 }
 
@@ -1154,12 +1155,18 @@ func ManageUser(c *gin.Context) {
 	switch req.Action {
 	case "disable":
 		user.Status = common.UserStatusDisabled
+		reason := strings.TrimSpace(req.Reason)
+		if len(reason) > 200 {
+			reason = reason[:200]
+		}
+		user.BanReason = reason
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDisableRootUser)
 			return
 		}
 	case "enable":
 		user.Status = common.UserStatusEnabled
+		user.BanReason = ""
 	case "delete":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDeleteRootUser)
@@ -1317,15 +1324,25 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 
+	// Update 内部会重新从库加载 user 结构体并覆盖其字段，
+	// 所以在调用前先捕获要持久化的 ban_reason。
+	banReasonToPersist := user.BanReason
 	if err := user.Update(false); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// ban_reason 会被清为空串，而 GORM 的 struct Updates 跳过零值字段，
+	// 所以禁用/启用后单独写一次该列，保证原因能保存和清除。
+	if req.Action == "disable" || req.Action == "enable" {
+		if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("ban_reason", banReasonToPersist).Error; err != nil {
+			common.SysLog(fmt.Sprintf("failed to persist ban_reason for user %d: %s", user.Id, err.Error()))
+		}
 	}
 	// 禁用 / 角色调整后，强制失效用户缓存与其全部令牌缓存，
 	// 避免在 Redis TTL 过期前仍使用旧状态（尤其是禁用后仍可发起请求的问题）。
 	// InvalidateUserCache 会让下一次 GetUserCache 从数据库重新加载，
 	// InvalidateUserTokensCache 则确保令牌侧的缓存也同步刷新。
-	if req.Action == "disable" || req.Action == "promote" || req.Action == "demote" || req.Action == "transfer_root" || req.Action == "permission_admin" || req.Action == "update_permission_admin" {
+	if req.Action == "disable" || req.Action == "enable" || req.Action == "promote" || req.Action == "demote" || req.Action == "transfer_root" || req.Action == "permission_admin" || req.Action == "update_permission_admin" {
 		if err := model.InvalidateUserCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate user cache for user %d: %s", user.Id, err.Error()))
 		}

@@ -35,6 +35,7 @@ import {
   Server,
   Activity,
   Search,
+  ShieldBan,
 } from 'lucide-react';
 
 const { Text } = Typography;
@@ -48,6 +49,7 @@ const SETTING_SEARCH_ITEMS = [
   { tab: 'operation', group: '运营设置', label: '签到设置', keywords: '签到 checkin' },
   { tab: 'operation', group: '运营设置', label: '渠道亲和性', keywords: '渠道 亲和' },
   { tab: 'operation', group: '运营设置', label: 'Auto Sync 自动同步', keywords: '同步 autosync' },
+  { tab: 'ua', group: 'UA限制', label: 'UA 黑名单', keywords: 'UA user agent 黑名单 拦截' },
   { tab: 'dashboard', group: '仪表盘设置', label: '数据看板设置', keywords: '仪表盘 数据 看板' },
   { tab: 'dashboard', group: '仪表盘设置', label: '公告设置', keywords: '公告 announcement' },
   { tab: 'dashboard', group: '仪表盘设置', label: '常见问题设置', keywords: 'FAQ 常见问题' },
@@ -100,6 +102,7 @@ import DrawingSetting from '../../components/settings/DrawingSetting';
 import PaymentSetting from '../../components/settings/PaymentSetting';
 import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
 import PerformanceSetting from '../../components/settings/PerformanceSetting';
+import UASetting from '../../components/settings/UASetting';
 
 const Setting = () => {
   const { t } = useTranslation();
@@ -119,6 +122,16 @@ const Setting = () => {
       ),
       content: <OperationSetting />,
       itemKey: 'operation',
+    });
+    panes.push({
+      tab: (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <ShieldBan size={18} />
+          {t('UA限制')}
+        </span>
+      ),
+      content: <UASetting />,
+      itemKey: 'ua',
     });
     panes.push({
       tab: (

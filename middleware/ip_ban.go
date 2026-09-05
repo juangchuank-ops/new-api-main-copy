@@ -36,7 +36,7 @@ func IPBan() gin.HandlerFunc {
 		if err != nil {
 			common.SysError(fmt.Sprintf("IP ban check failed open for %s: %v", c.ClientIP(), err))
 		} else if ipBan != nil {
-			respondBan(c, "ip_banned", "IP address is banned", ipBan.Reason, ipBan.ExpiresAt)
+			respondBan(c, "ip_banned", "您的账号/ip/指纹已被封禁，请联系管理员", ipBan.Reason, ipBan.ExpiresAt)
 			return
 		}
 
@@ -45,7 +45,7 @@ func IPBan() gin.HandlerFunc {
 		if err != nil {
 			common.SysError(fmt.Sprintf("browser fingerprint ban check failed open: %v", err))
 		} else if fingerprintBan != nil {
-			respondBan(c, "browser_fingerprint_banned", "Browser fingerprint is banned", fingerprintBan.Reason, fingerprintBan.ExpiresAt)
+			respondBan(c, "browser_fingerprint_banned", "您的账号/ip/指纹已被封禁，请联系管理员", fingerprintBan.Reason, fingerprintBan.ExpiresAt)
 			return
 		}
 		c.Next()

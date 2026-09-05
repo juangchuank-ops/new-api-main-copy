@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Modal } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+import { Modal, TextArea, Typography } from '@douyinfe/semi-ui';
+
+const { Text } = Typography;
 
 const EnableDisableUserModal = ({
   visible,
@@ -29,16 +31,38 @@ const EnableDisableUserModal = ({
   t,
 }) => {
   const isDisable = action === 'disable';
+  const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    if (visible) {
+      setReason('');
+    }
+  }, [visible, user?.id]);
 
   return (
     <Modal
       title={isDisable ? t('确定要禁用此用户吗？') : t('确定要启用此用户吗？')}
       visible={visible}
       onCancel={onCancel}
-      onOk={onConfirm}
+      onOk={() => onConfirm(reason)}
       type='warning'
     >
       {isDisable ? t('此操作将禁用用户账户') : t('此操作将启用用户账户')}
+      {isDisable && (
+        <div style={{ marginTop: 12 }}>
+          <Text type='secondary' size='small'>
+            {t('封禁原因（选填），填写后用户的请求会提示该原因')}
+          </Text>
+          <TextArea
+            value={reason}
+            onChange={setReason}
+            placeholder={t('例如：滥用资源')}
+            maxCount={200}
+            rows={2}
+            style={{ marginTop: 8 }}
+          />
+        </div>
+      )}
     </Modal>
   );
 };

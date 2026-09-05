@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,4 +180,68 @@ func TestCreateIPBanValidatesTargetUserLoginIP(t *testing.T) {
 	require.NoError(t, CreateIPBan(manual))
 	assert.Zero(t, manual.TargetUserId)
 	assert.Empty(t, manual.TargetUsername)
+}
+
+func TestBanUserLoginIPs(t *testing.T) {
+	setupIPBanTestDB(t)
+	user := &User{Username: "abuser", Status: common.UserStatusEnabled}
+	require.NoError(t, DB.Create(user).Error)
+	login := func(ip string) {
+		t.Helper()
+		require.NoError(t, DB.Create(&Log{UserId: user.Id, Type: LogTypeLogin, Ip: ip, CreatedAt: time.Now().Unix()}).Error)
+	}
+	login("192.0.2.10")
+	login("192.0.2.10")
+	login("2001:db8::20")
+	login("127.0.0.1")
+	login("not-an-ip")
+	login("")
+	require.NoError(t, DB.Create(&Log{UserId: user.Id, Type: LogTypeConsume, Ip: "192.0.2.99", CreatedAt: time.Now().Unix()}).Error)
+
+	expiresAt := time.Now().Add(7 * 24 * time.Hour).Unix()
+	banned, err := BanUserLoginIPs(user.Id, "abuse", expiresAt, 7)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"192.0.2.10", "2001:db8::20"}, banned)
+
+	for _, rule := range banned {
+		var record IPBan
+		require.NoError(t, DB.Where("rule = ?", rule).First(&record).Error)
+		assert.True(t, record.Enabled)
+		assert.Equal(t, expiresAt, record.ExpiresAt)
+		assert.Equal(t, user.Id, record.TargetUserId)
+		assert.Equal(t, user.Username, record.TargetUsername)
+		assert.Equal(t, "abuse", record.Reason)
+		assert.Equal(t, 7, record.OperatorId)
+	}
+
+	now := time.Unix(time.Now().Unix()+1, 0)
+	ipBanned, err := IsIPBanned("192.0.2.10", now)
+	require.NoError(t, err)
+	assert.True(t, ipBanned)
+	ipBanned, err = IsIPBanned("2001:db8::20", now)
+	require.NoError(t, err)
+	assert.True(t, ipBanned)
+
+	repeat, err := BanUserLoginIPs(user.Id, "abuse", expiresAt, 7)
+	require.NoError(t, err)
+	assert.Empty(t, repeat)
+
+	unknownIP := "198.51.100.5"
+	ipBanned, err = IsIPBanned(unknownIP, now)
+	require.NoError(t, err)
+	assert.False(t, ipBanned)
+}
+
+func TestBanUserLoginIPsWithoutLoginHistory(t *testing.T) {
+	setupIPBanTestDB(t)
+	user := &User{Username: "fresh", Status: common.UserStatusEnabled}
+	require.NoError(t, DB.Create(user).Error)
+
+	banned, err := BanUserLoginIPs(user.Id, "abuse", 0, 7)
+	require.NoError(t, err)
+	assert.Empty(t, banned)
+
+	var count int64
+	require.NoError(t, DB.Model(&IPBan{}).Count(&count).Error)
+	assert.Zero(t, count)
 }

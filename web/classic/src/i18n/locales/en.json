@@ -4714,6 +4714,23 @@
     "过去几周内各模型供应商的 Token 份额": "Token share by model author across the past few weeks",
     "过去一个月内各模型供应商的 Token 份额": "Token share by model author across the past month",
     "过去一年内各模型供应商的 Token 份额": "Token share by model author across the past year",
-    "延迟": "Latency"
+    "延迟": "Latency",
+    "UA限制": "UA Restrictions",
+    "UA 黑名单": "UA Blacklist",
+    "启用 UA 黑名单": "Enable UA blacklist",
+    "开启后，命中黑名单的客户端将无法调用 API": "When enabled, clients whose User-Agent matches the blacklist cannot call the API",
+    "每行一条。普通文本按子串匹配(不区分大小写)，含正则元字符时按正则匹配。": "One entry per line. Plain text entries are matched as case-insensitive substrings; entries containing regex metacharacters are matched as regular expressions.",
+    "命中后的动作": "Action on match",
+    "仅拒绝请求(403)": "Reject request only (403)",
+    "保存 UA 限制设置": "Save UA restriction settings",
+    "黑名单为空，请先填写 UA 黑名单": "The blacklist is empty. Please fill in the UA blacklist first.",
+    "黑名单内容": "Blacklist entries",
+    "封禁账号": "Ban account",
+    "拒绝请求并封禁账号": "Reject request and ban account",
+    "封禁账号并封锁全部IP": "Ban account and block all its IPs",
+    "命中黑名单的请求将按所选动作处理，封禁时长沿用自动封禁设置中 user_agent 规则的配置": "Requests matching the blacklist are handled by the selected action; the ban duration follows the user_agent rule in the auto-ban settings.",
+    "命中黑名单的请求将按所选动作处理，账号封禁为永久，封锁IP不设期限": "Requests matching the blacklist are handled by the selected action; account bans are permanent and IP blocks never expire.",
+    "封禁原因（选填），填写后用户的请求会提示该原因": "Ban reason (optional). If filled, the user's requests will show this reason",
+    "例如：滥用资源": "e.g. resource abuse"
   }
 }

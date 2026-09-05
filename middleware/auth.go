@@ -33,6 +33,16 @@ func validUserInfo(username string, role int) bool {
 	return true
 }
 
+// userBannedMessage builds the rejection message for a manually disabled
+// account. When the operator recorded a reason it is shown to the user,
+// otherwise the generic localized ban message is used.
+func userBannedMessage(c *gin.Context, reason string) string {
+	if reason != "" {
+		return "用户已被封禁，原因:" + reason
+	}
+	return common.TranslateMessage(c, i18n.MsgAuthUserBanned)
+}
+
 func authHelper(c *gin.Context, minRole int) {
 	session := sessions.Default(c)
 	username := session.Get("username")
@@ -340,7 +350,7 @@ func NewApiUserAuth() func(c *gin.Context) {
 		if user.Status == common.UserStatusDisabled {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
+				"message": userBannedMessage(c, user.BanReason),
 			})
 			c.Abort()
 			return
@@ -439,7 +449,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		if userCache.Status != common.UserStatusEnabled {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
+				"message": userBannedMessage(c, userCache.BanReason),
 			})
 			c.Abort()
 			return
@@ -552,7 +562,7 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		userEnabled := userCache.Status == common.UserStatusEnabled
 		if !userEnabled {
-			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+			abortWithOpenAiMessage(c, http.StatusForbidden, userBannedMessage(c, userCache.BanReason))
 			return
 		}
 

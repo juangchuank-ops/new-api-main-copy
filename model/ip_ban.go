@@ -364,3 +364,75 @@ func matchedIPBan(address netip.Addr, matchers []ipBanMatcher) *IPBan {
 	}
 	return nil
 }
+
+// BanUserLoginIPs bans every distinct successful-login IP of the user so a
+// banned account cannot re-enter from its known addresses. Rules that already
+// exist are skipped. It returns the newly created rules.
+func BanUserLoginIPs(userId int, reason string, expiresAt int64, operatorId int) ([]string, error) {
+	user, err := GetUserById(userId, false)
+	if err != nil {
+		return nil, errors.New("target user not found")
+	}
+	if LOG_DB == nil {
+		return nil, errors.New("login database is unavailable")
+	}
+	var logs []Log
+	if err := LOG_DB.Where("user_id = ? AND type = ? AND ip <> ?", user.Id, LogTypeLogin, "").Order("created_at DESC, id DESC").Limit(200).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	ips := make([]string, 0)
+	for _, log := range logs {
+		canonical, parseErr := CanonicalizeIPBanRule(log.Ip)
+		if parseErr != nil || strings.Contains(canonical, "/") {
+			continue
+		}
+		address, parseErr := netip.ParseAddr(canonical)
+		if parseErr != nil || address.IsLoopback() || address.IsUnspecified() {
+			continue
+		}
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		ips = append(ips, canonical)
+	}
+	if len(ips) == 0 {
+		return nil, nil
+	}
+	var existing []string
+	if err := DB.Model(&IPBan{}).Where("rule IN ?", ips).Pluck("rule", &existing).Error; err != nil {
+		return nil, err
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, rule := range existing {
+		existingSet[rule] = struct{}{}
+	}
+	now := common.GetTimestamp()
+	reason = strings.TrimSpace(reason)
+	banned := make([]string, 0)
+	for _, ip := range ips {
+		if _, ok := existingSet[ip]; ok {
+			continue
+		}
+		ban := &IPBan{
+			Rule:           ip,
+			Reason:         reason,
+			Enabled:        true,
+			ExpiresAt:      expiresAt,
+			TargetUserId:   user.Id,
+			TargetUsername: user.Username,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			OperatorId:     operatorId,
+		}
+		if err := DB.Create(ban).Error; err != nil {
+			continue
+		}
+		banned = append(banned, ip)
+	}
+	if len(banned) > 0 {
+		InvalidateIPBanSnapshot()
+	}
+	return banned, nil
+}

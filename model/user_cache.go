@@ -32,6 +32,10 @@ type UserBase struct {
 	AutoBanResponseStatus int    `json:"auto_ban_response_status"`
 	AutoBanResponseCode   string `json:"auto_ban_response_code"`
 	AutoBanResponseMessage string `json:"auto_ban_response_message"`
+
+	// BanReason mirrors the manual-disable reason so the auth middleware can
+	// return it to the user without a database hit.
+	BanReason string `json:"ban_reason"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -130,6 +134,7 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 		AutoBanResponseStatus:  user.AutoBanResponseStatus,
 		AutoBanResponseCode:    user.AutoBanResponseCode,
 		AutoBanResponseMessage: user.AutoBanResponseMessage,
+		BanReason:              user.BanReason,
 	}
 
 	return userCache, nil

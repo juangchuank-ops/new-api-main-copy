@@ -5103,6 +5103,23 @@
     "过去几周内各模型供应商的 Token 份额": "Thị phần token theo nhà cung cấp mô hình trong vài tuần qua",
     "过去一个月内各模型供应商的 Token 份额": "Thị phần token theo nhà cung cấp mô hình trong tháng qua",
     "过去一年内各模型供应商的 Token 份额": "Thị phần token theo nhà cung cấp mô hình trong năm qua",
-    "延迟": "Độ trễ"
+    "延迟": "Độ trễ",
+    "UA限制": "Giới hạn UA",
+    "UA 黑名单": "Danh sách đen UA",
+    "启用 UA 黑名单": "Bật danh sách đen UA",
+    "开启后，命中黑名单的客户端将无法调用 API": "Khi bật, các client có User-Agent khớp danh sách đen sẽ không thể gọi API",
+    "每行一条。普通文本按子串匹配(不区分大小写)，含正则元字符时按正则匹配。": "Mỗi dòng một mục. Văn bản thường được so khớp theo chuỗi con (không phân biệt hoa thường); mục chứa ký tự đặc biệt của regex sẽ được so khớp theo biểu thức chính quy.",
+    "命中后的动作": "Hành động khi khớp",
+    "仅拒绝请求(403)": "Chỉ từ chối yêu cầu (403)",
+    "保存 UA 限制设置": "Lưu cài đặt giới hạn UA",
+    "黑名单为空，请先填写 UA 黑名单": "Danh sách đen trống. Vui lòng nhập danh sách đen UA trước.",
+    "黑名单内容": "Nội dung danh sách đen",
+    "封禁账号": "Cấm tài khoản",
+    "拒绝请求并封禁账号": "Từ chối yêu cầu và cấm tài khoản",
+    "封禁账号并封锁全部IP": "Cấm tài khoản và chặn toàn bộ IP",
+    "命中黑名单的请求将按所选动作处理，封禁时长沿用自动封禁设置中 user_agent 规则的配置": "Yêu cầu khớp danh sách đen được xử lý theo hành động đã chọn; thời lượng cấm theo quy tắc user_agent trong cài đặt tự động cấm.",
+    "命中黑名单的请求将按所选动作处理，账号封禁为永久，封锁IP不设期限": "Yêu cầu khớp danh sách đen được xử lý theo hành động đã chọn; cấm tài khoản vĩnh viễn và chặn IP không giới hạn thời gian.",
+    "封禁原因（选填），填写后用户的请求会提示该原因": "Lý do cấm (không bắt buộc). Nếu nhập, yêu cầu của người dùng sẽ hiển thị lý do này",
+    "例如：滥用资源": "vd: lạm dụng tài nguyên"
   }
 }
