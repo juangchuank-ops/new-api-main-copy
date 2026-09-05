@@ -85,6 +85,18 @@ function resolveModelProvider(modelName: string): ModelProvider | null {
   if (hasAny(['glm-', 'chatglm', 'cogview', 'cogvideo'])) {
     return { icon: 'Zhipu.Color', label: 'Zhipu' }
   }
+  if (hasAny(['dots', 'dots3'])) {
+    return { icon: 'DotsStudio.Color', label: 'Dots' }
+  }
+  if (hasAny(['minicpm', 'mineru'])) {
+    return { icon: 'MiniCPM.Color', label: 'MiniCPM' }
+  }
+  if (hasAny(['poolside'])) {
+    return { icon: 'Poolside.Color', label: 'Poolside' }
+  }
+  if (hasAny(['nonescape'])) {
+    return { icon: 'Aedilic.Color', label: 'Aedilic' }
+  }
   if (hasAny(['mimo-'])) {
     return { icon: 'XiaomiMiMo', label: 'MiMo' }
   }

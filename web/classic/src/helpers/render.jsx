@@ -431,6 +431,112 @@ export function getChannelIcon(channelType) {
   }
 }
 
+/* ===== Custom brand icons not covered by @lobehub/icons (mirrors web/default) =====
+ * iconKey in DB can be: `DotsStudio`, `DotsStudio.Color`, `DotsStudio.Avatar...` */
+const CUSTOM_BRAND_ICONS = {};
+function _brandReg(key, Mark, Avatar) {
+  CUSTOM_BRAND_ICONS[key] = { Color: Mark, Avatar };
+}
+function _svg(props, children, label) {
+  return (
+    <svg viewBox='0 0 24 24' width={Number(props.size) || 20} height={Number(props.size) || 20} role='img' aria-label={label} {...props}>
+      {children}
+    </svg>
+  );
+}
+// Dots Studio (Xiaohongshu / RedNote). Red tile with three dots.
+const DOTS_RED = '#FF2442';
+const DOTS_RED_DARK = '#D61A3C';
+function DotsStudioMark(props) {
+  return _svg(props, [
+    <circle key='bg' cx='12' cy='12' r='12' fill={DOTS_RED} />,
+    <circle key='a' cx='7' cy='12' r='2.1' fill='#FFFFFF' />,
+    <circle key='b' cx='12' cy='12' r='2.1' fill='#FFFFFF' />,
+    <circle key='c' cx='17' cy='12' r='2.1' fill='#FFFFFF' />,
+  ], 'DotsStudio');
+}
+function DotsStudioAvatar(props) {
+  return _svg(props, [
+    <defs key='g'><linearGradient id='dots-studio-bg' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0%' stopColor={DOTS_RED} /><stop offset='100%' stopColor={DOTS_RED_DARK} />
+    </linearGradient></defs>,
+    <rect key='bg' width='24' height='24' rx='7' fill='url(#dots-studio-bg)' />,
+    <circle key='a' cx='6.8' cy='12' r='2' fill='#FFFFFF' />,
+    <circle key='b' cx='12' cy='12' r='2' fill='#FFFFFF' />,
+    <circle key='c' cx='17.2' cy='12' r='2' fill='#FFFFFF' />,
+  ], 'DotsStudio');
+}
+_brandReg('DotsStudio', DotsStudioMark, DotsStudioAvatar);
+// Aedilic (nonescape AI-generated image detection). Deep navy eye.
+const AEDILIC_BG = '#2B2D5E';
+function AedilicMark(props) {
+  return _svg(props, [
+    <circle key='bg' cx='12' cy='12' r='12' fill={AEDILIC_BG} />,
+    <path key='eye' d='M12 7.6c-2.9 0-5.4 1.7-6.6 4.4 1.2 2.7 3.7 4.4 6.6 4.4s5.4-1.7 6.6-4.4C17.4 9.3 14.9 7.6 12 7.6Z' fill='#FFFFFF' />,
+    <circle key='p' cx='12' cy='12' r='2' fill={AEDILIC_BG} />,
+  ], 'Aedilic');
+}
+function AedilicAvatar(props) {
+  return _svg(props, [
+    <rect key='bg' width='24' height='24' rx='6' fill={AEDILIC_BG} />,
+    <path key='eye' d='M12 7.2c-3 0-5.6 1.8-6.9 4.8 1.3 3 3.9 4.8 6.9 4.8s5.6-1.8 6.9-4.8c-1.3-3-3.9-4.8-6.9-4.8Z' fill='#FFFFFF' />,
+    <circle key='p' cx='12' cy='12' r='2.1' fill={AEDILIC_BG} />,
+  ], 'Aedilic');
+}
+_brandReg('Aedilic', AedilicMark, AedilicAvatar);
+// ModelBest 面壁智能 (MiniCPM / MinerU). Indigo tile with white M.
+const MINICPM_BG = '#4F62F6';
+function MiniCPMMark(props) {
+  return _svg(props, [
+    <circle key='bg' cx='12' cy='12' r='12' fill={MINICPM_BG} />,
+    <path key='m' d='M6.8 16V8.5h2.1l3.1 4.1 3.1-4.1h2.1V16h-2.3v-4.6l-2.9 3.8-2.9-3.8V16h-2.3Z' fill='#FFFFFF' />,
+  ], 'MiniCPM');
+}
+function MiniCPMAvatar(props) {
+  return _svg(props, [
+    <rect key='bg' width='24' height='24' rx='6' fill={MINICPM_BG} />,
+    <path key='m' d='M6.6 17V8.2h2.2l3.2 4.3 3.2-4.3h2.2V17h-2.5v-4.8L12 15.8 9.1 12.2V17H6.6Z' fill='#FFFFFF' />,
+  ], 'MiniCPM');
+}
+_brandReg('MiniCPM', MiniCPMMark, MiniCPMAvatar);
+// Poolside (Laguna agentic coding). Navy tile with ripple waves.
+const POOLSIDE_BG = '#0B57D0';
+function PoolsideMark(props) {
+  return _svg(props, [
+    <circle key='bg' cx='12' cy='12' r='12' fill={POOLSIDE_BG} />,
+    <g key='w' fill='none' stroke='#FFFFFF' strokeWidth='1.7' strokeLinecap='round'>
+      <path d='M5 9.5c2-1.6 4-1.6 6 0s4 1.6 6 0' />
+      <path d='M5 13.5c2-1.6 4-1.6 6 0s4 1.6 6 0' />
+      <path d='M5 17.2c2-1.6 4-1.6 6 0s4 1.6 6 0' />
+    </g>,
+  ], 'Poolside');
+}
+function PoolsideAvatar(props) {
+  return _svg(props, [
+    <rect key='bg' width='24' height='24' rx='6' fill={POOLSIDE_BG} />,
+    <g key='w' fill='none' stroke='#FFFFFF' strokeWidth='1.7' strokeLinecap='round'>
+      <path d='M5 9c2-1.5 4-1.5 6 0s4 1.5 6 0' />
+      <path d='M5 12.8c2-1.5 4-1.5 6 0s4 1.5 6 0' />
+      <path d='M5 16.6c2-1.5 4-1.5 6 0s4 1.5 6 0' />
+    </g>,
+  ], 'Poolside');
+}
+_brandReg('Poolside', PoolsideMark, PoolsideAvatar);
+// Generic model placeholder for the "其他 / Other" vendor.
+function ModelMark(props) {
+  return _svg(props, [
+    <circle key='bg' cx='12' cy='12' r='12' fill='#8A93A6' />,
+    <path key='p' d='M12 6.4 18 9.6v5.2l-6 3.2-6-3.2V9.6l6-3.2Z' fill='#FFFFFF' opacity='0.95' />,
+  ], 'Other');
+}
+function ModelAvatar(props) {
+  return _svg(props, [
+    <rect key='bg' width='24' height='24' rx='6' fill='#8A93A6' />,
+    <path key='p' d='M12 5.8 18.4 9.2v5.6L12 18.2 5.6 14.8V9.2L12 5.8Z' fill='#FFFFFF' opacity='0.95' />,
+  ], 'Other');
+}
+_brandReg('Model', ModelMark, ModelAvatar);
+
 /**
  * 根据图标名称动态获取 LobeHub 图标组件
  * 支持：
@@ -451,7 +557,8 @@ export function getLobeHubIcon(iconName, size = 14) {
   // 解析组件路径与点号链式属性
   const segments = String(iconName).split('.');
   const baseKey = segments[0];
-  const BaseIcon = LobeIcons[baseKey];
+  const customBrand = CUSTOM_BRAND_ICONS[baseKey];
+  const BaseIcon = customBrand ? { Color: customBrand.Color, Avatar: customBrand.Avatar } : LobeIcons[baseKey];
 
   let IconComponent = undefined;
   let propStartIndex = 1;
@@ -460,7 +567,7 @@ export function getLobeHubIcon(iconName, size = 14) {
     IconComponent = BaseIcon[segments[1]];
     propStartIndex = 2;
   } else {
-    IconComponent = LobeIcons[baseKey];
+    IconComponent = customBrand ? customBrand.Color : LobeIcons[baseKey];
     propStartIndex = 1;
   }
 
