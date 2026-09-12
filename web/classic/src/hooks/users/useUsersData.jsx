@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Modal } from '@douyinfe/semi-ui';
 import { API, showError, showSuccess } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
@@ -217,6 +218,61 @@ export const useUsersData = () => {
     }
   };
 
+  // Release user auto ban (UA / IP / sensitive words / model probing)
+  const releaseUserAutoBan = async (user) => {
+    if (!user) {
+      return false;
+    }
+    const confirmed = await new Promise((resolve) => {
+      Modal.confirm({
+        title: t('解除封禁'),
+        content: t('确认解除该用户的自动封禁吗？解除后该用户可立即恢复正常访问。'),
+        okText: t('确认解除'),
+        cancelText: t('取消'),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) {
+      return false;
+    }
+    setLoading(true);
+    let res;
+    try {
+      res = await API.post(
+        `/api/security/auto-ban/users/${user.id}/release`,
+        { reason: t('管理员手动解除') },
+        { skipErrorHandler: true },
+      );
+    } catch (error) {
+      showError(error?.response?.data?.message || error.message);
+      setLoading(false);
+      return false;
+    }
+    const { success, message } = res.data;
+    if (success) {
+      showSuccess(t('已解除封禁'));
+      setUsers(
+        users.map((u) =>
+          u.id === user.id
+            ? {
+                ...u,
+                auto_ban_until: 0,
+                auto_ban_rule: '',
+                auto_ban_record_id: 0,
+                auto_ban_response_message: '',
+              }
+            : u,
+        ),
+      );
+      setLoading(false);
+      return true;
+    }
+    showError(message || t('操作失败，请重试'));
+    setLoading(false);
+    return false;
+  };
+
   // Handle page change
   const handlePageChange = (page) => {
     setActivePage(page);
@@ -337,6 +393,7 @@ export const useUsersData = () => {
     manageUser,
     resetUserPasskey,
     resetUserTwoFA,
+    releaseUserAutoBan,
     handlePageChange,
     handlePageSizeChange,
     handleRow,

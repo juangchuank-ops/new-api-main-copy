@@ -77,7 +77,7 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
     gotify_token: '',
     gotify_priority: 5,
     accept_unset_model_ratio_model: false,
-    record_ip_log: false,
+    record_ip_log: true, // IP 记录系统强制开启
     upstream_model_update_notify_enabled: false,
   })
 
@@ -105,7 +105,7 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
         gotify_priority: parsed.gotify_priority ?? 5,
         accept_unset_model_ratio_model:
           parsed.accept_unset_model_ratio_model || false,
-        record_ip_log: parsed.record_ip_log || false,
+        record_ip_log: true, // IP 记录系统强制开启
         upstream_model_update_notify_enabled:
           parsed.upstream_model_update_notify_enabled || false,
       })
@@ -374,20 +374,17 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
           />
         </div>
 
-        {/* Record IP Log */}
+        {/* Record IP Log — 系统强制开启，移除关闭开关 */}
         <div className='flex items-start justify-between gap-3 rounded-lg border p-3 sm:items-center sm:p-4'>
           <div className='space-y-0.5'>
-            <Label htmlFor='recordIp'>{t('Record IP Address')}</Label>
+            <Label>{t('Record IP Address')}</Label>
             <p className='text-muted-foreground text-xs sm:text-sm'>
-              {t('Log IP address for usage and error logs')}
+              {t('System enforced: IP address is recorded for usage and error logs')}
             </p>
           </div>
-          <Switch
-            id='recordIp'
-            className='shrink-0'
-            checked={settings.record_ip_log}
-            onCheckedChange={(checked) => updateField('record_ip_log', checked)}
-          />
+          <span className='shrink-0 text-xs font-medium text-emerald-500'>
+            {t('Enabled')}
+          </span>
         </div>
       </div>
 

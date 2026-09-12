@@ -784,16 +784,13 @@ const NotificationSettings = ({
               itemKey='privacy'
             >
               <div className='py-4'>
-                <Form.Switch
-                  field='recordIpLog'
-                  label={t('记录请求与错误日志IP')}
-                  checkedText={t('开')}
-                  uncheckedText={t('关')}
-                  onChange={(value) => handleFormChange('recordIpLog', value)}
-                  extraText={t(
-                    '开启后，仅"消费"和"错误"日志将记录您的客户端IP地址',
-                  )}
-                />
+                {/* IP 记录已由系统强制开启，不再提供关闭开关 */}
+                <div className='mb-1 text-sm font-medium'>
+                  {t('记录请求与错误日志IP')}
+                </div>
+                <div className='text-xs text-secondary'>
+                  {t('系统已强制开启：消费与错误日志将记录您的客户端真实IP')}
+                </div>
               </div>
             </TabPane>
 

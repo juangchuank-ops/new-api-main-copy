@@ -109,8 +109,23 @@ const renderUsername = (text, record) => {
 /**
  * Render user statistics
  */
-const renderStatistics = (text, record, showEnableDisableModal, t) => {
+const renderStatistics = (text, record, showEnableDisableModal, t, releaseAutoBan) => {
   const isDeleted = record.DeletedAt !== null;
+
+  // 自动封禁状态: auto_ban_until === -1 为永久封禁, > now 为限时封禁中, 0 为未封禁
+  const banRule = String(record.auto_ban_rule || '').trim().toLowerCase();
+  const banUntil = Number(record.auto_ban_until || 0);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const isBanned = banRule !== '' && (banUntil === -1 || banUntil > nowSec);
+  const banLabelMap = {
+    user_agent: t('UA封禁'),
+    excessive_ips: t('IP封禁'),
+    sensitive_words: t('敏感词封禁'),
+    model_probing: t('模型探测封禁'),
+    browser_fingerprint: t('指纹封禁'),
+    fingerprint: t('指纹封禁'),
+    ip: t('IP封禁'),
+  };
 
   // Determine tag text & color like original status column
   let tagColor = 'grey';
@@ -118,6 +133,9 @@ const renderStatistics = (text, record, showEnableDisableModal, t) => {
   if (isDeleted) {
     tagColor = 'red';
     tagText = t('已注销');
+  } else if (isBanned) {
+    tagColor = 'red';
+    tagText = banLabelMap[banRule] || t('自动封禁');
   } else if (record.status === 1) {
     tagColor = 'green';
     tagText = t('已启用');
@@ -127,13 +145,40 @@ const renderStatistics = (text, record, showEnableDisableModal, t) => {
   }
 
   const content = (
-    <Tag color={tagColor} shape='circle' size='small'>
+    <Tag
+      color={tagColor}
+      shape='circle'
+      size='small'
+      style={isBanned ? { cursor: 'pointer' } : undefined}
+      onClick={
+        isBanned && releaseAutoBan
+          ? () => releaseAutoBan(record)
+          : undefined
+      }
+    >
       {tagText}
     </Tag>
   );
 
   const tooltipContent = (
     <div className='text-xs'>
+      {isBanned && (
+        <div className='mb-1'>
+          <div>
+            {t('封禁类型')}: {banLabelMap[banRule] || t('自动封禁')}
+          </div>
+          <div>
+            {t('封禁时长')}:{' '}
+            {banUntil === -1
+              ? t('永久')
+              : new Date(banUntil * 1000).toLocaleString()}
+          </div>
+          {record.auto_ban_response_message ? (
+            <div>{record.auto_ban_response_message}</div>
+          ) : null}
+          <div className='mt-1'>{t('点击标签可解除封禁')}</div>
+        </div>
+      )}
       <div>
         {t('调用次数')}: {renderNumber(record.request_count)}
       </div>
@@ -225,12 +270,20 @@ const renderOperations = (
     showResetTwoFAModal,
     showUserSubscriptionsModal,
     showTransferRootModal,
+    releaseAutoBan,
     t,
   },
 ) => {
   if (record.DeletedAt !== null) {
     return <></>;
   }
+
+  // 是否处于自动封禁中(auto_ban_until: -1 永久, > now 限时)
+  const banRule = String(record.auto_ban_rule || '').trim().toLowerCase();
+  const banUntil = Number(record.auto_ban_until || 0);
+  const isBanned =
+    banRule !== '' &&
+    (banUntil === -1 || banUntil > Math.floor(Date.now() / 1000));
 
   const moreMenu = [
     {
@@ -264,6 +317,15 @@ const renderOperations = (
 
   return (
     <Space>
+      {isBanned && (
+        <Button
+          type='primary'
+          size='small'
+          onClick={() => releaseAutoBan && releaseAutoBan(record)}
+        >
+          {t('解除封禁')}
+        </Button>
+      )}
       {record.status === 1 ? (
         <Button
           type='danger'
@@ -345,6 +407,7 @@ export const getUsersColumns = ({
   showResetTwoFAModal,
   showUserSubscriptionsModal,
   showTransferRootModal,
+  releaseAutoBan,
 }) => {
   return [
     {
@@ -360,7 +423,7 @@ export const getUsersColumns = ({
       title: t('状态'),
       dataIndex: 'info',
       render: (text, record, index) =>
-        renderStatistics(text, record, showEnableDisableModal, t),
+        renderStatistics(text, record, showEnableDisableModal, t, releaseAutoBan),
     },
     {
       title: t('剩余额度/总额度'),
@@ -414,6 +477,7 @@ export const getUsersColumns = ({
           showResetTwoFAModal,
           showUserSubscriptionsModal,
           showTransferRootModal,
+          releaseAutoBan,
           t,
         }),
     },

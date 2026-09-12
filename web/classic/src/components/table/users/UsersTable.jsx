@@ -54,6 +54,7 @@ const UsersTable = (usersData) => {
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
+    releaseUserAutoBan,
     t,
   } = usersData;
 
@@ -292,6 +293,7 @@ const UsersTable = (usersData) => {
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       showTransferRootModal: showTransferRootUserModal,
+      releaseAutoBan: releaseUserAutoBan,
     });
   }, [
     t,

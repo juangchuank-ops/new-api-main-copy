@@ -284,13 +284,9 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	otherStr := common.MapToJsonStr(appendUserAgentToOther(c, other))
-	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
+	// 强制记录真实客户端 IP (不再受用户 record_ip_log 设置控制)
+	// 优先取 CDN/反代透传的真实 IP, 避免记录到代理 IP
+	ip := getRealClientIP(c)
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
@@ -307,12 +303,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		UseTime:          useTimeSeconds,
 		IsStream:         isStream,
 		Group:            group,
-		Ip: func() string {
-			if needRecordIp {
-				return c.ClientIP()
-			}
-			return ""
-		}(),
+		Ip:               ip,
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
@@ -348,13 +339,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
 	otherStr := common.MapToJsonStr(appendUserAgentToOther(c, params.Other))
-	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
+	// 强制记录真实客户端 IP (不再受用户 record_ip_log 设置控制)
+	ip := getRealClientIP(c)
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
@@ -371,12 +357,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UseTime:          params.UseTimeSeconds,
 		IsStream:         params.IsStream,
 		Group:            params.Group,
-		Ip: func() string {
-			if needRecordIp {
-				return c.ClientIP()
-			}
-			return ""
-		}(),
+		Ip:               ip,
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
@@ -401,6 +382,23 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			})
 		})
 	}
+}
+
+// getRealClientIP 提取真实客户端 IP。
+// 优先取 CDN/反代透传的真实 IP (CF-Connecting-IP → X-Real-IP → X-Forwarded-For 首项),
+// 避免记录到代理/CDN 节点 IP; 均无则退回 gin 默认的 ClientIP。
+func getRealClientIP(c *gin.Context) string {
+	for _, h := range []string{"CF-Connecting-IP", "True-Client-IP", "X-Real-IP"} {
+		if v := strings.TrimSpace(c.GetHeader(h)); v != "" && v != "unknown" {
+			return v
+		}
+	}
+	if xff := strings.TrimSpace(c.GetHeader("X-Forwarded-For")); xff != "" && xff != "unknown" {
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+			return first
+		}
+	}
+	return c.ClientIP()
 }
 
 type RecordTaskBillingLogParams struct {
