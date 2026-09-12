@@ -36,7 +36,7 @@
 | 文件 | 说明 |
 | --- | --- |
 | `main.go` | 组装全部路由：API、Dashboard、Relay、Video、Web 路由；设置前端重定向时跳转 `FRONTEND_BASE_URL` |
-| `api-router.go` | 注册所有 `/api` 后台管理 REST 路由（鉴权、限流中间件），并挂载 banner 与 authz 子路由 |
+| `api-router.go` | 注册所有 `/api` 后台管理 REST 路由（鉴权、限流中间件），并挂载 banner、ticket 与 authz 子路由 |
 | `relay-router.go` | 挂载全部 `/v1` 转发端点：models、chat、responses、claude、gemini、embedding、image、audio、rerank、midjourney、suno、websocket |
 | `video-router.go` | 挂载 `/v1` 视频生成/任务获取路由，以及 Kling、OpenAI-compatible 视频代理路由 |
 | `dashboard.go` | OpenAI 风格 `/dashboard/billing` 端点（subscription / usage） |
@@ -103,6 +103,7 @@ HTTP 控制器层，每个文件对应一组 REST 端点。
 | `option.go` | 系统选项读取/更新（含支付合规守卫） |
 | `setup.go` | 首次初始化设置（root 用户、选项） |
 | `banner.go` | 横幅 CRUD 与公共横幅 |
+| `ticket.go` | 工单中心：用户建单/我的工单列表（状态统计）/详情/回复，管理员全部工单（关键词/状态/用户名筛选）、回复、状态流转与删除 |
 | `oauth.go` | GitHub/Discord/OIDC OAuth 登录、授权码、账号绑定流程 |
 | `custom_oauth.go` | 自定义 OAuth 提供商 CRUD 与用户绑定/解绑 |
 | `passkey.go` | WebAuthn Passkey：注册/登录/验证/删除/状态、管理员重置 |
@@ -261,6 +262,7 @@ GORM 数据模型、迁移与数据访问。
 | `log.go` | `Log` 模型（可选 ClickHouse 日志库）、用量记录、统计、鉴权日志 |
 | `banner.go` | 公告横幅模型与 CRUD |
 | `banner_migration.go` | 将旧控制台公告配置迁移为横幅记录 |
+| `ticket.go` | 工单与回复模型：状态机 processing/waiting/resolved/closed（关闭为终态）、用户/管理员已读时间与未读计算、分页与标题搜索 |
 | `checkin.go` | 每日签到模型与奖励逻辑 |
 | `invitation_code.go` | 邀请码/兑换码模型、CRUD 与事务消耗 |
 | `redemption.go` | 兑换码模型与事务兑换 |
@@ -639,8 +641,8 @@ React + Semi Design（`@douyinfe/semi-ui`）+ React Router v6 + i18next，经 Rs
 | --- | --- |
 | `src/index.jsx` | 启动引导：Semi CSS、状态/用户/路由/主题 Provider、多语言 |
 | `src/App.jsx` | 中央路由表 + 权限守卫（AuthRedirect/PrivateRoute/AdminRoute）+ 懒加载 |
-| `src/pages/` | 35 个页面：`Channel`（渠道）、`Model`（模型定价）、`Token`（API 密钥）、`User`（用户）、`Log`（日志）、`TopUp`（充值）、`Subscription`（订阅）、`Redemption`（兑换码）、`Setting`（系统设置）、`Game`（游戏中心：德州扑克/轮盘/贪吃蛇/1024/黄金矿工/Token 挖矿/股票期货等）、`IpBan`、`BrowserFingerprintBan`、`UpstreamAccount`（上游账号）、`Playground`、`Chat`、`Chat2Link`、`Transfer`（转账）、`Rankings`/`RankingsV2`、`Pricing`、`Banner`、`ModelDeployment`、`ModelHealth`、`Dashboard`、`Home`、`About`、`Setup`、`SystemInfo`、`Task`、`Midjourney`、`InvitationCode`、`NotFound`/`Forbidden`、法律页面等 |
-| `src/components/` | 对应用户/渠道/令牌/订阅/计费等的表格渲染器（`table/`），设置面板（`settings/`），登录注册表单（`auth/`），仪表盘面板（`dashboard/`），布局壳（`layout/`），Playground 组件，顶部充值（`topup/`）等 |
+| `src/pages/` | 35 个页面：`Channel`（渠道）、`Model`（模型定价）、`Token`（API 密钥）、`User`（用户）、`Log`（日志）、`TopUp`（充值）、`Subscription`（订阅）、`Redemption`（兑换码）、`Setting`（系统设置）、`Game`（游戏中心：德州扑克/轮盘/贪吃蛇/1024/黄金矿工/Token 挖矿/股票期货等）、`IpBan`、`BrowserFingerprintBan`、`UpstreamAccount`（上游账号）、`Playground`、`Chat`、`Chat2Link`、`Transfer`（转账）、`Rankings`/`RankingsV2`、`Pricing`、`Banner`、`ModelDeployment`、`ModelHealth`、`Dashboard`、`Home`、`About`、`Setup`、`SystemInfo`、`Task`、`Midjourney`、`InvitationCode`、`Ticket`（工单中心）、`TicketManage`（工单管理）、`NotFound`/`Forbidden`、法律页面等 |
+| `src/components/` | 对应用户/渠道/令牌/订阅/计费等的表格渲染器（`table/`），设置面板（`settings/`），登录注册表单（`auth/`），仪表盘面板（`dashboard/`），布局壳（`layout/`），Playground 组件，顶部充值（`topup/`）、工单中心组件（`ticket/`：列表面板/管理面板/共享会话/详情抽屉）等 |
 | `src/hooks/` | 领域数据钩子（按 `channels/`、`users/`、`channels/`、`playground/`、`subscriptions/` 等组织） |
 | `src/helpers/` | 纯工具模块：`api.js`（axios）、`auth.jsx`、`utils.jsx`、`render.jsx`、`flow.js`、`quota.js`、`log.js`、`dashboard.jsx` 等 |
 | `src/i18n/` | i18next 初始化与 `locales/`（en/zh/zh-CN/zh-TW/fr/ru/ja/vi） |

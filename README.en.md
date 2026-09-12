@@ -19,7 +19,7 @@ New API is an AI API gateway maintained by **QuantumNous**. It connects 40+ upst
 - **Multi-Channel Routing**: 40+ upstream provider adapters, channel priority and weight, failure retry, model mapping, batch keys, availability testing, and channel affinity.
 - **Access Control**: JWT, OAuth, OIDC, WebAuthn/Passkey, 2FA, user groups, token and model permissions, IP blacklist, browser fingerprint blacklist, and auto-blocking.
 - **Usage & Cost**: Quota management, model multipliers, tiered/dynamic pricing (expression-based billing), top-up and subscription, usage logs, statistics dashboards, and leaderboards.
-- **Value-Added Features**: Daily check-in, invitation codes, redemption codes, transfers, balance top-up, subscription plans, gaming center (Texas Hold'em, stock/futures simulation, Minesweeper, and more).
+- **Value-Added Features**: Daily check-in, invitation codes, redemption codes, transfers, balance top-up, subscription plans, ticket center (users submit tickets, admins handle them in the console), gaming center (Texas Hold'em, stock/futures simulation, Minesweeper, and more).
 - **Ops Capabilities**: SQLite, MySQL, PostgreSQL, ClickHouse log database, Redis cache, multi-node deployment, health checks, system monitoring, and performance metrics.
 - **Dual Frontends**: Modern `default` console (React 19 + Tailwind) and compatibility-retaining `classic` console (Semi Design).
 - **Internationalization**: Backend supports Chinese and English; default frontend supports Chinese, English, French, Japanese, Russian, and Vietnamese.
