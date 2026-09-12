@@ -96,6 +96,7 @@ export default function SettingsSidebarModulesUser() {
         topup: isSidebarModuleAllowed('personal', 'topup'),
         personal: isSidebarModuleAllowed('personal', 'personal'),
         transfer: isSidebarModuleAllowed('personal', 'transfer'),
+        ticket: isSidebarModuleAllowed('personal', 'ticket'),
       };
     }
 
@@ -335,6 +336,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'transfer',
           title: t('余额转账'),
           description: t('向其他用户转账余额'),
+        },
+        {
+          key: 'ticket',
+          title: t('工单中心'),
+          description: t('提交和管理工单'),
         },
       ],
     },

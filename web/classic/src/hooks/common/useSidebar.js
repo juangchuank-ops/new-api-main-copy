@@ -44,6 +44,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     topup: true,
     personal: true,
     transfer: true,
+    ticket: true,
   },
   admin: {
     enabled: true,
@@ -53,6 +54,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     redemption: true,
     'invitation-code': true,
     user: true,
+    ticketManage: true,
     subscription: true,
     setting: true,
     'system-info': true,

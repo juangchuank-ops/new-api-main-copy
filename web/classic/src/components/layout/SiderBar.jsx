@@ -39,6 +39,8 @@ const routerMap = {
   topup: '/console/topup',
   user: '/console/user',
   transfer: '/console/transfer',
+  ticket: '/console/ticket',
+  ticketManage: '/console/ticket-manage',
   subscription: '/console/subscription',
   log: '/console/log',
   midjourney: '/console/midjourney',
@@ -146,6 +148,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'transfer',
         to: '/transfer',
       },
+      {
+        text: t('工单中心'),
+        itemKey: 'ticket',
+        to: '/ticket',
+      },
     ];
 
     // 根据配置过滤项目
@@ -203,6 +210,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('用户管理'),
         itemKey: 'user',
         to: '/user',
+        className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('工单管理'),
+        itemKey: 'ticketManage',
+        to: '/ticket-manage',
         className: isAdminOrPermissionAdmin() ? '' : 'tableHiddle',
       },
       {

@@ -49,6 +49,7 @@ import Subscription from './pages/Subscription';
 import ModelHealth from './pages/ModelHealth';
 import SystemInfo from './pages/SystemInfo';
 import Banner from './pages/Banner';
+import TicketManage from './pages/TicketManage';
 import UpstreamAccount from './pages/UpstreamAccount';
 import IpBan from './pages/IpBan';
 import BrowserFingerprintBan from './pages/BrowserFingerprintBan';
@@ -65,6 +66,7 @@ const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
 const TransferPage = lazy(() => import('./pages/Transfer'));
+const TicketPage = lazy(() => import('./pages/Ticket'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 
@@ -365,6 +367,24 @@ function App() {
                 <TransferPage />
               </Suspense>
             </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/ticket'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TicketPage />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/ticket-manage'
+          element={
+            <AdminRoute>
+              <TicketManage />
+            </AdminRoute>
           }
         />
         <Route

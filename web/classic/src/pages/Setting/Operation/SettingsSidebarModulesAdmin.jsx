@@ -57,6 +57,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       enabled: true,
       topup: true,
       personal: true,
+      ticket: true,
     },
     admin: {
       enabled: true,
@@ -66,6 +67,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       redemption: true,
       'invitation-code': true,
       user: true,
+      ticketManage: true,
       subscription: true,
       setting: true,
       'system-info': true,
@@ -124,6 +126,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         enabled: true,
         topup: true,
         personal: true,
+        ticket: true,
       },
       admin: {
         enabled: true,
@@ -133,6 +136,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         redemption: true,
         'invitation-code': true,
         user: true,
+        ticketManage: true,
         subscription: true,
         setting: true,
         'system-info': true,
@@ -199,7 +203,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             midjourney: true,
             task: true,
           },
-          personal: { enabled: true, topup: true, personal: true },
+          personal: { enabled: true, topup: true, personal: true, ticket: true },
           admin: {
             enabled: true,
             channel: true,
@@ -208,6 +212,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             redemption: true,
             'invitation-code': true,
             user: true,
+            ticketManage: true,
             subscription: true,
             setting: true,
             'system-info': true,
@@ -265,6 +270,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           title: t('个人设置'),
           description: t('个人信息设置'),
         },
+        {
+          key: 'ticket',
+          title: t('工单中心'),
+          description: t('提交和管理工单'),
+        },
       ],
     },
     {
@@ -295,6 +305,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           description: t('邀请码生成管理'),
         },
         { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
+        {
+          key: 'ticketManage',
+          title: t('工单管理'),
+          description: t('处理用户提交的工单'),
+        },
         {
           key: 'setting',
           title: t('系统设置'),

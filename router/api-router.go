@@ -375,7 +375,25 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.PUT("/", controller.UpdateToken)
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
-			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
+		tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
+		}
+
+		// Ticket system (工单中心)
+		ticketRoute := apiRouter.Group("/ticket")
+		ticketRoute.Use(middleware.UserAuth())
+		{
+			ticketRoute.GET("/self", controller.GetMyTickets)
+			ticketRoute.POST("/", controller.CreateUserTicket)
+			ticketRoute.GET("/:id", controller.GetUserTicketDetail)
+			ticketRoute.POST("/:id/reply", controller.ReplyOwnTicket)
+		}
+		ticketAdminRoute := apiRouter.Group("/ticket/admin")
+		ticketAdminRoute.Use(middleware.AdminAuth())
+		{
+			ticketAdminRoute.GET("/", controller.GetAllTicketsForAdmin)
+			ticketAdminRoute.POST("/:id/reply", controller.AdminReplyTicket)
+			ticketAdminRoute.POST("/:id/status", controller.AdminUpdateTicketStatus)
+			ticketAdminRoute.DELETE("/:id", controller.AdminDeleteTicket)
 		}
 
 		usageRoute := apiRouter.Group("/usage")

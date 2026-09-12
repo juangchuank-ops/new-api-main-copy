@@ -355,6 +355,8 @@ func migrateDB() error {
 		&UpstreamAccountLog{},
 		&IPBan{},
 		&BrowserFingerprintBan{},
+		&Ticket{},
+		&TicketReply{},
 	)
 	if err != nil {
 		return err

@@ -85,6 +85,8 @@ import {
   Globe,
   ShieldBan,
   Fingerprint,
+  LifeBuoy,
+  ClipboardList,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -143,6 +145,10 @@ export function getLucideIcon(key, selected = false) {
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'transfer':
       return <ArrowLeftRight {...commonProps} color={iconColor} />;
+    case 'ticket':
+      return <LifeBuoy {...commonProps} color={iconColor} />;
+    case 'ticketManage':
+      return <ClipboardList {...commonProps} color={iconColor} />;
     case 'channel':
       return <Layers {...commonProps} color={iconColor} />;
     case 'redemption':
