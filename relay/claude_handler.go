@@ -221,3 +221,44 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	return nil
 }
+
+// ClaudeCountTokensHelper forwards Claude Code's native token-count request
+// without transforming the body. The upstream count is an estimate and must
+// not charge the user's quota.
+func ClaudeCountTokensHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	info.InitChannelMeta(c)
+
+	adaptor := GetAdaptor(info.ApiType)
+	if adaptor == nil {
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+	}
+	adaptor.Init(info)
+
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	resp, err := adaptor.DoRequest(c, info, common.ReaderOnly(storage))
+	if err != nil {
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	}
+	httpResp, ok := resp.(*http.Response)
+	if !ok || httpResp == nil {
+		return types.NewError(fmt.Errorf("empty upstream response"), types.ErrorCodeBadResponse)
+	}
+	defer service.CloseResponseBodyGracefully(httpResp)
+
+	if httpResp.StatusCode != http.StatusOK {
+		apiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+		service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
+		return apiErr
+	}
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+	service.IOCopyBytesGracefully(c, httpResp, body)
+	service.PostTextConsumeQuota(c, info, &dto.Usage{}, nil)
+	return nil
+}

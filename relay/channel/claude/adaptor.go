@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -43,6 +44,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	requestURL := fmt.Sprintf("%s/v1/messages", info.ChannelBaseUrl)
+	if strings.Split(info.RequestURLPath, "?")[0] == "/v1/messages/count_tokens" {
+		requestURL += "/count_tokens"
+	}
 	if !shouldAppendClaudeBetaQuery(info) {
 		return requestURL, nil
 	}
