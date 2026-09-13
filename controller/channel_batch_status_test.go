@@ -19,7 +19,7 @@ func useChannelBatchStatusDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.Option{}))
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
 	previousRedisEnabled := common.RedisEnabled

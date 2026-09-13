@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +48,7 @@ func setupStreamTest(t *testing.T, body io.Reader) (*gin.Context, *http.Response
 
 func buildSSEBody(n int) string {
 	var b strings.Builder
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fmt.Fprintf(&b, "data: {\"id\":%d,\"choices\":[{\"delta\":{\"content\":\"token_%d\"}}]}\n", i, i)
 	}
 	b.WriteString("data: [DONE]\n")
@@ -131,7 +132,7 @@ func TestStreamScannerHandler_OrderPreserved(t *testing.T) {
 	})
 
 	require.Equal(t, numChunks, len(received))
-	for i := 0; i < numChunks; i++ {
+	for i := range numChunks {
 		expected := fmt.Sprintf("{\"id\":%d,\"choices\":[{\"delta\":{\"content\":\"token_%d\"}}]}", i, i)
 		assert.Equal(t, expected, received[i], "chunk %d out of order", i)
 	}
@@ -180,7 +181,7 @@ func TestStreamScannerHandler_SkipsNonDataLines(t *testing.T) {
 	b.WriteString("event: message\n")
 	b.WriteString("id: 12345\n")
 	b.WriteString("retry: 5000\n")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		fmt.Fprintf(&b, "data: payload_%d\n", i)
 		b.WriteString(": interleaved comment\n")
 	}
@@ -210,6 +211,78 @@ func TestStreamScannerHandler_DataWithExtraSpaces(t *testing.T) {
 	assert.Equal(t, "{\"trimmed\":true}", got)
 }
 
+// TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns pins the
+// disconnect contract: when the client goes away, the handler must return
+// promptly (all goroutines joined, so the gin.Context can never leak into a
+// pooled reuse), the upstream body must be closed to stop token generation,
+// and no data received after the disconnect may be processed or written.
+func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}
+
+	var count atomic.Int64
+	firstHandled := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			count.Add(1)
+			_ = StringData(c, data)
+			if data == "first" {
+				close(firstHandled)
+			}
+		})
+		close(done)
+	}()
+
+	_, err := fmt.Fprint(pw, "data: first\n")
+	require.NoError(t, err)
+
+	select {
+	case <-firstHandled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first chunk")
+	}
+
+	cancel()
+
+	// The handler must return without any further upstream input: cleanup
+	// closes resp.Body, which unblocks the scanner goroutine.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return after client disconnect")
+	}
+
+	// Upstream read side must be closed so the provider stops generating
+	// (and billing) for a request nobody is listening to.
+	_, err = fmt.Fprint(pw, "data: second\n")
+	require.ErrorIs(t, err, io.ErrClosedPipe, "upstream body should be closed after client disconnect")
+
+	assert.Equal(t, int64(1), count.Load(), "no chunk after disconnect should be processed")
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+
+	body := recorder.Body.String()
+	assert.Contains(t, body, "first")
+	assert.NotContains(t, body, "second")
+}
+
 // ---------- Ping tests ----------
 
 func TestStreamScannerHandler_PingSentDuringSlowUpstream(t *testing.T) {
@@ -226,7 +299,7 @@ func TestStreamScannerHandler_PingSentDuringSlowUpstream(t *testing.T) {
 	pr, pw := io.Pipe()
 	go func() {
 		defer pw.Close()
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			fmt.Fprintf(pw, "data: chunk_%d\n", i)
 			time.Sleep(400 * time.Millisecond)
 		}
@@ -327,7 +400,7 @@ func TestStreamScannerHandler_StreamStatus_EOFWithoutDone(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		fmt.Fprintf(&b, "data: {\"id\":%d}\n", i)
 	}
 	c, resp, info := setupStreamTest(t, strings.NewReader(b.String()))
@@ -453,7 +526,7 @@ func TestStreamScannerHandler_StreamStatus_ErrorThenStop(t *testing.T) {
 	// Use a large body without [DONE] to avoid race between scanner's [DONE]
 	// and handler's Stop on the sync.Once EndReason.
 	var b strings.Builder
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		fmt.Fprintf(&b, "data: {\"id\":%d}\n", i)
 	}
 	c, resp, info := setupStreamTest(t, strings.NewReader(b.String()))

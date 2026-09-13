@@ -1,20 +1,20 @@
 package controller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -25,9 +25,14 @@ type wechatLoginResponse struct {
 	Data    string `json:"data"`
 }
 
+type wechatAuthRequest struct {
+	Code           string `json:"code"`
+	InvitationCode string `json:"invitation_code"`
+}
+
 func getWeChatIdByCode(code string) (string, error) {
 	if code == "" {
-		return "", errors.New("invalid parameters")
+		return "", errors.New("无效的参数")
 	}
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/wechat/user?code=%s", common.WeChatServerAddress, url.QueryEscape(code)), nil)
 	if err != nil {
@@ -44,7 +49,7 @@ func getWeChatIdByCode(code string) (string, error) {
 	}
 	defer httpResponse.Body.Close()
 	var res wechatLoginResponse
-	err = json.NewDecoder(httpResponse.Body).Decode(&res)
+	err = common.DecodeJson(httpResponse.Body, &res)
 	if err != nil {
 		return "", err
 	}
@@ -52,17 +57,27 @@ func getWeChatIdByCode(code string) (string, error) {
 		return "", errors.New(res.Message)
 	}
 	if res.Data == "" {
-		return "", errors.New("verification code error or expired")
+		return "", errors.New("验证码错误或已过期")
 	}
 	return res.Data, nil
 }
 
 func WeChatAuth(c *gin.Context) {
 	if !common.WeChatAuthEnabled {
-		common.ApiErrorI18n(c, i18n.MsgWeChatNotEnabled)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "管理员未开启通过微信登录以及注册",
+			"success": false,
+		})
 		return
 	}
-	code := c.Query("code")
+	request := wechatAuthRequest{Code: c.Query("code"), InvitationCode: c.Query("invitation_code")}
+	if c.Request.Method == http.MethodPost {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
+	code := request.Code
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -84,32 +99,53 @@ func WeChatAuth(c *gin.Context) {
 			return
 		}
 		if user.Id == 0 {
-			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "用户已注销",
+			})
 			return
 		}
 	} else {
 		if common.RegisterEnabled {
-			invitationCode := ""
+			registrationCodeRequired, err := model.RegistrationCodeRequired()
+			if err != nil {
+				common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+				return
+			}
+			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
+			user.DisplayName = "WeChat User"
+			user.Role = common.RoleCommonUser
+			user.Status = common.UserStatusEnabled
+			invitationCode := strings.TrimSpace(request.InvitationCode)
 			if common.InvitationCodeEnabled {
-				session := sessions.Default(c)
-				invitationCode, _ = session.Get("invitation_code").(string)
 				if invitationCode == "" {
 					common.ApiErrorI18n(c, i18n.MsgOAuthInvitationCodeRequired)
 					return
 				}
-				_, err := model.ValidateInvitationCode(invitationCode)
-				if err != nil {
+				if _, err := model.ValidateInvitationCode(invitationCode); err != nil {
 					common.ApiErrorI18n(c, i18n.MsgOAuthInvitationCodeInvalid)
 					return
 				}
 			}
+			if registrationCodeRequired {
+				challenge, err := createPendingRegistration(pendingRegistrationPayload{
+					Method: pendingRegistrationWeChat,
+					User: pendingRegistrationUser{
+						Username:    user.Username,
+						DisplayName: user.DisplayName,
+						WeChatId:    wechatId,
+					},
+					InvitationCode: invitationCode,
+				})
+				if err != nil {
+					common.ApiError(c, err)
+					return
+				}
+				writePendingRegistration(c, challenge)
+				return
+			}
 
-			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
-			user.DisplayName = "WeChat User"
-			user.Role = model.ResolveNewUserRole()
-			user.Status = common.UserStatusEnabled
-
-			err := model.DB.Transaction(func(tx *gorm.DB) error {
+			if err := model.DB.Transaction(func(tx *gorm.DB) error {
 				if err := user.InsertWithTx(tx, 0); err != nil {
 					return err
 				}
@@ -117,8 +153,7 @@ func WeChatAuth(c *gin.Context) {
 					return model.UseInvitationCodeWithTx(tx, invitationCode, user.Id)
 				}
 				return nil
-			})
-			if err != nil {
+			}); err != nil {
 				if errors.Is(err, model.ErrInvitationCodeUnavailable) {
 					common.ApiErrorI18n(c, i18n.MsgOAuthInvitationCodeInvalid)
 					return
@@ -129,24 +164,21 @@ func WeChatAuth(c *gin.Context) {
 				})
 				return
 			}
-			user.FinalizeUserCreation(0)
-			recordRegistrationAudit(&user, c, "wechat")
-
-			if common.InvitationCodeEnabled {
-				session := sessions.Default(c)
-				session.Delete("invitation_code")
-				if err := session.Save(); err != nil {
-					common.SysError(fmt.Sprintf("[WeChat] Failed to clear invitation code session: %s", err.Error()))
-				}
-			}
+			user.FinishInsert(0)
 		} else {
-			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "管理员关闭了新用户注册",
+			})
 			return
 		}
 	}
 
 	if user.Status != common.UserStatusEnabled {
-		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "用户已被封禁",
+			"success": false,
+		})
 		return
 	}
 	setupLogin(&user, c)
@@ -157,19 +189,39 @@ type wechatBindRequest struct {
 }
 
 func WeChatBind(c *gin.Context) {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	succeeded, notificationFailed := false, false
+	defer func() {
+		recordUserSecurityAudit(c, identity.UserID, "user.binding_bind", map[string]any{"provider": "wechat", "success": succeeded, "notification_failed": notificationFailed})
+	}()
 	if !common.WeChatAuthEnabled {
-		common.ApiErrorI18n(c, i18n.MsgWeChatNotEnabled)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "管理员未开启通过微信登录以及注册",
+			"success": false,
+		})
 		return
 	}
 	var req wechatBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "invalid request",
+			"message": "无效的请求",
 		})
 		return
 	}
-	code := req.Code
+	code := strings.TrimSpace(req.Code)
+	context, err := common.Marshal(service.AccountBindingContext{Provider: "wechat", Code: code})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: context}) == nil {
+		return
+	}
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -179,27 +231,30 @@ func WeChatBind(c *gin.Context) {
 		return
 	}
 	if model.IsWeChatIdAlreadyTaken(wechatId) {
-		common.ApiErrorI18n(c, i18n.MsgWeChatAlreadyBound)
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "该微信账号已被绑定",
+		})
 		return
 	}
-	session := sessions.Default(c)
-	id := session.Get("id")
-	user := model.User{
-		Id: id.(int),
+	// 只更新绑定列，避免完整用户快照覆盖并发的封禁、降权或分组变更。
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		return model.UpdateUserBindColumnForSessionWithTx(tx, identity, "wechat_id", wechatId)
+	}); err != nil {
+		writeSecurityOperationError(c, err)
+		return
 	}
-	err = user.FillUserById()
+	succeeded = true
+	user, err := model.GetUserById(identity.UserID, false)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
-	user.WeChatId = wechatId
-	err = user.Update(false)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
+	notificationFailed = service.NotifyAccountSecurityChange(user.Email, "WeChat account linked") != nil
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
+		"data":    gin.H{"notification_warning": notificationFailed},
 	})
+	return
 }

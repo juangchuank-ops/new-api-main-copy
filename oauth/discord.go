@@ -12,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -53,8 +52,6 @@ func (p *DiscordProvider) ExchangeToken(ctx context.Context, code string, c *gin
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
 
-	logger.LogDebug(ctx, "[OAuth-Discord] ExchangeToken: code=%s...", code[:min(len(code), 10)])
-
 	settings := system_setting.GetDiscordSettings()
 	redirectUri := fmt.Sprintf("%s/oauth/discord", system_setting.ServerAddress)
 	values := url.Values{}
@@ -73,10 +70,9 @@ func (p *DiscordProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-Discord] ExchangeToken client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Discord"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -120,10 +116,9 @@ func (p *DiscordProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-Discord] GetUserInfo client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Discord"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -153,23 +148,19 @@ func (p *DiscordProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 
 	logger.LogDebug(ctx, "[OAuth-Discord] GetUserInfo success: uid=%s, username=%s, name=%s", discordUser.UID, discordUser.ID, discordUser.Name)
 
+	avatarURL := ""
+	if discordUser.Avatar != "" {
+		// Always request a static PNG so it can pass the same image validation
+		// as user-uploaded avatars, including for animated Discord avatars.
+		avatarURL = fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", discordUser.UID, discordUser.Avatar)
+	}
+
 	return &OAuthUser{
 		ProviderUserID: discordUser.UID,
 		Username:       discordUser.ID,
 		DisplayName:    discordUser.Name,
-		AvatarURL:      discordAvatarURL(discordUser.UID, discordUser.Avatar),
+		AvatarURL:      avatarURL,
 	}, nil
-}
-
-func discordAvatarURL(userID, hash string) string {
-	if userID == "" || hash == "" {
-		return ""
-	}
-	extension := "png"
-	if strings.HasPrefix(hash, "a_") {
-		extension = "gif"
-	}
-	return fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.%s", userID, hash, extension)
 }
 
 func (p *DiscordProvider) IsUserIDTaken(providerUserID string) bool {
@@ -187,4 +178,9 @@ func (p *DiscordProvider) SetProviderUserID(user *model.User, providerUserID str
 
 func (p *DiscordProvider) GetProviderPrefix() string {
 	return "discord_"
+}
+
+// ProviderUserIDColumn returns the users-table column storing this provider's user ID.
+func (p *DiscordProvider) ProviderUserIDColumn() string {
+	return "discord_id"
 }

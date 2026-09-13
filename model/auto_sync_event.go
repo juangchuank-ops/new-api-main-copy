@@ -12,14 +12,15 @@ import (
 
 const autoSyncDebounceSeconds int64 = 5
 
-// AutoSyncTaskPayload 是冻结的事件批次的完整、不含密钥的调度器 payload。
+// AutoSyncTaskPayload is the complete, non-secret scheduler payload for a
+// frozen event batch.
 type AutoSyncTaskPayload struct {
 	EventType        string `json:"event_type"`
 	CutoffGeneration int64  `json:"cutoff_generation"`
 }
 
-// AutoSyncCursor 是按同步类型划分的持久化去抖游标。每次事件推进
-// Generation，使调度器可以冻结一个精确的批次。
+// AutoSyncCursor is the per-sync-type durable debounce cursor. Generation is
+// advanced with every event, allowing a scheduler to freeze a precise batch.
 type AutoSyncCursor struct {
 	Type       string `json:"type" gorm:"type:varchar(64);primaryKey"`
 	Generation int64  `json:"generation" gorm:"not null"`
@@ -31,7 +32,8 @@ func (AutoSyncCursor) TableName() string {
 	return "channel_auto_sync_cursors"
 }
 
-// AutoSyncEvent 仅包含调度器元数据；调用方不得在 Payload 中持久化渠道密钥。
+// AutoSyncEvent contains only scheduler metadata; callers must not persist
+// channel secrets in Payload.
 type AutoSyncEvent struct {
 	ID          int64  `json:"id" gorm:"primaryKey"`
 	Type        string `json:"type" gorm:"type:varchar(64);index;not null"`
@@ -50,8 +52,9 @@ func (AutoSyncEvent) TableName() string {
 	return "channel_auto_sync_events"
 }
 
-// autoSyncCursorLocks 用于避免本进程内并发生产者导致的 SQLITE_BUSY 失败。
-// Generation 的 compare-and-swap 仍是跨进程/跨方言的正确性机制。
+// The mutex avoids avoidable SQLITE_BUSY failures for concurrent producers in
+// this process. The generation compare-and-swap remains the correctness
+// mechanism across processes and other database dialects.
 var autoSyncCursorLocks sync.Map
 
 func autoSyncCursorLock(eventType string) *sync.Mutex {
@@ -59,8 +62,8 @@ func autoSyncCursorLock(eventType string) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
-// AppendAutoSyncEventTx 在同一事务内推进游标并插入事件。
-// EventAt 为 0 时默认为当前时间戳。
+// AppendAutoSyncEventTx increments the cursor and inserts its event in the
+// same transaction. EventAt defaults to the current timestamp when omitted.
 func AppendAutoSyncEventTx(tx *gorm.DB, event *AutoSyncEvent) error {
 	if tx == nil {
 		return errors.New("auto sync transaction is nil")
@@ -89,7 +92,7 @@ func AppendAutoSyncEventTx(tx *gorm.DB, event *AutoSyncEvent) error {
 				return result.Error
 			}
 			if result.RowsAffected == 0 {
-				continue // 冲突已被安全忽略；在本事务内重试
+				continue // conflict was safely ignored; retry in this transaction
 			}
 			event.Generation = cursor.Generation
 			return tx.Create(event).Error
@@ -119,9 +122,9 @@ func AppendAutoSyncEventTx(tx *gorm.DB, event *AutoSyncEvent) error {
 	return fmt.Errorf("auto sync cursor CAS retry limit reached for type %q", event.Type)
 }
 
-// FreezeDueAutoSyncBatchTx 在静默窗口已过时冻结当前 generation。
-// 生产者必须在插入前推进同一游标，因此后续事件会获得大于此 cutoff 的
-// generation。
+// FreezeDueAutoSyncBatchTx freezes the current generation if its quiet window
+// has elapsed. Producers must advance the same cursor before inserting, so a
+// later event receives a generation greater than this cutoff.
 func FreezeDueAutoSyncBatchTx(tx *gorm.DB, eventType string, now int64) (int64, bool, error) {
 	if tx == nil {
 		return 0, false, errors.New("auto sync transaction is nil")
@@ -147,8 +150,9 @@ func freezeDueAutoSyncBatchTx(tx *gorm.DB, eventType string, now int64) (int64, 
 	return cursor.Generation, true, nil
 }
 
-// BuildDueAutoSyncTaskTx 原子地冻结一个到期批次并创建其普通 singleton
-// SystemTask。若游标无待处理事件，则清除游标而非产生空任务。
+// BuildDueAutoSyncTaskTx atomically freezes a due batch and creates its normal
+// singleton SystemTask. A cursor with no pending events is cleared instead of
+// producing an empty task.
 func BuildDueAutoSyncTaskTx(tx *gorm.DB, eventType string, now int64) (*SystemTask, bool, error) {
 	if tx == nil {
 		return nil, false, errors.New("auto sync transaction is nil")
@@ -193,8 +197,9 @@ func ListPendingAutoSyncEvents(eventType string, cutoffGeneration int64) ([]*Aut
 	return ListPendingAutoSyncEventsTx(DB, eventType, cutoffGeneration)
 }
 
-// MarkAutoSyncEventsProcessedTx 终态标记精确给定的 event ID。
-// 保留 type/cutoff 谓词可防止一个陈旧的 handler 吸收后继 generation。
+// MarkAutoSyncEventsProcessedTx terminally marks exactly the supplied event
+// IDs. Keeping the type/cutoff predicates prevents a stale handler from
+// absorbing a successor generation.
 func MarkAutoSyncEventsProcessedTx(tx *gorm.DB, eventType string, cutoffGeneration int64, eventIDs []int64, taskID string) error {
 	if tx == nil {
 		return errors.New("auto sync transaction is nil")
@@ -208,8 +213,9 @@ func MarkAutoSyncEventsProcessedTx(tx *gorm.DB, eventType string, cutoffGenerati
 		Updates(map[string]any{"task_id": taskID, "processed_at": now}).Error
 }
 
-// FinalizeAutoSyncBatchTx 标记本 handler 的 event ID 为终态，并在不存在
-// 后继 generation 时清除游标。它旨在与 handler 终态事务组合使用。
+// FinalizeAutoSyncBatchTx marks this handler's event IDs terminal and clears a
+// cursor only when no successor generation exists. It is intended to compose
+// with the task terminal update in the handler's final transaction.
 func FinalizeAutoSyncBatchTx(tx *gorm.DB, eventType string, cutoffGeneration int64, eventIDs []int64, taskID string) error {
 	if tx == nil {
 		return errors.New("auto sync transaction is nil")
@@ -235,9 +241,7 @@ func FinalizeAutoSyncBatchTx(tx *gorm.DB, eventType string, cutoffGeneration int
 }
 
 // InvalidatePendingAutoPriceGuardsByChannelTx 在渠道变更/删除后将该渠道所有
-// pending 的价格 Guard 置为 invalidated。返回受影响行数。该函数是 Auto Sync
-// post-commit 补偿机制的核心：即使后续 Auto Sync Event 写入失败，Guard 的
-// pending 状态也会被清除，下次周期任务不会据此误删渠道。
+// pending 的价格 Guard 置为 invalidated。返回受影响行数。
 func InvalidatePendingAutoPriceGuardsByChannelTx(tx *gorm.DB, channelID int, reason string) (int64, error) {
 	if tx == nil {
 		return 0, errors.New("auto price guard transaction is nil")
@@ -246,44 +250,6 @@ func InvalidatePendingAutoPriceGuardsByChannelTx(tx *gorm.DB, channelID int, rea
 	result := tx.Model(&AutoPriceGuard{}).
 		Where("channel_id = ? AND state = ?", channelID, AutoPriceGuardStatePending).
 		Updates(map[string]any{"state": AutoPriceGuardStateInvalidated, "reason": reason, "updated_at": now})
-	if result.Error != nil {
-		return 0, result.Error
-	}
-	return result.RowsAffected, nil
-}
-
-// CountPendingAutoSyncEvents 返回给定类型的未处理事件数，供状态视图与
-// reconciliation 判断使用。
-func CountPendingAutoSyncEvents(eventType string) (int64, error) {
-	var count int64
-	if err := DB.Model(&AutoSyncEvent{}).
-		Where("type = ? AND processed_at IS NULL", eventType).
-		Count(&count).Error; err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
-// GetAutoSyncCursor 返回给定类型的游标，不存在时返回 (nil, nil)。
-func GetAutoSyncCursor(eventType string) (*AutoSyncCursor, error) {
-	var cursor AutoSyncCursor
-	if err := DB.Where("type = ?", eventType).First(&cursor).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &cursor, nil
-}
-
-// PurgeProcessedAutoSyncEventsBeforeTx 物理删除早于给定时间戳的已处理事件，
-// 防止事件表无限增长。仅由维护任务调用。
-func PurgeProcessedAutoSyncEventsBeforeTx(tx *gorm.DB, before int64) (int64, error) {
-	if tx == nil {
-		return 0, errors.New("auto sync transaction is nil")
-	}
-	result := tx.Where("processed_at IS NOT NULL AND processed_at < ?", before).
-		Delete(&AutoSyncEvent{})
 	if result.Error != nil {
 		return 0, result.Error
 	}

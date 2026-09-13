@@ -1,8 +1,6 @@
 package service
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,33 +42,6 @@ type AutoPriceSyncEventPayload struct {
 // AutoModelMetadataSyncEventPayload intentionally carries no channel snapshot:
 // the handler resolves current models at run time.
 type AutoModelMetadataSyncEventPayload struct{}
-
-// computeChannelConfigHash 计算渠道配置相关字段的 SHA256 hash。
-// 方案 E：替代新版的 Channel.ConfigRevision 字段，用于检测 Guard 创建后
-// 渠道配置是否变更。若 hash 不变则 Guard 仍有效；若变化则 Guard 被失效。
-func computeChannelConfigHash(channel *model.Channel) string {
-	if channel == nil {
-		return ""
-	}
-	snapshot := struct {
-		Type         int
-		Key          string
-		BaseURL      string
-		Models       string
-		ModelMapping string
-		Group        string
-	}{
-		Type:         channel.Type,
-		Key:          channel.Key,
-		BaseURL:      channel.GetBaseURL(),
-		Models:       channel.Models,
-		ModelMapping: channel.GetModelMapping(),
-		Group:        channel.Group,
-	}
-	data, _ := json.Marshal(snapshot)
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
-}
 
 func LoadChannelAutoSyncConfigTx(tx *gorm.DB) (ChannelAutoSyncConfig, error) {
 	if tx == nil {
@@ -128,9 +99,6 @@ func LoadChannelAutoSyncConfigTx(tx *gorm.DB) (ChannelAutoSyncConfig, error) {
 
 // BuildChannelAutoPriceGuardTx snapshots missing base-priced models from the
 // transaction's canonical Option rows. ModelMapping is deliberately ignored.
-//
-// 方案 E 适配：使用 InitialConfigHash 替代新版的 channel.ConfigRevision。
-// 不设置 channel.AutoPriceGuardID（旧版 Channel 无此字段）。
 func BuildChannelAutoPriceGuardTx(tx *gorm.DB, channel *model.Channel, config ChannelAutoSyncConfig, now int64) (*model.AutoPriceGuard, error) {
 	if tx == nil || channel == nil {
 		return nil, errors.New("auto price guard requires transaction and channel")
@@ -156,21 +124,11 @@ func BuildChannelAutoPriceGuardTx(tx *gorm.DB, channel *model.Channel, config Ch
 	}
 	missingJSON, _ := json.Marshal(missing)
 	sourceJSON, _ := json.Marshal(source)
-	guard := &model.AutoPriceGuard{
-		ChannelID:         channel.Id,
-		State:             model.AutoPriceGuardStatePending,
-		InitialConfigHash: computeChannelConfigHash(channel),
-		InitialMissingModels: string(missingJSON),
-		InitialUsedQuota:  channel.UsedQuota,
-		Source:            string(sourceJSON),
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	}
+	guard := &model.AutoPriceGuard{ChannelID: channel.Id, State: model.AutoPriceGuardStatePending, InitialRevision: channel.ConfigRevision, InitialMissingModels: string(missingJSON), InitialUsedQuota: channel.UsedQuota, Source: string(sourceJSON), CreatedAt: now, UpdatedAt: now}
 	if err := tx.Create(guard).Error; err != nil {
 		return nil, err
 	}
-	// 方案 E：不设置 channel.AutoPriceGuardID（旧版 Channel 无此字段）。
-	// 当前活动 Guard 通过 (channel_id, state='pending') 查询。
+	channel.AutoPriceGuardID = guard.ID
 	return guard, nil
 }
 

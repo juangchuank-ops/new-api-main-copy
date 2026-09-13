@@ -18,22 +18,13 @@ const (
 	AutoPriceGuardStateDeleted     AutoPriceGuardState = "deleted"
 )
 
-// AutoPriceGuard 故意不与 Channel 建立关联：Guard tombstone 必须在渠道
-// 删除后仍然存活，以避免陈旧缓存条目误删渠道。
-//
-// 本表为方案 E 的独立表，通过 ChannelID 关联，不在 Channel 模型上挂
-// AutoPriceGuardID 指针。当前活动 Guard 通过
-// (channel_id, state='pending') 查询。
-//
-// InitialConfigHash 替代新版的 InitialRevision：渠道配置内容的 SHA256
-// hash，用于检测 Guard 创建后渠道配置是否变更。若 Guard 创建后配置
-// hash 不变，则 Guard 仍有效；若变化则 Guard 被失效。
+// AutoPriceGuard intentionally has no association with Channel: guard
+// tombstones must survive channel deletion and stale cache entries.
 type AutoPriceGuard struct {
 	ID                   int64               `json:"id" gorm:"primaryKey"`
 	ChannelID            int                 `json:"channel_id" gorm:"index;not null"`
 	State                AutoPriceGuardState `json:"state" gorm:"type:varchar(16);index;not null"`
 	InitialRevision      int64               `json:"initial_revision" gorm:"not null"`
-	InitialConfigHash    string              `json:"initial_config_hash" gorm:"type:varchar(64);index"`
 	InitialMissingModels string              `json:"initial_missing_models" gorm:"type:text"`
 	InitialUsedQuota     int64               `json:"initial_used_quota" gorm:"not null"`
 	Source               string              `json:"source" gorm:"type:text"`
@@ -47,16 +38,16 @@ func (AutoPriceGuard) TableName() string {
 }
 
 type AutoPriceGuardCASResult struct {
-	Found         bool
-	Transitioned  bool
-	State         AutoPriceGuardState
-	ChannelID     int
-	OwnerMatched  bool
+	Found        bool
+	Transitioned bool
+	State        AutoPriceGuardState
+	ChannelID    int
+	OwnerMatched bool
 }
 
-// UseChannelAutoPriceGuardCAS 是请求所拥有的 guard 转换。与遗留的通用 CAS
-// 不同，它将转换绑定到选定的渠道，因此一个陈旧/错误关联的缓存条目永远
-// 无法消费另一个渠道的 guard。
+// UseChannelAutoPriceGuardCAS is the request-owned guard transition. Unlike
+// the legacy generic CAS it binds the transition to the selected channel, so a
+// stale/mis-associated cache entry can never consume another channel's guard.
 func UseChannelAutoPriceGuardCAS(guardID int64, channelID int) (AutoPriceGuardCASResult, error) {
 	return UseChannelAutoPriceGuardCASTx(DB, guardID, channelID)
 }
@@ -97,8 +88,8 @@ func (guard *AutoPriceGuard) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// GetAutoPriceGuard 对缺失的 guard 返回 nil, nil，这有别于包括 deleted
-// tombstone 在内的所有持久化状态。
+// GetAutoPriceGuard returns nil, nil for a missing guard, which is distinct
+// from every persisted state including the deleted tombstone.
 func GetAutoPriceGuard(id int64) (*AutoPriceGuard, error) {
 	return GetAutoPriceGuardTx(DB, id)
 }
@@ -109,28 +100,6 @@ func GetAutoPriceGuardTx(tx *gorm.DB, id int64) (*AutoPriceGuard, error) {
 	}
 	var guard AutoPriceGuard
 	err := tx.Where("id = ?", id).First(&guard).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &guard, nil
-}
-
-// GetPendingAutoPriceGuardByChannel 按渠道查询当前 pending 的 Guard。
-// 替代新版 Channel.AutoPriceGuardID 指针的快速访问。
-func GetPendingAutoPriceGuardByChannel(channelID int) (*AutoPriceGuard, error) {
-	return GetPendingAutoPriceGuardByChannelTx(DB, channelID)
-}
-
-func GetPendingAutoPriceGuardByChannelTx(tx *gorm.DB, channelID int) (*AutoPriceGuard, error) {
-	if tx == nil {
-		return nil, errors.New("auto price guard transaction is nil")
-	}
-	var guard AutoPriceGuard
-	err := tx.Where("channel_id = ? AND state = ?", channelID, AutoPriceGuardStatePending).
-		Order("id desc").First(&guard).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -198,9 +167,9 @@ func InvalidateAutoPriceGuardTx(tx *gorm.DB, id int64, reason string) (AutoPrice
 	return InvalidateAutoPriceGuardCASTx(tx, id, reason)
 }
 
-// ResolveAutoPriceGuardTx 在价格任务将渠道分类为保留后关闭非 deleting 的
-// guard。Deleted guard 保持为持久 tombstone，deleting guard 只能使用
-// UpdateAutoPriceGuardTerminalTx。
+// ResolveAutoPriceGuardTx closes a non-deleting guard after the price task has
+// classified the channel as retained. Deleted guards remain durable
+// tombstones and deleting guards can only use UpdateAutoPriceGuardTerminalTx.
 func ResolveAutoPriceGuardTx(tx *gorm.DB, id int64, reason string) (bool, error) {
 	if tx == nil {
 		return false, errors.New("auto price guard transaction is nil")
@@ -215,8 +184,8 @@ func ResolveAutoPriceGuardTx(tx *gorm.DB, id int64, reason string) (bool, error)
 	return result.RowsAffected == 1, result.Error
 }
 
-// UpdateAutoPriceGuardTerminal 将 deleting guard 更新为终态。
-// Deleted 是 tombstone 状态，而非行删除。
+// UpdateAutoPriceGuardTerminal updates a deleting guard to a terminal state.
+// Deleted is a tombstone state, not a row deletion.
 func UpdateAutoPriceGuardTerminal(id int64, state AutoPriceGuardState, reason string) (bool, error) {
 	return UpdateAutoPriceGuardTerminalTx(DB, id, state, reason)
 }
@@ -231,32 +200,4 @@ func UpdateAutoPriceGuardTerminalTx(tx *gorm.DB, id int64, state AutoPriceGuardS
 	result := tx.Model(&AutoPriceGuard{}).Where("id = ? AND state = ?", id, AutoPriceGuardStateDeleting).
 		Updates(map[string]any{"state": state, "reason": reason, "updated_at": common.GetTimestamp()})
 	return result.RowsAffected == 1, result.Error
-}
-
-// ListPendingAutoPriceGuardsTx 返回所有 pending 状态的 Guard，供 reconciliation
-// 扫描使用。
-func ListPendingAutoPriceGuardsTx(tx *gorm.DB) ([]*AutoPriceGuard, error) {
-	if tx == nil {
-		return nil, errors.New("auto price guard transaction is nil")
-	}
-	var guards []*AutoPriceGuard
-	err := tx.Where("state = ?", AutoPriceGuardStatePending).
-		Order("id asc").Find(&guards).Error
-	return guards, err
-}
-
-// PurgeTerminalAutoPriceGuardsBeforeTx 物理删除早于给定时间戳的终态 Guard，
-// 防止 Guard 表无限增长。仅由维护任务调用。
-func PurgeTerminalAutoPriceGuardsBeforeTx(tx *gorm.DB, before int64) (int64, error) {
-	if tx == nil {
-		return 0, errors.New("auto price guard transaction is nil")
-	}
-	result := tx.Where("state IN ? AND updated_at < ?", []AutoPriceGuardState{
-		AutoPriceGuardStateResolved,
-		AutoPriceGuardStateDeleted,
-	}, before).Delete(&AutoPriceGuard{})
-	if result.Error != nil {
-		return 0, result.Error
-	}
-	return result.RowsAffected, nil
 }

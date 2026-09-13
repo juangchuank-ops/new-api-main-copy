@@ -49,11 +49,20 @@ const AddUserModal = (props) => {
     display_name: '',
     password: '',
     remark: '',
+    // null 表示未单独设置（后端 *int 为 nil，继承全局默认）；0 表示不限制
+    requests_per_minute: null,
   });
 
   const submit = async (values) => {
     setLoading(true);
-    const res = await API.post(`/api/user/`, values);
+    const payload = {
+      ...values,
+      requests_per_minute:
+        values.requests_per_minute === '' || values.requests_per_minute == null
+          ? null
+          : Number(values.requests_per_minute),
+    };
+    const res = await API.post(`/api/user/`, payload);
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('用户账户创建成功！'));
@@ -171,6 +180,40 @@ const AddUserModal = (props) => {
                       label={t('备注')}
                       placeholder={t('请输入备注（仅管理员可见）')}
                       showClear
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='requests_per_minute'
+                      label={t('每分钟请求数')}
+                      placeholder={t('请输入每分钟请求数')}
+                      extraText={t('留空表示使用全局默认，0 表示不限制')}
+                      suffix={t('次/分钟')}
+                      min={0}
+                      max={1000000}
+                      step={1}
+                      precision={0}
+                      showClear
+                      style={{ width: '100%' }}
+                      rules={[
+                        {
+                          validator: (rule, value) => {
+                            if (value === '' || value == null) {
+                              return Promise.resolve();
+                            }
+                            if (
+                              !Number.isInteger(Number(value)) ||
+                              Number(value) < 0 ||
+                              Number(value) > 1000000
+                            ) {
+                              return Promise.reject(
+                                t('请输入 0 到 1000000 之间的整数'),
+                              );
+                            }
+                            return Promise.resolve();
+                          },
+                        },
+                      ]}
                     />
                   </Col>
                 </Row>

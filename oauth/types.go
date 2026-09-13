@@ -8,6 +8,7 @@ type OAuthToken struct {
 	ExpiresIn    int    `json:"expires_in,omitempty"`
 	Scope        string `json:"scope,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
+	ClientID     string `json:"-"` // Expected OIDC audience from the server-owned flow.
 }
 
 // OAuthUser represents the user info from OAuth provider
@@ -20,8 +21,8 @@ type OAuthUser struct {
 	DisplayName string
 	// Email is the email from the OAuth provider
 	Email string
-	// AvatarURL is the provider-supplied avatar URL, when available
-	AvatarURL string
+	// AvatarURL is the provider avatar URL used only while creating a new user.
+	AvatarURL string `json:"-"`
 	// Extra contains any additional provider-specific data
 	Extra map[string]any
 }

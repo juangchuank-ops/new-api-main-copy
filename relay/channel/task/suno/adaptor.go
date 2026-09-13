@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -27,7 +28,7 @@ type TaskAdaptor struct {
 // Suno polling uses a dedicated batch-fetch path (service.UpdateSunoTasks) that
 // receives dto.TaskResponse[[]dto.SunoDataResponse] from the upstream /fetch API.
 // This differs from the per-task polling used by video adaptors.
-func (a *TaskAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
 	return nil, fmt.Errorf("suno uses batch polling via UpdateSunoTasks, ParseTaskResult is not applicable")
 }
 
@@ -92,7 +93,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (parsed *channel.TaskSubmitResponse, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -115,9 +116,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		Message: sunoResponse.Message,
 		Data:    info.PublicTaskID,
 	}
-	c.JSON(http.StatusOK, publicResponse)
 
-	return sunoResponse.Data, nil, nil
+	return &channel.TaskSubmitResponse{UpstreamTaskID: sunoResponse.Data, TaskData: nil, ClientResponse: publicResponse}, nil
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -128,9 +128,19 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	return a.FetchBatchTasks(baseUrl, key, []*model.Task{task}, proxy)
+}
+
+func (a *TaskAdaptor) FetchBatchTasks(baseUrl, key string, tasks []*model.Task, proxy string) (*http.Response, error) {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		if task != nil {
+			ids = append(ids, task.GetUpstreamTaskID())
+		}
+	}
 	requestUrl := fmt.Sprintf("%s/suno/fetch", baseUrl)
-	byteBody, err := common.Marshal(body)
+	byteBody, err := common.Marshal(map[string]any{"ids": ids})
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +157,26 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
 	return client.Do(req)
+}
+
+func (a *TaskAdaptor) FetchMode() string { return "batch" }
+
+func (a *TaskAdaptor) ParseBatchResult(_ []*model.Task, _ *http.Response, body []byte) (map[string]*service.BatchTaskResult, error) {
+	var response dto.TaskResponse[[]dto.SunoDataResponse]
+	if err := common.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	if !response.IsSuccess() {
+		return nil, fmt.Errorf("suno task query failed: %s", response.Message)
+	}
+	results := make(map[string]*service.BatchTaskResult, len(response.Data))
+	for _, item := range response.Data {
+		results[item.TaskID] = &service.BatchTaskResult{
+			TaskInfo: relaycommon.TaskInfo{Status: item.Status, Reason: item.FailReason},
+			Action:   item.Action, SubmitTime: item.SubmitTime, StartTime: item.StartTime, FinishTime: item.FinishTime, Data: item.Data,
+		}
+	}
+	return results, nil
 }
 
 func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action string) (err error) {

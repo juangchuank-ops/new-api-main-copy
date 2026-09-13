@@ -39,6 +39,8 @@ export default function RequestRateLimit(props) {
     ModelRequestRateLimitSuccessCount: 1000,
     ModelRequestRateLimitDurationMinutes: 1,
     ModelRequestRateLimitGroup: '',
+    UserRequestRateLimitEnabled: false,
+    UserRequestRateLimitDefault: 60,
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -46,6 +48,19 @@ export default function RequestRateLimit(props) {
   function onSubmit() {
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
+    const rpmChanged = updateArray.some(
+      (item) => item.key === 'UserRequestRateLimitDefault',
+    );
+    if (rpmChanged) {
+      const requestsPerMinute = Number(inputs.UserRequestRateLimitDefault);
+      if (
+        !Number.isInteger(requestsPerMinute) ||
+        requestsPerMinute < 1 ||
+        requestsPerMinute > 1000000
+      ) {
+        return showError(t('默认每分钟请求数必须是 1-1000000 之间的整数'));
+      }
+    }
     const requestQueue = updateArray.map((item) => {
       let value = '';
       if (typeof inputs[item.key] === 'boolean') {
@@ -232,6 +247,55 @@ export default function RequestRateLimit(props) {
             <Row>
               <Button size='default' onClick={onSubmit}>
                 {t('保存模型速率限制')}
+              </Button>
+            </Row>
+          </Form.Section>
+          <Form.Section text={t('用户请求速率限制（每分钟）')}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'UserRequestRateLimitEnabled'}
+                  label={t('启用用户级 RPM 限制')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t(
+                    '按用户统计每分钟请求数，与上方的模型请求速率限制相互独立、可同时生效。',
+                  )}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      UserRequestRateLimitEnabled: value,
+                    });
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('默认每分钟请求数')}
+                  step={1}
+                  min={1}
+                  max={1000000}
+                  suffix={t('次/分钟')}
+                  extraText={t(
+                    '用户未单独设置每分钟请求数时使用该值，取值范围 1-1000000；用户设置 0 表示不限制。',
+                  )}
+                  field={'UserRequestRateLimitDefault'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      UserRequestRateLimitDefault:
+                        value === undefined || value === null
+                          ? ''
+                          : String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row>
+              <Button size='default' onClick={onSubmit}>
+                {t('保存用户速率限制')}
               </Button>
             </Row>
           </Form.Section>

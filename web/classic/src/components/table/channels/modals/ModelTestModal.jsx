@@ -28,11 +28,13 @@ import {
   Select,
   Switch,
   Banner,
+  Dropdown,
 } from '@douyinfe/semi-ui';
 import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
 import { Settings } from 'lucide-react';
 import { copy, showError, showInfo, showSuccess } from '../../../../helpers';
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
+import ChannelTestDiagnosticsPanel from './ChannelTestDiagnosticsPanel';
 
 const ModelTestModal = ({
   showModelTestModal,
@@ -45,8 +47,11 @@ const ModelTestModal = ({
   selectedModelKeys,
   setSelectedModelKeys,
   modelTestResults,
+  modelTestDiagnostics = {},
+  diagnosingModels,
   testingModels,
   testChannel,
+  testChannelDiagnostics,
   modelTablePage,
   setModelTablePage,
   selectedEndpointType,
@@ -152,7 +157,10 @@ const ModelTestModal = ({
       render: (text, record) => {
         const testResult =
           modelTestResults[`${currentTestChannel.id}-${record.model}`];
+        const diagnosticsResult =
+          modelTestDiagnostics[`${currentTestChannel.id}-${record.model}`];
         const isTesting = testingModels.has(record.model);
+        const isDiagnosing = diagnosingModels?.has(record.model);
 
         if (isTesting) {
           return (
@@ -164,9 +172,21 @@ const ModelTestModal = ({
 
         if (!testResult) {
           return (
-            <Tag color='grey' shape='circle'>
-              {t('未开始')}
-            </Tag>
+            <div className='flex flex-col gap-1'>
+              <div className='flex items-center gap-2'>
+                <Tag color='grey' shape='circle'>
+                  {t('未开始')}
+                </Tag>
+                {isDiagnosing && (
+                  <Tag color='purple' shape='circle'>
+                    {t('诊断中')}
+                  </Tag>
+                )}
+              </div>
+              {diagnosticsResult && (
+                <ChannelTestDiagnosticsPanel result={diagnosticsResult} />
+              )}
+            </div>
           );
         }
 
@@ -183,6 +203,11 @@ const ModelTestModal = ({
                     testResult.time.toFixed(2),
                   )}
                 </Typography.Text>
+              )}
+              {isDiagnosing && (
+                <Tag color='purple' shape='circle'>
+                  {t('诊断中')}
+                </Tag>
               )}
             </div>
             {!testResult.success && testResult.message && (
@@ -209,6 +234,9 @@ const ModelTestModal = ({
                 )}
               </div>
             )}
+            {diagnosticsResult && (
+              <ChannelTestDiagnosticsPanel result={diagnosticsResult} />
+            )}
           </div>
         );
       },
@@ -218,23 +246,62 @@ const ModelTestModal = ({
       dataIndex: 'operate',
       render: (text, record) => {
         const isTesting = testingModels.has(record.model);
+        const isDiagnosing = diagnosingModels?.has(record.model);
         return (
-          <Button
-            type='tertiary'
-            onClick={() =>
-              testChannel(
-                currentTestChannel,
-                record.model,
-                selectedEndpointType,
-                isStreamTest,
-                customTestMessage,
-              )
-            }
-            loading={isTesting}
-            size='small'
-          >
-            {t('测试')}
-          </Button>
+          <div className='flex items-center gap-2'>
+            <Button
+              type='tertiary'
+              onClick={() =>
+                testChannel(
+                  currentTestChannel,
+                  record.model,
+                  selectedEndpointType,
+                  isStreamTest,
+                  customTestMessage,
+                )
+              }
+              loading={isTesting}
+              size='small'
+            >
+              {t('测试')}
+            </Button>
+            <Dropdown
+              trigger='click'
+              position='bottomRight'
+              menu={[
+                {
+                  node: 'item',
+                  name: t('基础诊断'),
+                  onClick: () =>
+                    testChannelDiagnostics(
+                      currentTestChannel,
+                      record.model,
+                      selectedEndpointType,
+                      isStreamTest,
+                      customTestMessage,
+                      'basic',
+                    ),
+                },
+                {
+                  node: 'item',
+                  name: t('工具调用诊断'),
+                  onClick: () =>
+                    testChannelDiagnostics(
+                      currentTestChannel,
+                      record.model,
+                      selectedEndpointType,
+                      isStreamTest,
+                      customTestMessage,
+                      'tool_call',
+                    ),
+                },
+              ]}
+            >
+              <Button type='tertiary' size='small' loading={isDiagnosing}>
+                {t('能力诊断')}
+              </Button>
+            </Dropdown>
+          </div>
         );
       },
     },

@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -72,6 +73,43 @@ type RankingMover struct {
 	GrowthPct   float64 `json:"growth_pct"`
 }
 
+type RankingAvailabilityResponse struct {
+	GeneratedAt int64                      `json:"generated_at"`
+	Models      []RankingModelAvailability `json:"models"`
+}
+
+type RankingModelAvailability struct {
+	ModelName          string    `json:"model_name"`
+	Vendor             string    `json:"vendor"`
+	VendorIcon         string    `json:"vendor_icon,omitempty"`
+	SuccessRate        float64   `json:"success_rate"`
+	AvgLatencyMs       int64     `json:"avg_latency_ms"`
+	RequestCount       int64     `json:"request_count"`
+	RecentSuccessRates []float64 `json:"recent_success_rates"`
+}
+
+type RankingSecurityResponse struct {
+	Bans    []RankingAutoBan `json:"bans"`
+	IPUsers *[]RankingUserIP `json:"ip_users,omitempty"`
+}
+
+type RankingAutoBan struct {
+	Username          string `json:"username"`
+	BanCount          int64  `json:"ban_count"`
+	LatestBanAt       int64  `json:"latest_ban_at"`
+	LongestBanMinutes int    `json:"longest_ban_minutes"`
+	LatestRule        string `json:"latest_rule"`
+	LatestStatus      string `json:"latest_status"`
+}
+
+type RankingUserIP struct {
+	UserID       int    `json:"user_id"`
+	Username     string `json:"username"`
+	IPCount      int64  `json:"ip_count"`
+	RequestCount int64  `json:"request_count"`
+	LastSeen     int64  `json:"last_seen"`
+}
+
 type ModelHistoryPoint struct {
 	Ts     string `json:"ts"`
 	Label  string `json:"label"`
@@ -123,43 +161,6 @@ type rankingPeriodConfig struct {
 type rankingCacheItem struct {
 	expiresAt time.Time
 	data      *RankingsResponse
-}
-
-type RankingAvailabilityResponse struct {
-	GeneratedAt int64                      `json:"generated_at"`
-	Models      []RankingModelAvailability `json:"models"`
-}
-
-type RankingModelAvailability struct {
-	ModelName          string    `json:"model_name"`
-	Vendor             string    `json:"vendor"`
-	VendorIcon         string    `json:"vendor_icon,omitempty"`
-	SuccessRate        float64   `json:"success_rate"`
-	AvgLatencyMs       int64     `json:"avg_latency_ms"`
-	RequestCount       int64     `json:"request_count"`
-	RecentSuccessRates []float64 `json:"recent_success_rates"`
-}
-
-type RankingSecurityResponse struct {
-	Bans    []RankingAutoBan `json:"bans"`
-	IPUsers *[]RankingUserIP `json:"ip_users,omitempty"`
-}
-
-type RankingAutoBan struct {
-	Username          string `json:"username"`
-	BanCount          int64  `json:"ban_count"`
-	LatestBanAt       int64  `json:"latest_ban_at"`
-	LongestBanMinutes int    `json:"longest_ban_minutes"`
-	LatestRule        string `json:"latest_rule"`
-	LatestStatus      string `json:"latest_status"`
-}
-
-type RankingUserIP struct {
-	UserID       int    `json:"user_id"`
-	Username     string `json:"username"`
-	IPCount      int64  `json:"ip_count"`
-	RequestCount int64  `json:"request_count"`
-	LastSeen     int64  `json:"last_seen"`
 }
 
 type rankingAvailabilityCacheItem struct {
@@ -296,10 +297,34 @@ func GetRankingSecurity(period string, banSort string, includeIPRanking bool) (*
 	rankingCacheMu.Unlock()
 
 	startTime, endTime := rankingTimeRange(config, now)
-
-	// AutoBan ranking is not available in this build (AutoBan system not migrated).
-	// The bans list is always empty; IP ranking below still works from the logs table.
-	bans := []RankingAutoBan{}
+	banRows, latestByUser, err := model.GetAutoBanRanking(startTime, endTime, banSort, rankingSecurityLimit)
+	if err != nil {
+		return nil, err
+	}
+	bans := make([]RankingAutoBan, 0, len(banRows))
+	for _, row := range banRows {
+		latest := latestByUser[row.UserId]
+		username := latest.Username
+		if username == "" {
+			username = row.Username
+		}
+		longestMinutes := row.LongestBanMinutes
+		if row.HasPermanentBan {
+			longestMinutes = -1
+		}
+		status := latest.Status
+		if status == model.AutoBanRecordStatusActive && latest.ExpiresAt > 0 && latest.ExpiresAt <= now.Unix() {
+			status = model.AutoBanRecordStatusExpired
+		}
+		bans = append(bans, RankingAutoBan{
+			Username:          maskRankingUsername(username),
+			BanCount:          row.BanCount,
+			LatestBanAt:       row.LatestBanAt,
+			LongestBanMinutes: longestMinutes,
+			LatestRule:        latest.RuleType,
+			LatestStatus:      status,
+		})
+	}
 
 	response := &RankingSecurityResponse{Bans: bans}
 	if !includeIPRanking {
@@ -346,11 +371,7 @@ func maskRankingUsername(username string) string {
 	case 3, 4:
 		return string(name[0]) + strings.Repeat("*", len(name)-2) + string(name[len(name)-1])
 	default:
-		maskLen := 3
-		if len(name)-4 > maskLen {
-			maskLen = len(name) - 4
-		}
-		return string(name[:2]) + strings.Repeat("*", maskLen) + string(name[len(name)-2:])
+		return string(name[:2]) + strings.Repeat("*", max(3, len(name)-4)) + string(name[len(name)-2:])
 	}
 }
 
@@ -707,9 +728,7 @@ func sortedRankingBuckets(bucketSet map[int64]struct{}) []int64 {
 	for bucket := range bucketSet {
 		buckets = append(buckets, bucket)
 	}
-	sort.Slice(buckets, func(i, j int) bool {
-		return buckets[i] < buckets[j]
-	})
+	slices.Sort(buckets)
 	return buckets
 }
 

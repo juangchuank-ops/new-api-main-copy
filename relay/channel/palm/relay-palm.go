@@ -7,11 +7,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -90,10 +90,10 @@ func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError,
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case data := <-dataChan:
-			c.Render(-1, &common.CustomEvent{Data: "data: " + data})
+			c.Render(-1, common.CustomEvent{Data: "data: " + data})
 			return true
 		case <-stopChan:
-			c.Render(-1, &common.CustomEvent{Data: "data: [DONE]"})
+			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
 			return false
 		}
 	})

@@ -71,4 +71,22 @@ export function AdminRoute({ children }) {
   return <Navigate to='/forbidden' replace />;
 }
 
+// 超级管理员专用守卫：部分接口（如任务插件）只允许 root 访问，
+// 权限管理员（role 5~99）即使通过 AdminRoute 也会被后端拒绝。
+export function RootRoute({ children }) {
+  const raw = localStorage.getItem('user');
+  if (!raw || isSessionExpired()) {
+    return <Navigate to='/login' state={{ from: history.location }} />;
+  }
+  try {
+    const user = JSON.parse(raw);
+    if (user && typeof user.role === 'number' && user.role >= 100) {
+      return children;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return <Navigate to='/forbidden' replace />;
+}
+
 export { PrivateRoute };

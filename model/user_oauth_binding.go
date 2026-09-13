@@ -109,9 +109,6 @@ func UpdateUserOAuthBinding(userId, providerId int, newProviderUserId string) er
 	// Check if the new provider user ID is already taken by another user
 	var existingBinding UserOAuthBinding
 	err := DB.Where("provider_id = ? AND provider_user_id = ?", providerId, newProviderUserId).First(&existingBinding).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
 	if err == nil && existingBinding.UserId != userId {
 		return errors.New("this OAuth account is already bound to another user")
 	}
@@ -120,15 +117,12 @@ func UpdateUserOAuthBinding(userId, providerId int, newProviderUserId string) er
 	var binding UserOAuthBinding
 	err = DB.Where("user_id = ? AND provider_id = ?", userId, providerId).First(&binding).Error
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// No existing binding, create new one
-			return CreateUserOAuthBinding(&UserOAuthBinding{
-				UserId:         userId,
-				ProviderId:     providerId,
-				ProviderUserId: newProviderUserId,
-			})
-		}
-		return err
+		// No existing binding, create new one
+		return CreateUserOAuthBinding(&UserOAuthBinding{
+			UserId:         userId,
+			ProviderId:     providerId,
+			ProviderUserId: newProviderUserId,
+		})
 	}
 
 	// Update existing binding

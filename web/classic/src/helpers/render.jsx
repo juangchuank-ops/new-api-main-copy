@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import i18next from 'i18next';
 import { Modal, Tag, Typography, Avatar } from '@douyinfe/semi-ui';
+import { IconComponent } from '@douyinfe/semi-icons';
 import { copy, showSuccess } from './utils';
 import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
 import {
@@ -61,6 +62,11 @@ import {
   Jimeng,
   Perplexity,
   Replicate,
+  Codex,
+  ClaudeCode,
+  CodeBuddy,
+  NewAPI,
+  Vercel,
 } from '@lobehub/icons';
 
 import {
@@ -87,6 +93,9 @@ import {
   Fingerprint,
   LifeBuoy,
   ClipboardList,
+  ScrollText,
+  Palette,
+  Puzzle,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -174,6 +183,12 @@ export function getLucideIcon(key, selected = false) {
       return <ShieldBan {...commonProps} color={iconColor} />;
     case 'ip-ban':
       return <ShieldBan {...commonProps} color={iconColor} />;
+    case 'audit':
+      return <ScrollText {...commonProps} color={iconColor} />;
+    case 'drawing':
+      return <Palette {...commonProps} color={iconColor} />;
+    case 'task-plugins':
+      return <Puzzle {...commonProps} color={iconColor} />;
     default:
       return <CircleUser {...commonProps} color={iconColor} />;
   }
@@ -427,6 +442,21 @@ export function getChannelIcon(channelType) {
       return <Doubao.Color size={iconSize} />;
     case 56: // Replicate
       return <Replicate size={iconSize} />;
+    case 58: // Advanced Custom
+    case 60: // New API
+      return <NewAPI.Color size={iconSize} />;
+    case 59: // Sub2API：@lobehub/icons 无该品牌图标，保持无图标
+      return null;
+    case 61: // Codex（Codex Compatibility）
+      return <Codex.Color size={iconSize} />;
+    case 62: // Claude Code
+      return <ClaudeCode.Color size={iconSize} />;
+    case 63: // CodeBuddy
+      return <CodeBuddy.Color size={iconSize} />;
+    case 64: // Vercel AI Gateway
+      return <Vercel size={iconSize} />;
+    case 65: // Task Plugin（任务插件，无品牌图标，使用通用组件图标）
+      return <IconComponent size={iconSize} />;
     case 8: // 自定义渠道
     case 22: // 知识库：FastGPT
       return <FastGPT.Color size={iconSize} />;

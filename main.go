@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,8 +23,10 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -49,7 +55,14 @@ var classicBuildFS embed.FS
 var classicIndexPage []byte
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "plugin" {
+		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	startTime := time.Now()
+	kitutil.SetLogging(common.SysLog, func(message string) {
+		logger.LogError(nil, message)
+	})
+	kitutil.SetSystemErrorLogging(common.SysError)
 
 	err := InitResources()
 	if err != nil {
@@ -64,6 +77,8 @@ func main() {
 	if common.DebugEnabled {
 		common.SysLog("running in debug mode")
 	}
+
+	kitutil.Debug.Store(common.DebugEnabled)
 
 	defer func() {
 		err := model.CloseDB()
@@ -98,8 +113,13 @@ func main() {
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 
+	// Warm pricing after channel cache initialization so Advanced Custom
+	// endpoint inference can read cached route settings on first request.
+	model.GetPricing()
+
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
+	go controller.SyncTaskPlugins()
 
 	// 周期性重载授权策略，保证多节点/多 master 部署下权限变更能传播到每个实例
 	go authz.StartPolicySync(common.SyncFrequency)
@@ -134,6 +154,9 @@ func main() {
 			return nil
 		}
 		return a
+	}
+	service.GetTaskPluginAdaptorFunc = func(key string) service.TaskPollingAdaptor {
+		return relay.GetTaskPluginAdaptor(key)
 	}
 
 	// Register the periodic channel test, upstream model update, and async task
@@ -182,7 +205,7 @@ func main() {
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
-	server.Use(middleware.PoweredBy())
+	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
 	middleware.SetUpLogger(server)
 	// Initialize session store
@@ -195,14 +218,13 @@ func main() {
 		SameSite: http.SameSiteStrictMode,
 	})
 	server.Use(sessions.Sessions("session", store))
-
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
 
 	// 设置路由
-	router.SetRouter(server, router.ThemeAssets{
-		DefaultBuildFS:   buildFS,
-		DefaultIndexPage: indexPage,
+	router.SetRouter(server, router.WebAssets{
+		BuildFS:          buildFS,
+		IndexPage:        indexPage,
 		ClassicBuildFS:   classicBuildFS,
 		ClassicIndexPage: classicIndexPage,
 	})
@@ -211,13 +233,38 @@ func main() {
 		port = strconv.Itoa(*common.Port)
 	}
 
-	// Log startup success message
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: server,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			common.FatalLog("failed to start HTTP server: " + err.Error())
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
 	common.LogStartupSuccess(startTime, port)
 
-	err = server.Run(":" + port)
-	if err != nil {
-		common.FatalLog("failed to start HTTP server: " + err.Error())
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+
+	// SSE streams may run for minutes; give them time to finish before forced exit
+	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
+	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
+	if common.DataExportEnabled {
+		model.SaveQuotaDataCache()
+	}
+	common.SysLog("server exited")
 }
 
 func InjectUmamiAnalytics() {
@@ -271,7 +318,7 @@ func InitResources() error {
 	err := godotenv.Load(".env")
 	if err != nil {
 		if common.DebugEnabled {
-			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables.")
+			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant environment variables.")
 		}
 	}
 
@@ -297,36 +344,27 @@ func InitResources() error {
 		common.FatalLog("failed to initialize authorization: " + err.Error())
 		return err
 	}
+	if common.PasswordLoginEncryptionEnabled {
+		if err = model.InitPasswordEncryption(); err != nil {
+			common.FatalLog("failed to initialize password encryption: " + err.Error())
+			return err
+		}
+	}
 
 	model.CheckSetup()
 
-	// Seed canonical pricing option rows before InitOptionMap loads persisted
-	// values. Only missing rows are created; existing admin values are never
-	// overwritten (uses OnConflict DoNothing).
+	// Initialize options, should after model.InitDB()
+	if common.IsMasterNode {
+		if err := model.MigrateRetiredFrontendOptions(); err != nil {
+			common.SysError("failed to migrate retired frontend options: " + err.Error())
+		}
+	}
 	if err := model.SeedCanonicalPricingOptions(); err != nil {
 		common.FatalLog("failed to seed canonical pricing options: " + err.Error())
 		return err
 	}
-
-	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
-
-	// 初始化小游戏（配置表 + 股市表），失败不阻塞启动
-	if err := model.InitGameConfigs(); err != nil {
-		common.SysError("failed to init game configs: " + err.Error())
-	}
-	if err := model.InitGameStocks(); err != nil {
-		common.SysError("failed to init game stocks: " + err.Error())
-	}
 	if common.IsMasterNode {
-		// 股市K线 tick：每 20 秒推进一次（内部对齐到分钟并判断交易时段）
-		gameStockTicker := time.NewTicker(20 * time.Second)
-		go func() {
-			for range gameStockTicker.C {
-				model.AdvanceGameStockTick()
-			}
-		}()
-
 		if err := model.MigrateConsoleSettingAnnouncementsToBanners(); err != nil {
 			common.SysError("failed to migrate console announcements to banners: " + err.Error())
 		}
@@ -334,9 +372,6 @@ func InitResources() error {
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
-
-	// 初始化模型
-	model.GetPricing()
 
 	// Initialize SQL Database
 	err = model.InitLogDB()
@@ -372,6 +407,8 @@ func InitResources() error {
 		common.SysError("failed to load custom OAuth providers: " + err.Error())
 		// Don't return error, custom OAuth is not critical
 	}
+
+	service.StartAuthArtifactCleanup()
 
 	return nil
 }

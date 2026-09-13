@@ -241,7 +241,7 @@ const ModelHealthCard = ({ model, t }) => {
                   className='model-health-timeline-bar'
                   key={String(point.hour) + '-' + index}
                   style={{ backgroundColor: getTimelineColor(point) }}
-                  title={title}
+                  data-tip={title}
                   aria-hidden='true'
                 />
               );

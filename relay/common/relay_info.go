@@ -10,11 +10,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	kitreasoning "github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,22 +32,15 @@ type ThinkingContentInfo struct {
 }
 
 const (
-	LastMessageTypeNone     = "none"
-	LastMessageTypeText     = "text"
-	LastMessageTypeTools    = "tools"
-	LastMessageTypeThinking = "thinking"
+	LastMessageTypeNone     = convmeta.LastMessageTypeNone
+	LastMessageTypeText     = convmeta.LastMessageTypeText
+	LastMessageTypeTools    = convmeta.LastMessageTypeTools
+	LastMessageTypeThinking = convmeta.LastMessageTypeThinking
 )
 
-type ClaudeConvertInfo struct {
-	LastMessagesType string
-	Index            int
-	Usage            *dto.Usage
-	FinishReason     string
-	Done             bool
-
-	ToolCallBaseIndex      int
-	ToolCallMaxIndexOffset int
-}
+// ClaudeConvertInfo now lives with the converters (convmeta); the alias keeps
+// host code and adaptors compiling unchanged.
+type ClaudeConvertInfo = convmeta.ClaudeConvertInfo
 
 type RerankerInfo struct {
 	Documents       []any
@@ -72,13 +68,57 @@ type ChannelMeta struct {
 	ApiKey               string
 	Organization         string
 	ChannelCreateTime    int64
-	ParamOverride        map[string]interface{}
-	HeadersOverride      map[string]interface{}
+	ParamOverride        map[string]any
+	HeadersOverride      map[string]any
 	ChannelSetting       dto.ChannelSettings
 	ChannelOtherSettings dto.ChannelOtherSettings
 	UpstreamModelName    string
 	IsModelMapped        bool
 	SupportStreamOptions bool // 是否支持流式选项
+}
+
+// CodexCompatibilityTestIdentity contains the request-scoped synthetic
+// identity used only by channel-test Responses probes. It deliberately holds
+// no credentials or host-specific data.
+type CodexCompatibilityTestIdentity struct {
+	SessionID       string
+	ThreadID        string
+	ClientRequestID string
+	InstallationID  string
+	WindowID        string
+	TurnID          string
+	RootTurnID      string
+	PromptCacheKey  string
+	TurnMetadata    string
+}
+
+type codexCompatibilityTurnMetadata struct {
+	InstallationID             string                                 `json:"installation_id"`
+	SessionID                  string                                 `json:"session_id"`
+	ThreadID                   string                                 `json:"thread_id"`
+	AgentName                  string                                 `json:"agent_name"`
+	TurnID                     string                                 `json:"turn_id"`
+	WindowID                   string                                 `json:"window_id"`
+	RequestKind                string                                 `json:"request_kind"`
+	RootTurnID                 string                                 `json:"root_turn_id"`
+	ThreadSource               string                                 `json:"thread_source"`
+	Sandbox                    string                                 `json:"sandbox"`
+	SandboxMode                string                                 `json:"sandbox_mode"`
+	AutoReviewEnabled          bool                                   `json:"auto_review_enabled"`
+	NodeReplAutoReviewRequired bool                                   `json:"node_repl_auto_review_required"`
+	NodeReplDisabled           bool                                   `json:"node_repl_disabled"`
+	Workspaces                 map[string]codexCompatibilityWorkspace `json:"workspaces"`
+	TurnStartedAtUnixMS        int64                                  `json:"turn_started_at_unix_ms"`
+}
+
+type codexCompatibilityWorkspace struct {
+	AssociatedRemoteURLs codexCompatibilityAssociatedRemoteURLs `json:"associated_remote_urls"`
+	LatestGitCommitHash  string                                 `json:"latest_git_commit_hash"`
+	HasChanges           bool                                   `json:"has_changes"`
+}
+
+type codexCompatibilityAssociatedRemoteURLs struct {
+	Origin string `json:"origin"`
 }
 
 type TokenCountMeta struct {
@@ -102,38 +142,47 @@ type RelayInfo struct {
 	IsGeminiBatchEmbedding bool
 	IsPlayground           bool
 	UsePrice               bool
-	// P3 relay-runtime ClientIdentity：DisableChannelTestClientProfile 允许渠道测试时关闭 client profile。
-	// ShouldUseChannelTestStyle 据此决定是否应用 ClientIdentity（普通转发默认应用）。
-	// IsChannelTest 复用旧版既有字段（见本 struct 后段 IsChannelTest bool）。
-	DisableChannelTestClientProfile bool
-	claudeCodeSessionID             string
-	RelayMode                       int
-	OriginModelName                 string
-	RequestURLPath                  string
-	RequestHeaders                  map[string]string
-	ShouldIncludeUsage              bool
-	DisablePing                     bool // 是否禁止向下游发送自定义 Ping
-	ClientWs                        *websocket.Conn
-	TargetWs                        *websocket.Conn
-	InputAudioFormat                string
-	OutputAudioFormat               string
-	RealtimeTools                   []dto.RealTimeTool
-	IsFirstRequest                  bool
-	AudioUsage                      bool
-	ReasoningEffort                 string
-	UserSetting                     dto.UserSetting
-	UserEmail                       string
-	UserQuota                       int
-	RelayFormat                     types.RelayFormat
-	SendResponseCount               int
-	ReceivedResponseCount           int
-	FinalPreConsumedQuota           int // 最终预消耗的配额
+	RelayMode              int
+	OriginModelName        string
+
+	// BillingModelName is the pricing identity for this request. It is kept
+	// separate from OriginModelName and UpstreamModelName so virtual pricing
+	// aliases never participate in channel selection or upstream routing.
+	BillingModelName string
+
+	RequestURLPath     string
+	RequestHeaders     map[string]string
+	ShouldIncludeUsage bool
+	DisablePing        bool // 是否禁止向下游发送自定义 Ping
+	ClientWs           *websocket.Conn
+	TargetWs           *websocket.Conn
+	InputAudioFormat   string
+	OutputAudioFormat  string
+	RealtimeTools      []dto.RealTimeTool
+	IsFirstRequest     bool
+	AudioUsage         bool
+	ReasoningEffort    string
+	// ReasoningConversion is the suffix-derived reasoning intent attached
+	// after model mapping. Converters read it via ReasoningState().
+	ReasoningConversion *dto.ReasoningConversionState
+	UserSetting         dto.UserSetting
+	UserEmail           string
+	UserQuota           int
+	RelayFormat         types.RelayFormat
+	SendResponseCount   int
+	// ClaudeToChatStreamState / ChatToGeminiStreamState hold per-attempt
+	// stream converters. InitChannelMeta nils them so a retry cannot resume a
+	// dirty converter (advanced tool index / finalized).
+	ClaudeToChatStreamState any
+	ChatToGeminiStreamState any
+	ReceivedResponseCount   int
+	FinalPreConsumedQuota   int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。
 	ForcePreConsume bool
 	// Billing 是计费会话，封装了预扣费/结算/退款的统一生命周期。
-	// 免费模型时为 nil。
+	// 初始免费组可为 nil；若 auto 重试切换到付费组，会在发送前创建。
 	Billing BillingSettler
 	// BillingSource indicates whether this request is billed from wallet quota or subscription.
 	// "" or "wallet" => wallet; "subscription" => subscription
@@ -154,23 +203,23 @@ type RelayInfo struct {
 	SubscriptionAmountUsedAfterPreConsume int64
 	IsClaudeBetaQuery                     bool // /v1/messages?beta=true
 	IsChannelTest                         bool // channel test request
+	DisableChannelTestClientProfile       bool // skip client-profile behavior during a channel test
 	RetryIndex                            int
 	LastError                             *types.NewAPIError
-	RuntimeHeadersOverride                map[string]interface{}
+	RuntimeHeadersOverride                map[string]any
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
 
-	// UpstreamRequestBodySize is the byte size of the marshaled upstream request
-	// body. It is set when the body is wrapped in a BodyStorage (see
-	// relay/common/outbound_body.go), so that DoApiRequest can populate
-	// http.Request.ContentLength manually (net/http only auto-detects it for
-	// *bytes.Reader/Buffer/strings.Reader). 0 means "let net/http decide".
-	UpstreamRequestBodySize int64
+	PriceData hosttypes.PriceData
 
-	PriceData types.PriceData
+	// QuotaClamp is set (non-nil) when a quota conversion saturated at the
+	// supported single-request bound (or NaN fallback) while computing this request's charge.
+	// It is surfaced onto the consume/task log's admin_info for auditing.
+	QuotaClamp *common.QuotaClamp
 
-	// TieredBillingSnapshot is a frozen snapshot of tiered billing rules
-	// captured at pre-consume time. Non-nil only when billing mode is "tiered_expr".
+	// TieredBillingSnapshot captures tiered billing rules at pre-consume time.
+	// Auto-group retries refresh its group-dependent fields before each attempt
+	// and again before settlement. Non-nil only when billing mode is "tiered_expr".
 	TieredBillingSnapshot *billingexpr.BillingSnapshot
 	BillingRequestInput   *billingexpr.RequestInput
 
@@ -185,6 +234,21 @@ type RelayInfo struct {
 
 	StreamStatus *StreamStatus
 
+	// convOptions caches the converter settings snapshot (see ConvOptions).
+	convOptions *convmeta.Options
+
+	// claudeCodeSessionID is generated only for Claude Code upstream requests.
+	// It is request-scoped and intentionally never sourced from inbound headers.
+	claudeCodeSessionID string
+
+	// codexCompatibilityTestIdentity is generated only for the channel-test
+	// Codex compatibility Responses profile and is reused by body/header setup.
+	codexCompatibilityTestIdentity *CodexCompatibilityTestIdentity
+
+	conversionDiagnostics          []types.ConversionDiagnostic
+	conversionDiagnosticKeys       map[conversionDiagnosticKey]struct{}
+	conversionDiagnosticsTruncated bool
+
 	ThinkingContentInfo
 	TokenCountMeta
 	*ClaudeConvertInfo
@@ -195,6 +259,14 @@ type RelayInfo struct {
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	info.FinalRequestRelayFormat = ""
+	info.RequestConversionChain = nil
+	info.InitRequestConversionChain()
+	// Per-attempt only. Do not clear StreamStatus, conversion diagnostics,
+	// LastError, or billing accumulators — those are request-scoped.
+	info.SendResponseCount = 0
+	info.ClaudeToChatStreamState = nil
+	info.ChatToGeminiStreamState = nil
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
@@ -239,6 +311,23 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 
 	info.ChannelMeta = channelMeta
+	if info.ChannelType == constant.ChannelTypeClaudeCode && info.ShouldUseChannelTestStyle() {
+		// Retry attempts reuse RelayInfo. Do not let a prior channel's runtime
+		// headers become trusted Claude Code overrides on this attempt.
+		info.RuntimeHeadersOverride = nil
+		info.UseRuntimeHeadersOverride = false
+	}
+
+	// Channel identity feeds the converter options snapshot (e.g.
+	// OpenRouterDialect); drop the cache so a cross-channel retry rebuilds it.
+	info.convOptions = nil
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || channelMeta.ChannelSetting.PassThroughBodyEnabled {
+		info.ReasoningEffort = ""
+		info.ReasoningConversion = nil
+	} else {
+		info.ReasoningEffort = reasoningEffortFromRequest(info.Request)
+		info.ReasoningConversion = nil
+	}
 
 	// reset some fields based on channel meta
 	// 重置某些字段，例如模型名称等
@@ -261,6 +350,9 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "IsPlayground: %t, ", info.IsPlayground)
 	fmt.Fprintf(b, "RequestURLPath: %q, ", info.RequestURLPath)
 	fmt.Fprintf(b, "OriginModelName: %q, ", info.OriginModelName)
+	if info.BillingModelName != "" && info.BillingModelName != info.OriginModelName {
+		fmt.Fprintf(b, "BillingModelName: %q, ", info.BillingModelName)
+	}
 	fmt.Fprintf(b, "EstimatePromptTokens: %d, ", info.estimatePromptTokens)
 	fmt.Fprintf(b, "ShouldIncludeUsage: %t, ", info.ShouldIncludeUsage)
 	fmt.Fprintf(b, "DisablePing: %t, ", info.DisablePing)
@@ -324,25 +416,32 @@ func (info *RelayInfo) ToString() string {
 
 // 定义支持流式选项的通道类型
 var streamSupportedChannels = map[int]bool{
-	constant.ChannelTypeOpenAI:         true,
-	constant.ChannelTypeAnthropic:      true,
-	constant.ChannelTypeAws:            true,
-	constant.ChannelTypeGemini:         true,
-	constant.ChannelCloudflare:         true,
-	constant.ChannelTypeAzure:          true,
-	constant.ChannelTypeVolcEngine:     true,
-	constant.ChannelTypeOllama:         true,
-	constant.ChannelTypeXai:            true,
-	constant.ChannelTypeDeepSeek:       true,
-	constant.ChannelTypeBaiduV2:        true,
-	constant.ChannelTypeZhipu_v4:       true,
-	constant.ChannelTypeAli:            true,
-	constant.ChannelTypeSubmodel:       true,
-	constant.ChannelTypeCodex:          true,
-	constant.ChannelTypeMoonshot:       true,
-	constant.ChannelTypeMiniMax:        true,
-	constant.ChannelTypeSiliconFlow:    true,
-	constant.ChannelTypeAdvancedCustom: true,
+	constant.ChannelTypeOpenAI:             true,
+	constant.ChannelTypeCodeBuddy:          true,
+	constant.ChannelTypeAnthropic:          true,
+	constant.ChannelTypeAws:                true,
+	constant.ChannelTypeGemini:             true,
+	constant.ChannelCloudflare:             true,
+	constant.ChannelTypeAzure:              true,
+	constant.ChannelTypeVolcEngine:         true,
+	constant.ChannelTypeOllama:             true,
+	constant.ChannelTypeXai:                true,
+	constant.ChannelTypeDeepSeek:           true,
+	constant.ChannelTypeBaiduV2:            true,
+	constant.ChannelTypeZhipu_v4:           true,
+	constant.ChannelTypeAli:                true,
+	constant.ChannelTypeSubmodel:           true,
+	constant.ChannelTypeCodex:              true,
+	constant.ChannelTypeMoonshot:           true,
+	constant.ChannelTypeMiniMax:            true,
+	constant.ChannelTypeSiliconFlow:        true,
+	constant.ChannelTypeAdvancedCustom:     true,
+	constant.ChannelTypeSub2API:            true,
+	constant.ChannelTypeNewAPI:             true,
+	constant.ChannelTypeCodexCompatibility: true,
+	constant.ChannelTypeClaudeCode:         true,
+	constant.ChannelTypeTencent:            true,
+	constant.ChannelTypeVercel:             true,
 }
 
 func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {
@@ -437,6 +536,40 @@ func GenRelayInfoOpenAI(c *gin.Context, request dto.Request) *RelayInfo {
 	return info
 }
 
+func reasoningEffortFromRequest(request dto.Request) string {
+	var effort string
+	switch req := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if req == nil {
+			return ""
+		}
+		effort = req.ReasoningEffort
+		if strings.TrimSpace(effort) == "" && len(req.Reasoning) > 0 {
+			value := gjson.GetBytes(req.Reasoning, "effort")
+			if value.Type == gjson.String {
+				effort = value.String()
+			}
+		}
+	case *dto.OpenAIResponsesRequest:
+		if req != nil && req.Reasoning != nil {
+			effort = req.Reasoning.Effort
+		}
+	case *dto.ClaudeRequest:
+		if req != nil {
+			effort = req.GetEfforts()
+		}
+	case *dto.GeminiChatRequest:
+		if req != nil && req.GenerationConfig.ThinkingConfig != nil {
+			config := req.GenerationConfig.ThinkingConfig
+			effort = config.ThinkingLevel
+			if effort == "" && config.ThinkingBudget != nil {
+				effort = string(kitreasoning.EffortFromBudget(*config.ThinkingBudget))
+			}
+		}
+	}
+	return strings.TrimSpace(effort)
+}
+
 func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 
 	//channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
@@ -457,7 +590,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	isStream := false
 
 	if request != nil {
-		isStream = request.IsStream(c)
+		isStream = request.IsStream(c.Request)
 	}
 	c.Set(string(constant.ContextKeyIsStream), isStream)
 
@@ -467,8 +600,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if reqId == "" {
 		reqId = common.NewRequestId()
 	}
+	reasoningEffort := reasoningEffortFromRequest(request)
+	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	info := &RelayInfo{
-		Request: request,
+		Request:         request,
+		ReasoningEffort: reasoningEffort,
 
 		RequestId:  reqId,
 		UserId:     common.GetContextKeyInt(c, constant.ContextKeyUserId),
@@ -477,7 +613,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
-		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
+		OriginModelName: originModelName,
 
 		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
@@ -655,8 +791,6 @@ func GenRelayInfoResponsesCompaction(c *gin.Context, request *dto.OpenAIResponse
 	return info
 }
 
-// GenRelayInfoAlphaSearch builds a RelayInfo for the standalone Codex web
-// search endpoint (/v1/alpha/search). Mirrors new-api-reference/relay/common/relay_info.go.
 func GenRelayInfoAlphaSearch(c *gin.Context, request *dto.AlphaSearchRequest) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	if info.RelayMode == relayconstant.RelayModeUnknown {
@@ -679,11 +813,237 @@ func GenRelayInfoAlphaSearch(c *gin.Context, request *dto.AlphaSearchRequest) *R
 //}
 
 func (info *RelayInfo) SetEstimatePromptTokens(promptTokens int) {
+	if info == nil {
+		return
+	}
 	info.estimatePromptTokens = promptTokens
 }
 
+// ShouldUseChannelTestStyle preserves normal relay behavior and only disables
+// provider client profiles for channel tests that explicitly opt out.
+func (info *RelayInfo) ShouldUseChannelTestStyle() bool {
+	return info == nil || !info.IsChannelTest || !info.DisableChannelTestClientProfile
+}
+
+// ShouldUseCodexCompatibilityTestProfile identifies the narrow profile used by
+// channel-test and queue-warmup Responses probes. Normal user traffic and
+// Responses compaction are intentionally excluded.
+func (info *RelayInfo) ShouldUseCodexCompatibilityTestProfile() bool {
+	return info != nil && info.ChannelMeta != nil &&
+		info.ChannelType == constant.ChannelTypeCodexCompatibility &&
+		info.IsChannelTest && info.ShouldUseChannelTestStyle() &&
+		info.RelayMode == relayconstant.RelayModeResponses
+}
+
+// EnsureCodexCompatibilityTestIdentity returns one stable synthetic identity
+// for the current channel-test request. The identity is never sourced from
+// client headers and is generated only for the narrow compatibility profile.
+func (info *RelayInfo) EnsureCodexCompatibilityTestIdentity() *CodexCompatibilityTestIdentity {
+	if !info.ShouldUseCodexCompatibilityTestProfile() {
+		return nil
+	}
+	if info.codexCompatibilityTestIdentity == nil {
+		sessionID := uuid.NewString()
+		turnStartedAtUnixMS := int64(0)
+		if !info.StartTime.IsZero() {
+			turnStartedAtUnixMS = info.StartTime.UnixMilli()
+		}
+		identity := &CodexCompatibilityTestIdentity{
+			SessionID:       sessionID,
+			ThreadID:        sessionID,
+			ClientRequestID: sessionID,
+			InstallationID:  uuid.NewString(),
+			WindowID:        sessionID + ":0",
+			TurnID:          uuid.NewString(),
+			RootTurnID:      uuid.NewString(),
+			PromptCacheKey:  sessionID,
+		}
+		turnMetadata, _ := json.Marshal(codexCompatibilityTurnMetadata{
+			InstallationID:             identity.InstallationID,
+			SessionID:                  identity.SessionID,
+			ThreadID:                   identity.ThreadID,
+			AgentName:                  "/root",
+			TurnID:                     identity.TurnID,
+			WindowID:                   identity.WindowID,
+			RequestKind:                "turn",
+			RootTurnID:                 identity.RootTurnID,
+			ThreadSource:               "user",
+			Sandbox:                    "none",
+			SandboxMode:                "danger-full-access",
+			AutoReviewEnabled:          false,
+			NodeReplAutoReviewRequired: false,
+			NodeReplDisabled:           false,
+			Workspaces: map[string]codexCompatibilityWorkspace{
+				"/workspace": {
+					AssociatedRemoteURLs: codexCompatibilityAssociatedRemoteURLs{
+						Origin: "https://example.invalid/origin.git",
+					},
+					LatestGitCommitHash: strings.Repeat("0", 40),
+					HasChanges:          false,
+				},
+			},
+			TurnStartedAtUnixMS: turnStartedAtUnixMS,
+		})
+		identity.TurnMetadata = string(turnMetadata)
+		info.codexCompatibilityTestIdentity = identity
+	}
+	return info.codexCompatibilityTestIdentity
+}
+
+// EnsureClaudeCodeSessionID lazily creates the upstream-only session identity
+// used by Claude Code. Retries sharing this RelayInfo reuse the same value.
+func (info *RelayInfo) EnsureClaudeCodeSessionID() string {
+	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeClaudeCode {
+		return ""
+	}
+	if info.claudeCodeSessionID == "" {
+		info.claudeCodeSessionID = uuid.NewString()
+	}
+	return info.claudeCodeSessionID
+}
+
 func (info *RelayInfo) GetEstimatePromptTokens() int {
+	if info == nil {
+		return 0
+	}
 	return info.estimatePromptTokens
+}
+
+// ---------------------------------------------------------------------------
+// convmeta.Meta implementation — the view format converters see. Keep these
+// thin: they only expose protocol state, never billing/user fields.
+// ---------------------------------------------------------------------------
+
+var _ convmeta.Meta = (*RelayInfo)(nil)
+
+func (info *RelayInfo) GetOriginModelName() string {
+	if info == nil {
+		return ""
+	}
+	return info.OriginModelName
+}
+
+// GetBillingModelName returns the effective pricing identity without changing
+// either the client-visible model or the model sent to the selected channel.
+func (info *RelayInfo) GetBillingModelName() string {
+	if info == nil {
+		return ""
+	}
+	if info.BillingModelName != "" {
+		return info.BillingModelName
+	}
+	return info.OriginModelName
+}
+
+func (info *RelayInfo) GetUpstreamModelName() string {
+	if info == nil || info.ChannelMeta == nil {
+		return ""
+	}
+	return info.UpstreamModelName
+}
+
+func (info *RelayInfo) HasChannelMeta() bool { return info != nil && info.ChannelMeta != nil }
+
+func (info *RelayInfo) GetChannelID() int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return info.ChannelId
+}
+
+func (info *RelayInfo) GetChannelType() int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return info.ChannelType
+}
+
+func (info *RelayInfo) GetIsStream() bool {
+	return info != nil && info.IsStream
+}
+
+func (info *RelayInfo) GetReasoningEffort() string {
+	if info == nil {
+		return ""
+	}
+	return info.ReasoningEffort
+}
+
+func (info *RelayInfo) SetReasoningEffort(effort string) {
+	if info == nil {
+		return
+	}
+	info.ReasoningEffort = strings.TrimSpace(effort)
+}
+
+func (info *RelayInfo) ReasoningState() *dto.ReasoningConversionState {
+	if info == nil {
+		return nil
+	}
+	return info.ReasoningConversion
+}
+
+func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
+	if info == nil {
+		return &convmeta.ClaudeConvertInfo{
+			LastMessagesType: convmeta.LastMessageTypeNone,
+		}
+	}
+	if info.ClaudeConvertInfo == nil {
+		info.ClaudeConvertInfo = &convmeta.ClaudeConvertInfo{
+			LastMessagesType: convmeta.LastMessageTypeNone,
+		}
+	}
+	return info.ClaudeConvertInfo
+}
+
+func (info *RelayInfo) GetSendResponseCount() int {
+	if info == nil {
+		return 0
+	}
+	return info.SendResponseCount
+}
+
+func (info *RelayInfo) IncrSendResponseCount() {
+	if info == nil {
+		return
+	}
+	info.SendResponseCount++
+}
+
+// ConvOptions snapshots host settings for the converters. Rebuilt on each
+// call site's first use; cached so one relay session sees one snapshot.
+func (info *RelayInfo) ConvOptions() *convmeta.Options {
+	if info != nil && info.convOptions != nil {
+		return info.convOptions
+	}
+
+	claudeSettings := model_setting.GetClaudeSettings()
+	geminiSettings := model_setting.GetGeminiSettings()
+	options := &convmeta.Options{
+		Claude: convmeta.ClaudeOptions{
+			ThinkingAdapterEnabled:                claudeSettings.ThinkingAdapterEnabled,
+			ThinkingAdapterBudgetTokensPercentage: claudeSettings.ThinkingAdapterBudgetTokensPercentage,
+			DefaultMaxTokens:                      claudeSettings.GetDefaultMaxTokens,
+		},
+		Gemini: convmeta.GeminiOptions{
+			ThinkingAdapterEnabled:                geminiSettings.ThinkingAdapterEnabled,
+			ThinkingAdapterBudgetTokensPercentage: geminiSettings.ThinkingAdapterBudgetTokensPercentage,
+			FunctionCallThoughtSignatureEnabled:   geminiSettings.FunctionCallThoughtSignatureEnabled,
+			SupportsImagine:                       model_setting.IsGeminiModelSupportImagine,
+			SafetySetting:                         model_setting.GetGeminiSafetySetting,
+		},
+		OpenRouterDialect:      info != nil && info.GetChannelType() == constant.ChannelTypeOpenRouter,
+		PreserveThinkingSuffix: model_setting.ShouldPreserveThinkingSuffix,
+		PreserveEffortTail:     model_setting.ShouldPreserveEffortTail,
+	}
+	if info != nil {
+		if info.ChannelMeta != nil {
+			options.ToolLossPolicy = types.ConversionLossPolicy(info.ChannelOtherSettings.ToolLossPolicy)
+		}
+		info.convOptions = options
+	}
+	return options
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {
@@ -697,6 +1057,14 @@ func (info *RelayInfo) HasSendResponse() bool {
 	return info.FirstResponseTime.After(info.StartTime)
 }
 
+type OriginTaskRef struct {
+	TaskID         string
+	UpstreamTaskID string
+	Action         string
+	Status         string
+	Data           []byte
+}
+
 type TaskRelayInfo struct {
 	Action       string
 	OriginTaskID string
@@ -706,6 +1074,10 @@ type TaskRelayInfo struct {
 
 	ConsumeQuota bool
 
+	// OriginTasks are plugin-declared public-task dependencies resolved by the
+	// host. Driver hooks receive these as ctx.originTasks; presenters do not.
+	OriginTasks []OriginTaskRef
+
 	// LockedChannel holds the full channel object when the request is bound to
 	// a specific channel (e.g., remix on origin task's channel). Stored as any
 	// to avoid an import cycle with model; callers type-assert to *model.Channel.
@@ -713,16 +1085,16 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt         string         `json:"prompt"`
+	Model          string         `json:"model,omitempty"`
+	Mode           string         `json:"mode,omitempty"`
+	Image          string         `json:"image,omitempty"`
+	Images         []string       `json:"images,omitempty"`
+	Size           string         `json:"size,omitempty"`
+	Duration       int            `json:"duration,omitempty"`
+	Seconds        string         `json:"seconds,omitempty"`
+	InputReference string         `json:"input_reference,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -764,14 +1136,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	if len(aux.Metadata) > 0 {
 		var metadataStr string
 		if err := common.Unmarshal(aux.Metadata, &metadataStr); err == nil && metadataStr != "" {
-			var metadataObj map[string]interface{}
+			var metadataObj map[string]any
 			if err := common.Unmarshal([]byte(metadataStr), &metadataObj); err == nil {
 				t.Metadata = metadataObj
 				return nil
 			}
 		}
 
-		var metadataObj map[string]interface{}
+		var metadataObj map[string]any
 		if err := common.Unmarshal(aux.Metadata, &metadataObj); err == nil {
 			t.Metadata = metadataObj
 		}
@@ -795,15 +1167,18 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code             int    `json:"code"`
-	TaskID           string `json:"task_id"`
-	Status           string `json:"status"`
-	Reason           string `json:"reason,omitempty"`
-	Url              string `json:"url,omitempty"`
-	RemoteUrl        string `json:"remote_url,omitempty"`
-	Progress         string `json:"progress,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Code             int                `json:"code"`
+	TaskID           string             `json:"task_id"`
+	Status           string             `json:"status"`
+	Reason           string             `json:"reason,omitempty"`
+	Url              string             `json:"url,omitempty"`
+	RemoteUrl        string             `json:"remote_url,omitempty"`
+	Progress         string             `json:"progress,omitempty"`
+	CompletionTokens int                `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int                `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	UsageFacts       map[string]any     `json:"usage_facts,omitempty"`
+	PluginState      json.RawMessage    `json:"plugin_state,omitempty"`
+	QuotaClamp       *common.QuotaClamp `json:"-"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {
@@ -828,7 +1203,7 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 		return jsonData, nil
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := common.Unmarshal(jsonData, &data); err != nil {
 		common.SysError("RemoveDisabledFields Unmarshal error :" + err.Error())
 		return jsonData, nil
@@ -872,7 +1247,7 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 	// 默认移除 stream_options.include_obfuscation，除非明确允许（避免关闭响应流混淆保护）
 	if !channelOtherSettings.AllowIncludeObfuscation {
 		if streamOptionsAny, exists := data["stream_options"]; exists {
-			if streamOptions, ok := streamOptionsAny.(map[string]interface{}); ok {
+			if streamOptions, ok := streamOptionsAny.(map[string]any); ok {
 				if _, includeExists := streamOptions["include_obfuscation"]; includeExists {
 					delete(streamOptions, "include_obfuscation")
 				}
@@ -919,7 +1294,7 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 		return jsonData, nil
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := common.Unmarshal(jsonData, &data); err != nil {
 		common.SysError("RemoveGeminiDisabledFields Unmarshal error: " + err.Error())
 		return jsonData, nil
@@ -927,18 +1302,18 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 
 	// Process contents array
 	// Handle both camelCase (functionResponse) and snake_case (function_response)
-	if contents, ok := data["contents"].([]interface{}); ok {
+	if contents, ok := data["contents"].([]any); ok {
 		for _, content := range contents {
-			if contentMap, ok := content.(map[string]interface{}); ok {
-				if parts, ok := contentMap["parts"].([]interface{}); ok {
+			if contentMap, ok := content.(map[string]any); ok {
+				if parts, ok := contentMap["parts"].([]any); ok {
 					for _, part := range parts {
-						if partMap, ok := part.(map[string]interface{}); ok {
+						if partMap, ok := part.(map[string]any); ok {
 							// Check functionResponse (camelCase)
-							if funcResp, ok := partMap["functionResponse"].(map[string]interface{}); ok {
+							if funcResp, ok := partMap["functionResponse"].(map[string]any); ok {
 								delete(funcResp, "id")
 							}
 							// Check function_response (snake_case)
-							if funcResp, ok := partMap["function_response"].(map[string]interface{}); ok {
+							if funcResp, ok := partMap["function_response"].(map[string]any); ok {
 								delete(funcResp, "id")
 							}
 						}
@@ -954,23 +1329,4 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 		return jsonData, nil
 	}
 	return jsonDataAfter, nil
-}
-
-// ShouldUseChannelTestStyle 保留普通转发行为，仅在显式关闭 client profile 的渠道测试时
-// 返回 false 以跳过 ClientIdentity 应用。普通转发（非渠道测试）始终返回 true。
-// 移植自新版 MAakber/new-api（P3 relay-runtime ClientIdentity）。
-func (info *RelayInfo) ShouldUseChannelTestStyle() bool {
-	return info == nil || !info.IsChannelTest || !info.DisableChannelTestClientProfile
-}
-
-// EnsureClaudeCodeSessionID 懒创建 Claude Code 上游会话标识；同 RelayInfo 的重试复用同一值。
-// 移植自新版 MAakber/new-api（P3 relay-runtime ClientIdentity）。
-func (info *RelayInfo) EnsureClaudeCodeSessionID() string {
-	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeClaudeCode {
-		return ""
-	}
-	if info.claudeCodeSessionID == "" {
-		info.claudeCodeSessionID = uuid.NewString()
-	}
-	return info.claudeCodeSessionID
 }

@@ -34,23 +34,14 @@ func rejectChannelRequestGuard(cause error) error { return &channelRequestGuardE
 // AuthorizeChannelForUserRequest is called immediately before a user request
 // reads a channel key or contacts an upstream. Internal probes simply do not
 // call this function; no bypass is embedded in key selection.
-//
-// 方案 E 适配：通过 GetPendingAutoPriceGuardByChannel 查询替代
-// 新版的 channel.AutoPriceGuardID 指针检查。
 func AuthorizeChannelForUserRequest(channel *model.Channel) error {
 	if channel == nil {
 		return rejectChannelRequestGuard(errors.New("missing channel"))
 	}
-	// 方案 E：查询 pending guard 替代 AutoPriceGuardID 指针
-	guard, err := model.GetPendingAutoPriceGuardByChannel(channel.Id)
-	if err != nil {
-		return rejectChannelRequestGuard(err)
-	}
-	if guard == nil {
+	if channel.AutoPriceGuardID == 0 {
 		return nil
 	}
-	// 找到 pending guard，执行 CAS 标记为 used
-	result, err := model.UseChannelAutoPriceGuardCAS(guard.ID, channel.Id)
+	result, err := model.UseChannelAutoPriceGuardCAS(channel.AutoPriceGuardID, channel.Id)
 	if err != nil {
 		return rejectChannelRequestGuard(err)
 	}

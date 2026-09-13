@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useRef } from 'react';
 import {
+  Banner,
   Button,
   Col,
   Form,
@@ -36,6 +37,7 @@ import {
   showError,
   showSuccess,
   showWarning,
+  toBoolean,
 } from '../../../helpers';
 
 const { Text } = Typography;
@@ -46,6 +48,7 @@ export default function SettingsLog(props) {
   const [loadingCleanHistoryLog, setLoadingCleanHistoryLog] = useState(false);
   const [inputs, setInputs] = useState({
     LogConsumeEnabled: false,
+    'request_debug.raw_enabled': false,
     historyTimestamp: dayjs().subtract(1, 'month').toDate(),
   });
   const refForm = useRef();
@@ -183,7 +186,11 @@ export default function SettingsLog(props) {
     const currentInputs = {};
     for (let key in props.options) {
       if (Object.keys(inputs).includes(key)) {
-        currentInputs[key] = props.options[key];
+        // request_debug.raw_enabled 在 option 中以字符串 "true"/"false" 存储
+        currentInputs[key] =
+          key === 'request_debug.raw_enabled'
+            ? toBoolean(props.options[key])
+            : props.options[key];
       }
     }
     currentInputs['historyTimestamp'] = inputs.historyTimestamp;
@@ -247,6 +254,40 @@ export default function SettingsLog(props) {
                 </Spin>
               </Col>
             </Row>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'request_debug.raw_enabled'}
+                  label={t('记录原始请求诊断数据')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t(
+                    '抓取并保存原始请求体，用于排查上游兼容问题；默认关闭。',
+                  )}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      'request_debug.raw_enabled': value,
+                    });
+                  }}
+                />
+              </Col>
+            </Row>
+            {inputs['request_debug.raw_enabled'] && (
+              <Row>
+                <Col xs={24} sm={18} lg={16}>
+                  <Banner
+                    type='warning'
+                    closeIcon={null}
+                    className='!rounded-lg mb-3'
+                    description={t(
+                      '原始请求诊断会将抓取到的原始请求体写入日志数据库，其中包含用户请求内容，并可能显著增加存储占用；请仅在排查问题时临时开启。',
+                    )}
+                  />
+                </Col>
+              </Row>
+            )}
 
             <Row>
               <Button size='default' onClick={onSubmit}>

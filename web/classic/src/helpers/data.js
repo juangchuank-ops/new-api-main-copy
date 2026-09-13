@@ -56,6 +56,35 @@ export function setStatusData(data) {
   }
 }
 
+// 鉴权字段（访问令牌与会话）只在登录/刷新时由服务端下发，
+// 而 /api/user/self 等接口返回的 user 不含这些字段。
+// 因此更新 user 时必须保留既有鉴权字段，否则会把访问令牌冲掉。
+const AUTH_FIELDS = ['token', 'token_type', 'access_expires_at', 'session'];
+
+export function getStoredUser() {
+  const raw = localStorage.getItem('user');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
 export function setUserData(data) {
-  localStorage.setItem('user', JSON.stringify(data));
+  if (!data || typeof data !== 'object') return;
+  const existing = getStoredUser();
+  const next = { ...data };
+  if (existing && typeof existing === 'object') {
+    for (const key of AUTH_FIELDS) {
+      if (next[key] === undefined && existing[key] !== undefined) {
+        next[key] = existing[key];
+      }
+    }
+  }
+  localStorage.setItem('user', JSON.stringify(next));
+}
+
+export function clearUserData() {
+  localStorage.removeItem('user');
 }

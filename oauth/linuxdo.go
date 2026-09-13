@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,13 +26,13 @@ func init() {
 type LinuxDOProvider struct{}
 
 type linuxdoUser struct {
-	Id             int    `json:"id"`
-	Username       string `json:"username"`
-	Name           string `json:"name"`
-	Active         bool   `json:"active"`
-	TrustLevel     int    `json:"trust_level"`
-	Silenced       bool   `json:"silenced"`
-	AvatarTemplate string `json:"avatar_template"`
+	Id         int    `json:"id"`
+	Username   string `json:"username"`
+	Name       string `json:"name"`
+	AvatarURL  string `json:"avatar_url"`
+	Active     bool   `json:"active"`
+	TrustLevel int    `json:"trust_level"`
+	Silenced   bool   `json:"silenced"`
 }
 
 func (p *LinuxDOProvider) GetName() string {
@@ -48,8 +47,6 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	if code == "" {
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
-
-	logger.LogDebug(ctx, "[OAuth-LinuxDO] ExchangeToken: code=%s...", code[:min(len(code), 10)])
 
 	// Get access token using Basic auth
 	tokenEndpoint := common.GetEnvOrDefaultString("LINUX_DO_TOKEN_ENDPOINT", "https://connect.linux.do/oauth2/token")
@@ -78,10 +75,9 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-LinuxDO] ExchangeToken client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Linux DO"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -125,10 +121,9 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-LinuxDO] GetUserInfo client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Linux DO"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -169,28 +164,13 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 		ProviderUserID: strconv.Itoa(linuxdoUser.Id),
 		Username:       linuxdoUser.Username,
 		DisplayName:    linuxdoUser.Name,
-		AvatarURL:      linuxdoAvatarURL(linuxdoUser.AvatarTemplate),
+		AvatarURL:      linuxdoUser.AvatarURL,
 		Extra: map[string]any{
 			"trust_level": linuxdoUser.TrustLevel,
 			"active":      linuxdoUser.Active,
 			"silenced":    linuxdoUser.Silenced,
 		},
 	}, nil
-}
-
-func linuxdoAvatarURL(template string) string {
-	template = strings.TrimSpace(template)
-	if template == "" {
-		return ""
-	}
-	template = strings.ReplaceAll(template, "{size}", "120")
-	if strings.HasPrefix(template, "//") {
-		return "https:" + template
-	}
-	if strings.HasPrefix(template, "/") {
-		return "https://linux.do" + template
-	}
-	return template
 }
 
 func (p *LinuxDOProvider) IsUserIDTaken(providerUserID string) bool {
@@ -208,6 +188,11 @@ func (p *LinuxDOProvider) SetProviderUserID(user *model.User, providerUserID str
 
 func (p *LinuxDOProvider) GetProviderPrefix() string {
 	return "linuxdo_"
+}
+
+// ProviderUserIDColumn returns the users-table column storing this provider's user ID.
+func (p *LinuxDOProvider) ProviderUserIDColumn() string {
+	return "linux_do_id"
 }
 
 // TrustLevelError indicates the user's trust level is too low

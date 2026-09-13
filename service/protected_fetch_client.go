@@ -14,29 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
-// ValidateSSRFProtectedFetchURL validates a URL against the current SSRF
-// protection settings. Returns nil if SSRF protection is disabled.
-func ValidateSSRFProtectedFetchURL(urlStr string) error {
-	return validateURLWithCurrentFetchSetting(urlStr, true)
-}
-
-func validateURLWithCurrentFetchSetting(urlStr string, applyDomainIPFilter bool) error {
-	fetchSetting := system_setting.GetFetchSetting()
-	return common.ValidateURLWithFetchSetting(urlStr, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, applyDomainIPFilter && fetchSetting.ApplyIPFilterForDomain)
-}
-
-// checkProtectedFetchRedirect validates redirect targets against SSRF settings.
-func checkProtectedFetchRedirect(req *http.Request, via []*http.Request) error {
-	urlStr := req.URL.String()
-	if err := ValidateSSRFProtectedFetchURL(urlStr); err != nil {
-		return fmt.Errorf("redirect to %s blocked: %v", urlStr, err)
-	}
-	if len(via) >= 10 {
-		return fmt.Errorf("stopped after 10 redirects")
-	}
-	return nil
-}
-
 type ssrfResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
@@ -78,7 +55,7 @@ func currentFetchProtection() (*common.SSRFProtection, bool, error) {
 	return protection, true, nil
 }
 
-func NewProtectedFetchHTTPClient() *http.Client {
+func newProtectedFetchHTTPClient() *http.Client {
 	return newProtectedFetchHTTPClientWithDialer(nil, nil, nil)
 }
 
@@ -145,6 +122,8 @@ func (t *ssrfProtectedRoundTripper) CloseIdleConnections() {
 }
 
 func (t *ssrfProtectedRoundTripper) transportFor(proxyURL *url.URL) *http.Transport {
+	// 只按代理地址分组：代理来自环境变量，取值有限，map 有界；
+	// 目标 origin 是用户可控输入，不能作为缓存 key。
 	key := "direct"
 	if proxyURL != nil {
 		key = proxyURL.String()

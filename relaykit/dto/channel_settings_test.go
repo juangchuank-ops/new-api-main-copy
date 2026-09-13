@@ -147,6 +147,70 @@ func TestAdvancedCustomModelListRouteRequiresExactIncomingPath(t *testing.T) {
 	assert.Equal(t, "/provider/models", route.UpstreamPath)
 }
 
+func TestAdvancedCustomValidateBalanceRouteConstraints(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: AdvancedCustomBalancePath,
+			UpstreamPath: "/provider/balance",
+			Converter:    advancedCustomConverterNone,
+		}},
+	}
+	require.NoError(t, valid.Validate())
+
+	route, ok := valid.BalanceRoute()
+	require.True(t, ok)
+	assert.Equal(t, "/provider/balance", route.UpstreamPath)
+
+	tests := []struct {
+		name   string
+		routes []AdvancedCustomRoute
+		want   string
+	}{
+		{
+			name: "model matching rules",
+			routes: []AdvancedCustomRoute{{
+				IncomingPath: AdvancedCustomBalancePath,
+				UpstreamPath: "/provider/balance",
+				Models:       []string{"gpt-4o"},
+			}},
+			want: "models must be empty",
+		},
+		{
+			name: "converter",
+			routes: []AdvancedCustomRoute{{
+				IncomingPath: AdvancedCustomBalancePath,
+				UpstreamPath: "/provider/balance",
+				Converter:    advancedCustomConverterOpenAIChatToOpenAIResponses,
+			}},
+			want: "converter must be none",
+		},
+		{
+			name: "model placeholder",
+			routes: []AdvancedCustomRoute{{
+				IncomingPath: AdvancedCustomBalancePath,
+				UpstreamPath: "/provider/{model}/balance",
+			}},
+			want: "upstream_path must not contain {model}",
+		},
+		{
+			name: "duplicate routes",
+			routes: []AdvancedCustomRoute{
+				{IncomingPath: AdvancedCustomBalancePath, UpstreamPath: "/provider/balance"},
+				{IncomingPath: AdvancedCustomBalancePath, UpstreamPath: "/provider/credits"},
+			},
+			want: "duplicates the /v1/dashboard/billing/credit_grants route",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&AdvancedCustomConfig{Routes: tt.routes}).Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestAdvancedCustomValidateDuplicateIncomingPathWithDisjointModels(t *testing.T) {
 	config := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{
@@ -691,6 +755,64 @@ func TestClientIdentityNormalizeAndValidate(t *testing.T) {
 	assert.Equal(t, ClientIdentityProfileCodeBuddy, workBuddy.Profile)
 }
 
+func TestClientIdentityContext1MJSONRoundTripAndZeroValue(t *testing.T) {
+	config := ClientIdentityConfig{
+		Profile:          ClientIdentityProfileClaudeCode,
+		Context1MEnabled: true,
+	}
+
+	assert.False(t, config.IsZero())
+	assert.True(t, (ClientIdentityConfig{}).IsZero())
+	assert.True(t, (ClientIdentityConfig{Context1MEnabled: false}).IsZero())
+
+	encoded, err := json.Marshal(config)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"context_1m_enabled":true`)
+
+	var decoded ClientIdentityConfig
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, config, decoded)
+}
+
+func TestClientIdentityContext1MRequiresClaudeCodeProfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		config      ClientIdentityConfig
+	}{
+		{
+			name:        "none profile",
+			channelType: ClientIdentityChannelTypeOpenAI,
+			config: ClientIdentityConfig{
+				Profile:          ClientIdentityProfileNone,
+				Context1MEnabled: true,
+			},
+		},
+		{
+			name:        "codex profile",
+			channelType: ClientIdentityChannelTypeCodexCompatible,
+			config: ClientIdentityConfig{
+				Profile:          ClientIdentityProfileCodexCompatibility,
+				Context1MEnabled: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate(tt.channelType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "context_1m_enabled")
+		})
+	}
+
+	valid := ClientIdentityConfig{
+		Profile:          ClientIdentityProfileClaudeCode,
+		Context1MEnabled: true,
+	}
+	require.NoError(t, valid.Validate(ClientIdentityChannelTypeClaudeCode))
+}
+
 func TestClientIdentityNormalizeRejectsNPMPrereleases(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -917,41 +1039,14 @@ func TestClientIdentityUnsupportedChannelRejectsNonEmptyConfig(t *testing.T) {
 	assert.False(t, config.SupportsChannelType(2))
 }
 
-func TestClientIdentityDesktopProfilesValidateOnStandardChannels(t *testing.T) {
-	codexDesktop := ClientIdentityConfig{
-		ClientType: ClientIdentityClientTypeCodex,
-		Profile:    ClientIdentityProfileCodexDesktop,
-		Version:    "1.0.0",
-	}
-	require.NoError(t, codexDesktop.Validate(ClientIdentityChannelTypeOpenAI))
-	require.NoError(t, codexDesktop.Validate(ClientIdentityChannelTypeAnthropic))
+func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
+	require.NoError(t, (*ChannelOtherSettings)(nil).ValidateToolLossPolicy())
+	require.NoError(t, (&ChannelOtherSettings{}).ValidateToolLossPolicy())
+	require.NoError(t, (&ChannelOtherSettings{ToolLossPolicy: "allow"}).ValidateToolLossPolicy())
+	require.NoError(t, (&ChannelOtherSettings{ToolLossPolicy: "safe"}).ValidateToolLossPolicy())
+	require.NoError(t, (&ChannelOtherSettings{ToolLossPolicy: "strict"}).ValidateToolLossPolicy())
 
-	claudeDesktop := ClientIdentityConfig{
-		ClientType: ClientIdentityClientTypeClaude,
-		Profile:    ClientIdentityProfileClaudeDesktop,
-		Version:    "0.9.3",
-		Platform:   ClientIdentityPlatformWindowsX64,
-	}
-	require.NoError(t, claudeDesktop.Validate(ClientIdentityChannelTypeOpenAI))
-	require.NoError(t, claudeDesktop.Validate(ClientIdentityChannelTypeAnthropic))
-
-	// 桌面版身份只属于轻量渠道，锁定单一身份的渠道（如 Codex legacy）应拒绝
-	locked := ClientIdentityConfig{
-		ClientType: ClientIdentityClientTypeCodex,
-		Profile:    ClientIdentityProfileCodexDesktop,
-	}
-	err := locked.Validate(ClientIdentityChannelTypeCodexLegacy)
+	err := (&ChannelOtherSettings{ToolLossPolicy: "drop"}).ValidateToolLossPolicy()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-
-	// codex_desktop 复用 npm 官方源（@openai/codex）；claude_desktop 无公开源必须是 manual 且不带包名
-	kind, pkg, sourceErr := ClientIdentitySourceForProfile(ClientIdentityProfileCodexDesktop)
-	require.NoError(t, sourceErr)
-	assert.Equal(t, ClientIdentitySourceNPM, kind)
-	assert.Equal(t, ClientIdentityNPMCodexPackage, pkg)
-
-	kind, pkg, sourceErr = ClientIdentitySourceForProfile(ClientIdentityProfileClaudeDesktop)
-	require.NoError(t, sourceErr)
-	assert.Equal(t, ClientIdentitySourceManual, kind)
-	assert.Empty(t, pkg)
+	assert.Contains(t, err.Error(), "tool_loss_policy")
 }

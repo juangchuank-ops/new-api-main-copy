@@ -17,13 +17,7 @@ import (
 // SQLite has no FOR UPDATE syntax (the clause would be a syntax error), so it
 // is skipped there; SQLite's single-writer model makes one of two conflicting
 // transactions fail instead of both committing.
-//
-// 该 helper 仅用于 Auto Sync 相关事务，不修改旧版已有的
-// `Set("gorm:query_option", "FOR UPDATE")` 调用点。
 func lockForUpdate(tx *gorm.DB) *gorm.DB {
-	if tx == nil {
-		return tx
-	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		return tx
 	}

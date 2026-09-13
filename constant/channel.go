@@ -61,7 +61,9 @@ const (
 	ChannelTypeCodexCompatibility = 61
 	ChannelTypeClaudeCode         = 62
 	ChannelTypeCodeBuddy          = 63
-	ChannelTypeDummy              = 64 // this one is only for count, do not add any channel after this
+	ChannelTypeVercel             = 64
+	ChannelTypeTaskPlugin         = 65
+	ChannelTypeDummy              // this one is only for count, do not add any channel after this
 
 )
 
@@ -125,11 +127,20 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
 	"",                                          //58
-	"",                                          //59 Sub2API
-	"",                                          //60 NewAPI
-	"",                                          //61 CodexCompatibility
-	"",                                          //62 ClaudeCode
-	"",                                          //63 CodeBuddy
+	"",                                          //59
+	"",                                          //60
+	"",                                          //61
+	"",                                          //62
+	"",                                          //63
+	"https://ai-gateway.vercel.sh",              //64
+	"",                                          //65
+}
+
+func GetChannelBaseURL(channelType int) string {
+	if channelType < 0 || channelType >= len(ChannelBaseURLs) {
+		return ""
+	}
+	return ChannelBaseURLs[channelType]
 }
 
 var ChannelTypeNames = map[int]string{
@@ -190,9 +201,11 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom:     "Advanced Custom",
 	ChannelTypeSub2API:            "Sub2API",
 	ChannelTypeNewAPI:             "New API",
-	ChannelTypeCodexCompatibility: "ChatGPT Subscription (Codex Compatibility)",
+	ChannelTypeCodexCompatibility: "Codex",
 	ChannelTypeClaudeCode:         "Claude Code",
 	ChannelTypeCodeBuddy:          "CodeBuddy",
+	ChannelTypeVercel:             "Vercel AI Gateway",
+	ChannelTypeTaskPlugin:         "Task Plugin",
 }
 
 func GetChannelTypeName(channelType int) string {

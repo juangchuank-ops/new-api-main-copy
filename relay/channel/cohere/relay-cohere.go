@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -157,14 +157,14 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 				responseText += cohereResp.Text
 			}
 			jsonStr, err := json.Marshal(openaiResp)
-		if err != nil {
-			common.SysLog("error marshalling stream response: " + err.Error())
+			if err != nil {
+				common.SysLog("error marshalling stream response: " + err.Error())
+				return true
+			}
+			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonStr)})
 			return true
-		}
-		c.Render(-1, &common.CustomEvent{Data: "data: " + string(jsonStr)})
-		return true
-	case <-stopChan:
-		c.Render(-1, &common.CustomEvent{Data: "data: [DONE]"})
+		case <-stopChan:
+			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
 			return false
 		}
 	})

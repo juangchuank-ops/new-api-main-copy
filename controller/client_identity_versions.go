@@ -13,12 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// client_identity_versions.go — 移植自新版 MAakber/new-api
-// P1b-2: GetClientIdentityVersions + RefreshClientIdentityVersions
-// P3-Schema: GetChannelClientIdentity — 直接解析 channel.OtherSettings JSON
-//   到 relaykit/dto.ChannelOtherSettings（含 ClientIdentity 字段），
-//   不修改旧版 dto.ChannelOtherSettings。
-
 type clientIdentityVersionRequest struct {
 	Profile  string `json:"profile"`
 	Platform string `json:"platform,omitempty"`
@@ -142,19 +136,12 @@ func GetChannelClientIdentity(c *gin.Context) {
 
 	config := dto.DefaultClientIdentityConfig(channel.Type)
 	persisted := false
-	// 旧版 dto.ChannelOtherSettings 无 ClientIdentity 字段，
-	// 直接解析 OtherSettings JSON 到 relaykit/dto.ChannelOtherSettings。
-	var kitSettings dto.ChannelOtherSettings
-	if channel.OtherSettings != "" {
-		if err := common.UnmarshalJsonStr(channel.OtherSettings, &kitSettings); err != nil {
-			common.SysError(fmt.Sprintf("failed to unmarshal channel other settings for client identity: channel_id=%d, error=%v", channel.Id, err))
-		}
-	}
-	if kitSettings.ClientIdentity != nil {
-		persisted = !kitSettings.ClientIdentity.IsZero()
-		config = *kitSettings.ClientIdentity
-		if kitSettings.ClientIdentity.Source != nil {
-			sourceCopy := *kitSettings.ClientIdentity.Source
+	settings := channel.GetOtherSettings()
+	if settings.ClientIdentity != nil {
+		persisted = !settings.ClientIdentity.IsZero()
+		config = *settings.ClientIdentity
+		if settings.ClientIdentity.Source != nil {
+			sourceCopy := *settings.ClientIdentity.Source
 			config.Source = &sourceCopy
 		}
 		if err := config.Normalize(channel.Type); err != nil {

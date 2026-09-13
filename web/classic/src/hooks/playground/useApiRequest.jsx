@@ -27,10 +27,25 @@ import {
 } from '../../constants/playground.constants';
 import {
   getUserIdFromLocalStorage,
+  getAccessToken,
   handleApiError,
   processThinkTags,
   processIncompleteThinkTags,
 } from '../../helpers';
+
+// 新版鉴权要求 playground 请求携带 Authorization: Bearer <access_token>，
+// 该路径使用原生 fetch / SSE，绕过了 axios 拦截器，需要显式注入。
+function buildPlaygroundHeaders() {
+  const headers = {
+    'Content-Type': 'application/json',
+    'New-Api-User': getUserIdFromLocalStorage(),
+  };
+  const token = getAccessToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 export const useApiRequest = (
   setMessage,
@@ -187,10 +202,7 @@ export const useApiRequest = (
       try {
         const response = await fetch(API_ENDPOINTS.CHAT_COMPLETIONS, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'New-Api-User': getUserIdFromLocalStorage(),
-          },
+          headers: buildPlaygroundHeaders(),
           body: JSON.stringify(payload),
         });
 
@@ -314,10 +326,7 @@ export const useApiRequest = (
       setActiveDebugTab(DEBUG_TABS.REQUEST);
 
       const source = new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
-        headers: {
-          'Content-Type': 'application/json',
-          'New-Api-User': getUserIdFromLocalStorage(),
-        },
+        headers: buildPlaygroundHeaders(),
         method: 'POST',
         payload: JSON.stringify(payload),
       });

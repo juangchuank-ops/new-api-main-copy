@@ -5,19 +5,16 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/google/uuid"
 )
-
-// compatibility.go — 移植自新版 MAakber/new-api（P3 relay-runtime Client Identity）。
-// 仅迁移与 ClientIdentity 相关的请求头应用逻辑；未配置 ClientIdentity 时保持旧版行为。
-// identity 参数通过桥接 helper 从渠道 OtherSettings JSON 解析得到，不改动旧版
-// dto.ChannelOtherSettings 与 relay/common/relay_info.go 的 ChannelOtherSettings 类型。
 
 const (
 	codexCompatibilityOriginator = "codex_cli_rs"
 	codexCompatibilityUserAgent  = "codex_cli_rs/0.146.0"
 	claudeCodeCompatibilityUA    = "claude-cli/2.1.214 (external, cli)"
+	claudeCodeContext1MBetaToken = "context-1m-2025-08-07"
 )
 
 // ApplyCompatibilityHeaders applies the default upstream identity for API-key
@@ -56,6 +53,42 @@ func ApplyCompatibilityHeadersWithClientIdentity(channelType int, headers http.H
 	}
 }
 
+// ApplyCodexCompatibilityTestHeaders adds only the synthetic session headers
+// required by the channel-test Codex Responses profile. It must not be used
+// for normal user traffic and never adds credentials or attestation headers.
+func ApplyCodexCompatibilityTestHeaders(headers http.Header, identity *relaycommon.CodexCompatibilityTestIdentity) {
+	if headers == nil || identity == nil {
+		return
+	}
+
+	// Do not carry session state from a caller or from a reused header map into
+	// a synthetic probe. Header Override is applied later by DoApiRequest and
+	// remains the only explicit override path.
+	for name := range headers {
+		switch strings.ToLower(name) {
+		case "session-id",
+			"thread-id",
+			"x-client-request-id",
+			"x-codex-installation-id",
+			"x-codex-window-id",
+			"x-codex-turn-metadata",
+			"x-codex-turn-state",
+			"x-codex-beta-features",
+			"x-codex-parent-thread-id",
+			"x-openai-subagent",
+			"x-oai-attestation":
+			delete(headers, name)
+		}
+	}
+
+	headers.Set("Session-Id", identity.SessionID)
+	headers.Set("Thread-Id", identity.ThreadID)
+	headers.Set("X-Client-Request-Id", identity.ClientRequestID)
+	headers.Set("X-Codex-Installation-Id", identity.InstallationID)
+	headers.Set("X-Codex-Window-Id", identity.WindowID)
+	headers.Set("X-Codex-Turn-Metadata", identity.TurnMetadata)
+}
+
 // ApplyCodexLegacyClientIdentity applies only the safe identity fields for
 // channel 57. Its OAuth adapter owns Authorization and account routing, so
 // this function never touches credentials, endpoint paths, or Originator.
@@ -74,7 +107,6 @@ func ApplyCodexLegacyClientIdentity(headers http.Header, identity *dto.ClientIde
 // ApplyLightweightClientIdentity applies only the verified, low-risk identity
 // fields for standard OpenAI/Anthropic channels. It deliberately does not add
 // authentication, endpoint, protocol, session, or request-body fields.
-// identity 为 nil 或 IsZero 时直接返回，保持旧版请求行为（不加任何 Header）。
 func ApplyLightweightClientIdentity(headers http.Header, identity *dto.ClientIdentityConfig) {
 	if headers == nil || identity == nil || identity.IsZero() {
 		return
@@ -106,21 +138,6 @@ func ApplyLightweightClientIdentity(headers http.Header, identity *dto.ClientIde
 		// No stable public WorkBuddy Desktop request identity is verified.
 		// Keep the profile available for metadata/manual versioning without
 		// inventing a User-Agent or internal headers.
-	case dto.ClientIdentityProfileCodexDesktop:
-		// 已对照 codex-rs 官方源码验证（login/src/auth/default_client.rs）：
-		// ChatGPT 桌面端内的 Codex 通过 originator 头标识为 codex_chatgpt_desktop
-		// （is_first_party_chat_originator 一方枚举），User-Agent 前缀同步使用该值。
-		// 版本必填后才写入请求头。
-		if version := strings.TrimSpace(identity.Version); version != "" {
-			headers.Set("originator", "codex_chatgpt_desktop")
-			headers.Set("User-Agent", clientIdentityUserAgent("codex_chatgpt_desktop", version, identity.Platform))
-		}
-	case dto.ClientIdentityProfileClaudeDesktop:
-		// Claude 官方桌面应用不调用公开 Anthropic API，无公开可验证身份；
-		// 前缀沿用 claude 家族命名规范（claude-cli → claude-desktop），版本必填才生效。
-		if version := strings.TrimSpace(identity.Version); version != "" {
-			headers.Set("User-Agent", clientIdentityUserAgent("claude-desktop", version, identity.Platform))
-		}
 	}
 }
 
@@ -145,6 +162,9 @@ func ApplyClaudeCodeCompatibilityHeadersWithIdentity(headers http.Header, apiKey
 			delete(headers, name)
 		}
 	}
+	if config.Context1MEnabled {
+		appendClaudeCodeContext1MBetaToken(headers)
+	}
 
 	headers.Set("Authorization", "Bearer "+apiKey)
 	if includeAPIKey {
@@ -165,6 +185,41 @@ func ApplyClaudeCodeCompatibilityHeadersWithIdentity(headers http.Header, apiKey
 	if headers.Get("X-Client-Request-Id") == "" {
 		headers.Set("X-Client-Request-Id", uuid.NewString())
 	}
+}
+
+func appendClaudeCodeContext1MBetaToken(headers http.Header) {
+	if headers == nil {
+		return
+	}
+
+	var betaValues []string
+	for name, values := range headers {
+		if !strings.EqualFold(name, "Anthropic-Beta") {
+			continue
+		}
+		betaValues = append(betaValues, values...)
+		delete(headers, name)
+	}
+
+	tokens := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, value := range betaValues {
+		for _, token := range strings.Split(value, ",") {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+			if _, exists := seen[token]; exists {
+				continue
+			}
+			seen[token] = struct{}{}
+			tokens = append(tokens, token)
+		}
+	}
+	if _, exists := seen[claudeCodeContext1MBetaToken]; !exists {
+		tokens = append(tokens, claudeCodeContext1MBetaToken)
+	}
+	headers.Set("Anthropic-Beta", strings.Join(tokens, ", "))
 }
 
 func resolveRuntimeClientIdentity(channelType int, identity *dto.ClientIdentityConfig) dto.ClientIdentityConfig {

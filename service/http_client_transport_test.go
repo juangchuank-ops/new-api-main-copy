@@ -1,360 +1,491 @@
 package service
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	relaykitdto "github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/gin-gonic/gin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// http_client_transport_test.go — P3-Bridge HTTP transport policy 单测。
-// 覆盖：未配置→旧版行为；HTTP/1.1；HTTP/2 shards；代理；异常；
-// 以及实际 HTTP 请求链路（httptest 端到端，含 HTTP/2 ALPN 协商）。
-
-func init() {
-	// 确保 httpClient 已初始化（GetHttpClientWithProxy 依赖）。
-	if GetHttpClient() == nil {
-		InitHttpClient()
-	}
-}
-
-func transportOf(t *testing.T, client *http.Client) *http.Transport {
+func withRelayHTTPTransportSettings(t *testing.T) {
 	t.Helper()
-	rt := client.Transport
-	if rt == nil {
-		t.Fatalf("client.Transport is nil")
-	}
-	// shardedRoundTripper 不是 *http.Transport，单 transport 路径才是。
-	tr, ok := rt.(*http.Transport)
-	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", rt)
-	}
-	return tr
-}
-
-// --- 默认 policy → 走旧版，行为零变化 ---
-
-func TestGetHttpClientWithProxyPolicy_DefaultDelegatesToOld(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	def := defaultHTTPTransportPolicy()
-	// 无代理 + 默认 policy → 应返回旧版 GetHttpClient() 同一实例
-	c, err := GetHttpClientWithProxyPolicy("", def)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if c != GetHttpClient() {
-		t.Errorf("default policy no-proxy should return the legacy httpClient pointer, got different client")
-	}
-
-	// 有代理 + 默认 policy → 应返回旧版 GetHttpClientWithProxy 的客户端
-	cp, err := GetHttpClientWithProxyPolicy("http://127.0.0.1:0", def)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	old, err := GetHttpClientWithProxy("http://127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if cp != old {
-		t.Errorf("default policy with proxy should return the legacy proxy client pointer")
-	}
-}
-
-// --- HTTP/1.1 policy ---
-
-func TestGetHttpClientWithProxyPolicy_HTTP1Force(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}
-	c, err := GetHttpClientWithProxyPolicy("", policy)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	tr := transportOf(t, c)
-	if tr.ForceAttemptHTTP2 {
-		t.Errorf("http1 policy must set ForceAttemptHTTP2=false")
-	}
-	if tr.TLSNextProto == nil {
-		t.Errorf("http1 policy must set non-nil empty TLSNextProto to block h2")
-	}
-	if len(tr.TLSNextProto) != 0 {
-		t.Errorf("http1 policy TLSNextProto must be empty map, got %d entries", len(tr.TLSNextProto))
-	}
-}
-
-// --- HTTP/2 shards ---
-
-func TestGetHttpClientWithProxyPolicy_HTTP2Shards(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolAuto, Shards: 4}
-	c, err := GetHttpClientWithProxyPolicy("", policy)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	srt, ok := c.Transport.(*shardedRoundTripper)
-	if !ok {
-		t.Fatalf("shards>1 should wrap transport in shardedRoundTripper, got %T", c.Transport)
-	}
-	if srt.n != 4 {
-		t.Errorf("expected 4 shards, got %d", srt.n)
-	}
-	if len(srt.shards) != 4 {
-		t.Errorf("expected 4 shard transports, got %d", len(srt.shards))
-	}
-	// 每个 shard 应保留 HTTP/2 自动协商
-	for i, rt := range srt.shards {
-		tr, ok := rt.(*http.Transport)
-		if !ok {
-			t.Fatalf("shard[%d] not *http.Transport: %T", i, rt)
-		}
-		if !tr.ForceAttemptHTTP2 {
-			t.Errorf("shard[%d] should keep ForceAttemptHTTP2=true for auto policy", i)
-		}
-	}
-}
-
-// --- HTTP2 shards=1 (auto+1) 等同默认 → 旧版单 transport ---
-
-func TestGetHttpClientWithProxyPolicy_AutoShards1IsDefault(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolAuto, Shards: 1}
-	if policy != defaultHTTPTransportPolicy() {
-		t.Fatalf("auto+1 should equal default policy")
-	}
-	c, err := GetHttpClientWithProxyPolicy("", policy)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if c != GetHttpClient() {
-		t.Errorf("auto+1 (default) should delegate to legacy httpClient")
-	}
-}
-
-// --- http1 + shards>1：http1 强制 shards=1（policy 归一化在 NormalizeHTTPTransportPolicy 完成）---
-// 这里直接构造已归一化的 policy（http1 → shards=1）验证不进入 sharded 路径。
-
-func TestGetHttpClientWithProxyPolicy_HTTP1CollapsesShards(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	// 模拟 NormalizeHTTPTransportPolicy 对 http1+shards 的归一化结果
-	normalized := NormalizeHTTPTransportPolicy(relaykitdto.ChannelSettings{
-		HTTPProtocol:          relaykitdto.HTTPProtocolHTTP1,
-		HTTP2ConnectionShards: 4, // http1 下应被归一化为 1
+	prevMaxIdle := common.RelayMaxIdleConns
+	prevPerHost := common.RelayMaxIdleConnsPerHost
+	prevTimeout := common.RelayIdleConnTimeout
+	common.RelayMaxIdleConns = 500
+	common.RelayMaxIdleConnsPerHost = 100
+	common.RelayIdleConnTimeout = 90
+	t.Cleanup(func() {
+		common.RelayMaxIdleConns = prevMaxIdle
+		common.RelayMaxIdleConnsPerHost = prevPerHost
+		common.RelayIdleConnTimeout = prevTimeout
 	})
-	if normalized.Shards != 1 {
-		t.Fatalf("http1 policy should normalize shards to 1, got %d", normalized.Shards)
-	}
-	c, err := GetHttpClientWithProxyPolicy("", normalized)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if _, ok := c.Transport.(*shardedRoundTripper); ok {
-		t.Errorf("http1 (shards=1) must not use shardedRoundTripper")
-	}
-	tr := transportOf(t, c)
-	if tr.ForceAttemptHTTP2 {
-		t.Errorf("http1 normalized must force http1")
-	}
 }
 
-// --- 代理 + policy ---
-
-func TestGetHttpClientWithProxyPolicy_ProxyHTTP(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}
-	c, err := GetHttpClientWithProxyPolicy("http://127.0.0.1:0", policy)
-	if err != nil {
-		t.Fatalf("err: %v", err)
+func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
+	t.Helper()
+	withRelayHTTPTransportSettings(t)
+	if httpClient == nil {
+		InitHttpClient()
+	} else {
+		ResetProxyClientCache()
 	}
-	tr := transportOf(t, c)
-	if tr.Proxy == nil {
-		t.Errorf("http proxy policy client should set transport.Proxy")
-	}
-	if tr.ForceAttemptHTTP2 {
-		t.Errorf("http1 policy with proxy must force http1")
-	}
+	require.NotNil(t, httpClient)
+	t.Cleanup(ResetProxyClientCache)
+	return httpClient
 }
 
-func TestGetHttpClientWithProxyPolicy_BadProxyScheme(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}
-	_, err := GetHttpClientWithProxyPolicy("ftp://bad", policy)
-	if err == nil {
-		t.Errorf("bad proxy scheme should return error")
+func TestShardedRoundTripperPerOriginRotation(t *testing.T) {
+	s := &shardedRoundTripper{n: 4}
+	originA := "https://a.example:443"
+	originB := "https://b.example:443"
+
+	gotA := make([]uint32, 0, 8)
+	for range 8 {
+		gotA = append(gotA, s.pickShard(originA))
 	}
+	assert.Equal(t, []uint32{0, 1, 2, 3, 0, 1, 2, 3}, gotA)
+
+	gotB := make([]uint32, 0, 4)
+	for range 4 {
+		gotB = append(gotB, s.pickShard(originB))
+	}
+	assert.Equal(t, []uint32{0, 1, 2, 3}, gotB, "independent origins must have independent counters")
+
+	var wg sync.WaitGroup
+	const workers = 32
+	const perWorker = 50
+	var badShardCount atomic.Uint32
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for range perWorker {
+				idx := s.pickShard(originA)
+				if idx >= 4 {
+					badShardCount.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, uint32(0), badShardCount.Load())
 }
 
-// --- 端到端：实际 HTTP 请求链路 ---
-
-func TestPolicyClient_EndToEnd_HTTP1Server(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Echo", "ok")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "hello")
-	}))
-	defer srv.Close()
-
-	policies := []struct {
-		name   string
-		policy HTTPTransportPolicy
-	}{
-		{"default", defaultHTTPTransportPolicy()},
-		{"http1", HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}},
-		{"http2_shards4", HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolAuto, Shards: 4}},
-	}
-	for _, tc := range policies {
-		t.Run(tc.name, func(t *testing.T) {
-			ResetPolicyProxyClientCache()
-			c, err := GetHttpClientWithProxyPolicy("", tc.policy)
-			if err != nil {
-				t.Fatalf("err: %v", err)
-			}
-			req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
-			resp, err := c.Do(req)
-			if err != nil {
-				t.Fatalf("request failed: %v", err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Errorf("status = %d", resp.StatusCode)
-			}
-			if resp.Header.Get("X-Echo") != "ok" {
-				t.Errorf("X-Echo header missing")
-			}
-			// httptest.NewServer 为 HTTP/1.1，三种 policy 都应能完成请求
-			if resp.Proto != "HTTP/1.1" {
-				t.Errorf("httptest server proto = %s, want HTTP/1.1", resp.Proto)
-			}
-		})
-	}
+func TestOriginKeyUsesSchemeAndHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "HTTPS://Example.COM:8443/path", nil)
+	assert.Equal(t, "https://Example.COM:8443", originKey(req))
 }
 
-// --- HTTP/2 ALPN 协商：auto → HTTP/2.0，http1 → HTTP/1.1 ---
-
-func TestPolicyClient_HTTP2Negotiation(t *testing.T) {
-	// 用 NewUnstartedServer + EnableHTTP2 + StartTLS 让测试服务器真正广告 h2。
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "ok")
-	}))
-	srv.EnableHTTP2 = true
-	srv.StartTLS()
-	defer srv.Close()
-
+func testTLSClientConfig(t *testing.T, server *httptest.Server) *tls.Config {
+	t.Helper()
 	pool := x509.NewCertPool()
-	pool.AddCert(srv.Certificate())
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	require.True(t, pool.AppendCertsFromPEM(certPEM))
+	return &tls.Config{RootCAs: pool}
+}
 
-	doRequest := func(policy HTTPTransportPolicy) string {
-		ResetPolicyProxyClientCache()
-		// 直接用 buildLegacyRelayTransport + applyHTTPTransportPolicy 构建受信 transport，
-		// 注入测试 CA（生产路径用 InsecureTLSConfig/系统 CA，此处隔离测试 ALPN 协商）。
-		tr, err := buildLegacyRelayTransport("")
-		if err != nil {
-			t.Fatalf("build transport: %v", err)
+func startHTTP2TLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	server := httptest.NewUnstartedServer(handler)
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server
+}
+
+func drainClose(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.NotNil(t, resp)
+	_, err := io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+}
+
+func TestAutoOneShardNegotiatesHTTP2SingleConnection(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+
+	var mu sync.Mutex
+	addrs := make(map[string]struct{})
+	var sawHTTP2 atomic.Bool
+
+	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		if r.ProtoMajor == 2 {
+			sawHTTP2.Store(true)
 		}
-		// 显式声明 ALPN 意图：auto 允许 h2，http1 由 applyHTTP1Force 清空 NextProtos 强制 http1。
-		// RootCAs 使客户端信任 httptest 自签证书。
-		tr.TLSClientConfig = &tls.Config{RootCAs: pool, NextProtos: []string{"h2", "http/1.1"}}
-		applyHTTPTransportPolicy(tr, policy)
-		c := newRelayHTTPClient(tr)
-		req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
-		resp, err := c.Do(req)
-		if err != nil {
-			t.Fatalf("request failed (policy=%s): %v", policy.cacheKeyPart(), err)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	client := newHTTPClientWithPolicyAndTLS(defaultHTTPTransportPolicy(), testTLSClientConfig(t, server))
+	for range 4 {
+		resp, err := client.Get(server.URL)
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.ProtoMajor)
+		drainClose(t, resp)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.True(t, sawHTTP2.Load())
+	assert.Len(t, addrs, 1, "auto+1 must reuse a single HTTP/2 connection")
+}
+
+func TestFourShardHTTP2ReusesExactlyFourConnections(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+
+	var mu sync.Mutex
+	addrs := make(map[string]struct{})
+	var nonHTTP2Count atomic.Uint32
+
+	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		if r.ProtoMajor != 2 {
+			nonHTTP2Count.Add(1)
 		}
-		defer resp.Body.Close()
-		return resp.Proto
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	policy := HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 4}
+	client := newHTTPClientWithPolicyAndTLS(policy, testTLSClientConfig(t, server))
+	for range 8 {
+		resp, err := client.Get(server.URL)
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.ProtoMajor)
+		drainClose(t, resp)
 	}
 
-	// auto policy → 应协商 HTTP/2.0
-	if proto := doRequest(HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolAuto, Shards: 1}); proto != "HTTP/2.0" {
-		t.Errorf("auto policy proto = %s, want HTTP/2.0 (ALPN h2)", proto)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, uint32(0), nonHTTP2Count.Load())
+	assert.Len(t, addrs, 4, "four shards must establish and reuse exactly four connections")
+}
+
+func TestForcedHTTP1AgainstHTTP2Server(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+
+	var nonHTTP1Count atomic.Uint32
+	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 1 {
+			nonHTTP1Count.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	policy := HTTPTransportPolicy{Protocol: dto.HTTPProtocolHTTP1, Shards: 1}
+	client := newHTTPClientWithPolicyAndTLS(policy, testTLSClientConfig(t, server))
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.ProtoMajor)
+	drainClose(t, resp)
+	assert.Equal(t, uint32(0), nonHTTP1Count.Load())
+
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+	assert.False(t, transport.DisableKeepAlives)
+	assert.False(t, transport.ForceAttemptHTTP2)
+	assert.NotNil(t, transport.TLSNextProto)
+	assert.Len(t, transport.TLSNextProto, 0)
+}
+
+func TestForcedHTTP1ConcurrentDistinctConnections(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+
+	const k = 8
+	var mu sync.Mutex
+	addrs := make(map[string]struct{})
+	arrived := make(chan struct{}, k)
+	release := make(chan struct{})
+	var nonHTTP1Count atomic.Uint32
+
+	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		if r.ProtoMajor != 1 {
+			nonHTTP1Count.Add(1)
+		}
+		arrived <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	policy := HTTPTransportPolicy{Protocol: dto.HTTPProtocolHTTP1, Shards: 1}
+	client := newHTTPClientWithPolicyAndTLS(policy, testTLSClientConfig(t, server))
+
+	errCh := make(chan error, k)
+	for range k {
+		go func() {
+			resp, err := client.Get(server.URL)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if resp.ProtoMajor != 1 {
+				errCh <- fmt.Errorf("expected HTTP/1.x, got %s", resp.Proto)
+				_ = resp.Body.Close()
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			errCh <- nil
+		}()
 	}
-	// http1 policy → 应强制 HTTP/1.1
-	if proto := doRequest(HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}); proto != "HTTP/1.1" {
-		t.Errorf("http1 policy proto = %s, want HTTP/1.1 (forced)", proto)
+
+	for range k {
+		<-arrived
+	}
+	mu.Lock()
+	activeAddrs := len(addrs)
+	mu.Unlock()
+	close(release)
+
+	for range k {
+		require.NoError(t, <-errCh)
+	}
+	assert.Equal(t, uint32(0), nonHTTP1Count.Load())
+	assert.Equal(t, k, activeAddrs, "all HTTP/1.1 handlers active together must use K distinct connections")
+}
+
+func TestHTTPClientCachePolicyAndCompatibility(t *testing.T) {
+	defaultClient := initDefaultHTTPClientFixture(t)
+
+	compat, err := GetHttpClientWithProxy("")
+	require.NoError(t, err)
+	aware, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	assert.Same(t, defaultClient, compat)
+	assert.Same(t, compat, aware)
+	assert.Same(t, GetHttpClient(), aware)
+
+	http1, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	assert.NotSame(t, aware, http1)
+
+	sharded, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTP2ConnectionShards: 4})
+	require.NoError(t, err)
+	assert.NotSame(t, aware, sharded)
+	assert.NotSame(t, http1, sharded)
+
+	proxyA := "http://proxy.example:8080"
+	proxyAlias := "http://proxy.example:8080/"
+	clientA, err := GetHttpClientWithProxy(proxyA)
+	require.NoError(t, err)
+	clientAlias, err := GetHttpClientWithProxy(proxyAlias)
+	require.NoError(t, err)
+	assert.Same(t, clientA, clientAlias, "canonical proxy aliases must share the default policy client")
+
+	proxyHTTP1, err := GetHttpClientWithProxySettings(proxyA, dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	assert.NotSame(t, clientA, proxyHTTP1)
+}
+
+func TestHTTPClientCacheConcurrentGetOrCreate(t *testing.T) {
+	initDefaultHTTPClientFixture(t)
+
+	proxyURL := "http://concurrent-proxy.example:9090"
+	const workers = 32
+	results := make([]*http.Client, workers)
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := range workers {
+		i := i
+		go func() {
+			defer wg.Done()
+			client, err := GetHttpClientWithProxySettings(proxyURL, dto.ChannelSettings{HTTP2ConnectionShards: 3})
+			errs[i] = err
+			results[i] = client
+		}()
+	}
+	wg.Wait()
+	for i := range workers {
+		require.NoError(t, errs[i])
+	}
+	for i := 1; i < workers; i++ {
+		assert.Same(t, results[0], results[i])
 	}
 }
 
-// --- GetRelayHTTPClient：context 桥接 ---
+type closeCountingRoundTripper struct {
+	closes atomic.Int32
+}
 
-func TestGetRelayHTTPClient_ContextBridge(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ResetPolicyProxyClientCache()
+func (c *closeCountingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       http.NoBody,
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
 
-	// 1. 无 key → 默认 → 旧版 httpClient
-	c1, _ := gin.CreateTestContext(nil)
-	client, err := GetRelayHTTPClient(c1, "")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if client != GetHttpClient() {
-		t.Errorf("no policy key should delegate to legacy httpClient")
-	}
+func (c *closeCountingRoundTripper) CloseIdleConnections() {
+	c.closes.Add(1)
+}
 
-	// 2. context 存 http1 policy → policy 客户端
-	c2, _ := gin.CreateTestContext(nil)
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}
-	c2.Set(string(constant.ContextKeyChannelHTTPTransportPolicy), policy)
-	client2, err := GetRelayHTTPClient(c2, "")
-	if err != nil {
-		t.Fatalf("err: %v", err)
+func TestShardedRoundTripperCloseIdleConnectionsFansOut(t *testing.T) {
+	trackers := []*closeCountingRoundTripper{{}, {}, {}}
+	shards := make([]http.RoundTripper, len(trackers))
+	for i, tracker := range trackers {
+		shards[i] = tracker
 	}
-	tr, ok := client2.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("expected *http.Transport for http1 policy, got %T", client2.Transport)
-	}
-	if tr.ForceAttemptHTTP2 {
-		t.Errorf("http1 policy via context must force http1")
-	}
-
-	// 3. context 存默认 policy → 旧版
-	c3, _ := gin.CreateTestContext(nil)
-	c3.Set(string(constant.ContextKeyChannelHTTPTransportPolicy), defaultHTTPTransportPolicy())
-	client3, err := GetRelayHTTPClient(c3, "")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if client3 != GetHttpClient() {
-		t.Errorf("default policy via context should delegate to legacy httpClient")
+	s := &shardedRoundTripper{shards: shards, n: uint32(len(shards))}
+	s.CloseIdleConnections()
+	for _, tracker := range trackers {
+		assert.Equal(t, int32(1), tracker.closes.Load())
 	}
 }
 
-// --- 桥接 helper resolveChannelHTTPTransportPolicy 行为（通过 policy 间接验证） ---
+func TestInvalidateProxyClientClosesAllPolicyVariants(t *testing.T) {
+	initDefaultHTTPClientFixture(t)
 
-func TestNormalizeHTTPTransportPolicy_UnconfiguredIsDefault(t *testing.T) {
-	// 未配置任何 HTTP transport 字段 → 默认 policy
-	p := NormalizeHTTPTransportPolicy(relaykitdto.ChannelSettings{})
-	if p != defaultHTTPTransportPolicy() {
-		t.Errorf("unconfigured settings should yield default policy, got %s", p.cacheKeyPart())
-	}
+	proxyURL := "http://invalidate-proxy.example:8080"
+	defaultClient, err := GetHttpClientWithProxy(proxyURL)
+	require.NoError(t, err)
+	http1Client, err := GetHttpClientWithProxySettings(proxyURL, dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	shardedClient, err := GetHttpClientWithProxySettings(proxyURL, dto.ChannelSettings{HTTP2ConnectionShards: 2})
+	require.NoError(t, err)
+
+	InvalidateProxyClient(proxyURL)
+
+	afterDefault, err := GetHttpClientWithProxy(proxyURL)
+	require.NoError(t, err)
+	afterHTTP1, err := GetHttpClientWithProxySettings(proxyURL, dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	afterSharded, err := GetHttpClientWithProxySettings(proxyURL, dto.ChannelSettings{HTTP2ConnectionShards: 2})
+	require.NoError(t, err)
+
+	assert.NotSame(t, defaultClient, afterDefault)
+	assert.NotSame(t, http1Client, afterHTTP1)
+	assert.NotSame(t, shardedClient, afterSharded)
 }
 
-// --- 缓存：相同 key 复用客户端 ---
+func TestResetProxyClientCacheKeepsDefaultPointerAndRecreatesVariants(t *testing.T) {
+	defaultClient := initDefaultHTTPClientFixture(t)
 
-func TestGetHttpClientWithProxyPolicy_Caching(t *testing.T) {
-	ResetPolicyProxyClientCache()
-	policy := HTTPTransportPolicy{Protocol: relaykitdto.HTTPProtocolHTTP1, Shards: 1}
-	c1, _ := GetHttpClientWithProxyPolicy("", policy)
-	c2, _ := GetHttpClientWithProxyPolicy("", policy)
-	if c1 != c2 {
-		t.Errorf("same policy+proxy should return cached same client pointer")
-	}
+	http1Client, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	shardedClient, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTP2ConnectionShards: 3})
+	require.NoError(t, err)
+	proxyClient, err := GetHttpClientWithProxy("http://reset-proxy.example:8080")
+	require.NoError(t, err)
+
+	ResetProxyClientCache()
+
+	assert.Same(t, defaultClient, GetHttpClient(), "default httpClient pointer must stay stable across reset")
+	aware, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	assert.Same(t, defaultClient, aware)
+
+	afterHTTP1, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1})
+	require.NoError(t, err)
+	afterSharded, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{HTTP2ConnectionShards: 3})
+	require.NoError(t, err)
+	afterProxy, err := GetHttpClientWithProxy("http://reset-proxy.example:8080")
+	require.NoError(t, err)
+	assert.NotSame(t, http1Client, afterHTTP1)
+	assert.NotSame(t, shardedClient, afterSharded)
+	assert.NotSame(t, proxyClient, afterProxy)
 }
 
-// 防止未用 import（json 用于潜在扩展；保留 common/constant 用于 context 测试）
-var _ = json.Marshal
-var _ = common.RelayMaxIdleConns
-var _ = context.Background
-var _ time.Duration
-var _ = strings.TrimSpace
+func TestResetProxyClientCacheClosesDefaultIdlePool(t *testing.T) {
+	defaultClient := initDefaultHTTPClientFixture(t)
+	tracker := &closeCountingRoundTripper{}
+	previousTransport := defaultClient.Transport
+	defaultClient.Transport = tracker
+	t.Cleanup(func() {
+		defaultClient.Transport = previousTransport
+	})
+
+	ResetProxyClientCache()
+
+	assert.Same(t, defaultClient, GetHttpClient())
+	assert.GreaterOrEqual(t, tracker.closes.Load(), int32(1), "reset must close idle connections on the stable default client")
+	aware, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	assert.Same(t, defaultClient, aware)
+}
+
+func TestResetProxyClientCacheConcurrentWithGetHttpClient(t *testing.T) {
+	initDefaultHTTPClientFixture(t)
+
+	const workers = 64
+	var wg sync.WaitGroup
+	wg.Add(workers * 2)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			_ = GetHttpClient()
+		}()
+		go func() {
+			defer wg.Done()
+			ResetProxyClientCache()
+		}()
+	}
+	wg.Wait()
+	assert.NotNil(t, GetHttpClient())
+	aware, err := GetHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	assert.Same(t, GetHttpClient(), aware)
+}
+
+func TestCloseIdleConnectionsRedialsHTTP2(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+
+	var mu sync.Mutex
+	addrs := make([]string, 0, 2)
+
+	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs = append(addrs, r.RemoteAddr)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	client := newHTTPClientWithPolicyAndTLS(defaultHTTPTransportPolicy(), testTLSClientConfig(t, server))
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	drainClose(t, resp)
+
+	client.CloseIdleConnections()
+
+	resp, err = client.Get(server.URL)
+	require.NoError(t, err)
+	drainClose(t, resp)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, addrs, 2)
+	assert.NotEqual(t, addrs[0], addrs[1], "after CloseIdleConnections the next request must redial")
+}
+
+func TestNormalizeHTTPTransportPolicyClampsWithoutPanic(t *testing.T) {
+	assert.Equal(t, defaultHTTPTransportPolicy(), NormalizeHTTPTransportPolicy(dto.ChannelSettings{}))
+	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTPProtocol: "AUTO"}))
+	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolHTTP1, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTPProtocol: "HTTP1", HTTP2ConnectionShards: 8}))
+	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTPProtocol: "http3"}))
+	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: -3}))
+	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 8}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: 99}))
+}

@@ -57,6 +57,9 @@ const routerMap = {
   models: '/console/models',
   deployment: '/console/deployment',
   playground: '/console/playground',
+  drawing: '/console/drawing',
+  audit: '/console/audit-log',
+  'task-plugins': '/console/plugin/task',
   personal: '/console/personal',
 };
 
@@ -97,6 +100,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('使用日志'),
         itemKey: 'log',
         to: '/log',
+      },
+      {
+        text: t('审计日志'),
+        itemKey: 'audit',
+        to: '/audit',
       },
       {
         text: t('绘图日志'),
@@ -231,6 +239,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isRoot() ? '' : 'tableHiddle',
       },
       {
+        text: t('任务插件'),
+        itemKey: 'task-plugins',
+        to: '/console/plugin/task',
+        className: isRoot() ? '' : 'tableHiddle',
+      },
+      {
         text: t('横幅管理'),
         itemKey: 'banner',
         to: '/banner',
@@ -277,6 +291,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('操练场'),
         itemKey: 'playground',
         to: '/playground',
+      },
+      {
+        text: t('绘图操场'),
+        itemKey: 'drawing',
+        to: '/drawing',
       },
       {
         text: t('聊天'),

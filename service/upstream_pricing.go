@@ -1,8 +1,8 @@
 package service
 
-// 该文件刻意独立于 HTTP controller。调度任务可以安全持久化
-// PricingSourceDescriptor（它从不包含 key），并使用与交互式 ratio-sync
-// 流程相同的范式。
+// This file is intentionally independent of the HTTP controller.  Scheduled
+// jobs can persist PricingSourceDescriptor safely (it never contains a key) and
+// use the same normal form as the interactive ratio-sync flow.
 
 import (
 	"context"
@@ -38,7 +38,7 @@ const (
 	modelsDevPricingEndpoint                    = "/api.json"
 )
 
-// PricingSourceDescriptor 可安全持久化在 event/task payload 中。
+// PricingSourceDescriptor is safe to persist in an event/task payload.
 type PricingSourceDescriptor struct {
 	Kind            PricingSourceKind `json:"kind"`
 	ChannelID       int               `json:"channel_id,omitempty"`
@@ -81,7 +81,7 @@ func SanitizePricingError(err error) string {
 
 func ValidatePricingSourceDescriptor(source PricingSourceDescriptor) (PricingSourceDescriptor, error) {
 	if source.Kind == PricingSourceOfficial {
-		// 这些是封闭预设，而非用户控制的 descriptor 字段。
+		// These are a closed preset, not user-controlled descriptor fields.
 		source.ChannelID, source.ResolvedBaseURL, source.Endpoint, source.EndpointMode = -100, officialPricingBaseURL, officialPricingEndpoint, ""
 	}
 	if source.Kind == PricingSourceModelsDev {
@@ -164,8 +164,8 @@ func FetchNormalizedPricing(ctx context.Context, source PricingSourceDescriptor,
 		if source.Kind != PricingSourceRealChannel {
 			return NormalizedPricing{}, errors.New("OpenRouter requires a real channel")
 		}
-		// 使用上面已校验的快照。此处第二次读 DB 会让渠道 URL/type 变更与
-		// key 获取产生竞态。
+		// Use the exact snapshot already verified above. A second database read
+		// here would let a channel URL/type change race key acquisition.
 		key, _, apiErr := channelSnapshot.GetNextEnabledKey()
 		if apiErr != nil || strings.TrimSpace(key) == "" {
 			return NormalizedPricing{}, errors.New("no enabled channel key")
@@ -213,8 +213,8 @@ func FetchNormalizedPricing(ctx context.Context, source PricingSourceDescriptor,
 	return parseStandardPricing(body)
 }
 
-// verifyRealPricingChannelSnapshot 将 descriptor 校验与获取分开，
-// 这样一次 DB 加载的渠道既能被校验也能用于鉴权。
+// verifyRealPricingChannelSnapshot keeps descriptor validation separate from
+// fetching so the one DB-loaded channel can be both checked and used for auth.
 func verifyRealPricingChannelSnapshot(source PricingSourceDescriptor, channel *model.Channel) error {
 	if channel == nil || channel.Type != source.ChannelType {
 		return errors.New("channel type changed")
@@ -246,8 +246,8 @@ func parseStandardPricing(body []byte) (NormalizedPricing, error) {
 	if !envelope.Success {
 		return NormalizedPricing{}, errors.New(SanitizePricingError(errors.New(envelope.Message)))
 	}
-	// ratio_config 使用与 GetRatioConfig 相同的 {success,data} 信封。
-	// 其 data 是异构对象：数值 map 加上字符串 billing map。
+	// ratio_config uses the same {success,data} envelope as GetRatioConfig.
+	// Its data is a heterogeneous object: numeric maps plus string billing maps.
 	var rawMaps map[string]json.RawMessage
 	if json.Unmarshal(envelope.Data, &rawMaps) == nil && (rawMaps["model_ratio"] != nil || rawMaps["model_price"] != nil) {
 		decodeNumeric := func(key string) map[string]float64 {
@@ -303,8 +303,8 @@ func parseStandardPricing(body []byte) (NormalizedPricing, error) {
 		if item.AudioCompletionRatio != nil {
 			r.AudioCompletionRatio[item.ModelName] = *item.AudioCompletionRatio
 		}
-		// 匹配既有 /api/pricing 转换：仅可操作的 tiered 模式（带表达式）
-		// 影响基础价格选择。
+		// Match the existing /api/pricing conversion: only an actionable tiered
+		// mode (with expression) influences base-price selection.
 		if item.BillingMode == billing_setting.BillingModeTieredExpr && strings.TrimSpace(item.BillingExpr) != "" {
 			r.BillingMode[item.ModelName] = item.BillingMode
 		}
@@ -317,9 +317,9 @@ func parseOpenRouterPricing(body []byte) (NormalizedPricing, error) {
 		Data []struct {
 			ID      string `json:"id"`
 			Pricing struct {
-				Prompt          string `json:"prompt"`
-				Completion      string `json:"completion"`
-				InputCacheRead  string `json:"input_cache_read"`
+				Prompt         string `json:"prompt"`
+				Completion     string `json:"completion"`
+				InputCacheRead string `json:"input_cache_read"`
 			} `json:"pricing"`
 		} `json:"data"`
 	}
@@ -347,7 +347,7 @@ func parseOpenRouterPricing(body []byte) (NormalizedPricing, error) {
 			continue
 		}
 		if input > 0 {
-			r.ModelRatio[item.ID] = input * 1000 * ratio_setting.USD2RMB
+			r.ModelRatio[item.ID] = input * 1000 * ratio_setting.USD
 			r.CompletionRatio[item.ID] = output / input
 			if item.Pricing.InputCacheRead != "" {
 				if cache, cacheErr := strconv.ParseFloat(item.Pricing.InputCacheRead, 64); cacheErr == nil && cache >= 0 {
@@ -417,7 +417,7 @@ func parseModelsDevPricing(body []byte) (NormalizedPricing, error) {
 	}
 	r := NormalizedPricing{ModelRatio: map[string]float64{}, CompletionRatio: map[string]float64{}, CacheRatio: map[string]float64{}}
 	for name, c := range chosen {
-		r.ModelRatio[name] = c.input * ratio_setting.USD2RMB / 1000
+		r.ModelRatio[name] = c.input * float64(ratio_setting.USD) / 1000
 		if c.input > 0 && c.output != nil {
 			r.CompletionRatio[name] = *c.output / c.input
 		}
@@ -441,7 +441,7 @@ func preferModelsDevCandidate(current float64, currentProvider string, next floa
 	return nextProvider < currentProvider
 }
 
-// BuildMissingPricingPatch 仅读取规范 DB 行，从不读取 OptionMap。
+// BuildMissingPricingPatch reads only canonical DB rows, never OptionMap.
 func BuildMissingPricingPatch(models []string, source NormalizedPricing) ([]PricingPatchOperation, error) {
 	current := make(map[string]map[string]json.RawMessage, 8)
 	keys := []string{"ModelPrice", "ModelRatio", "CompletionRatio", "CacheRatio", "CreateCacheRatio", "ImageRatio", "AudioRatio", "AudioCompletionRatio"}
@@ -504,7 +504,7 @@ func BuildMissingPricingPatch(models []string, source NormalizedPricing) ([]Pric
 	return result, nil
 }
 
-// ToSyncData 保留给需要适配旧版 map 形状 ratio-sync DTO 的调用方。
+// Kept for callers that need to adapt the previous map-shaped ratio-sync DTO.
 func (n NormalizedPricing) ToSyncData() map[string]any {
 	return map[string]any{"model_price": n.ModelPrice, "model_ratio": n.ModelRatio, "completion_ratio": n.CompletionRatio, "cache_ratio": n.CacheRatio, "create_cache_ratio": n.CreateCacheRatio, "image_ratio": n.ImageRatio, "audio_ratio": n.AudioRatio, "audio_completion_ratio": n.AudioCompletionRatio, billing_setting.BillingModeField: n.BillingMode}
 }

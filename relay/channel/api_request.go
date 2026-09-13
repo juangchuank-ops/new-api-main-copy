@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
@@ -19,31 +20,47 @@ import (
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
-	relaykitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
-// requestDebugCaptureReadCloser records at most RequestDebugBodyMaxBytes bytes as
+// requestDebugCaptureReadCloser records at most RequestDebugBodyLimit bytes as
 // net/http consumes the final upstream request body. It deliberately wraps the
 // outbound reader instead of reading it at log time, preserving retries and
-// streaming request semantics. Only active when IsRequestDebugRawEnabled() is true.
+// streaming request semantics.
 type requestDebugCaptureReadCloser struct {
 	io.ReadCloser
+	mu            sync.Mutex
+	buffer        bytes.Buffer
 	fullBody      bytes.Buffer
 	totalBytes    int64
+	truncated     bool
 	fullTruncated bool
 }
 
 func (r *requestDebugCaptureReadCloser) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
 	if n > 0 {
+		r.mu.Lock()
+		defer r.mu.Unlock()
 		r.totalBytes += int64(n)
+		remaining := common2.RequestDebugBodyLimit - r.buffer.Len()
+		if remaining > 0 {
+			toWrite := n
+			if toWrite > remaining {
+				toWrite = remaining
+				r.truncated = true
+			}
+			_, _ = r.buffer.Write(p[:toWrite])
+		}
+		if n > remaining {
+			r.truncated = true
+		}
 		fullRemaining := model.RequestDebugBodyMaxBytes - int64(r.fullBody.Len())
 		if fullRemaining > 0 {
 			toWrite := int64(n)
@@ -60,28 +77,44 @@ func (r *requestDebugCaptureReadCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (r *requestDebugCaptureReadCloser) debugBody(contentType string, contentLength int64) map[string]interface{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return common2.RequestDebugBody(r.buffer.Bytes(), contentType, r.truncated || contentLength > common2.RequestDebugBodyLimit || contentLength > r.totalBytes)
+}
+
 func (r *requestDebugCaptureReadCloser) storeBody(ctx context.Context, requestID, contentType string, contentLength int64, readErr error) error {
 	if r == nil {
 		return nil
 	}
-	truncated := r.fullTruncated || contentLength > model.RequestDebugBodyMaxBytes || readErr != nil
-	return model.StoreRequestDebugBody(ctx, requestID, contentType, r.fullBody.Bytes(), r.totalBytes, truncated)
+	r.mu.Lock()
+	body := bytes.Clone(r.fullBody.Bytes())
+	totalBytes := r.totalBytes
+	truncated := r.fullTruncated || contentLength > model.RequestDebugBodyMaxBytes || contentLength > totalBytes || readErr != nil
+	r.mu.Unlock()
+	return model.StoreRequestDebugBody(ctx, requestID, contentType, body, totalBytes, truncated)
 }
 
-// applyUpstreamContentLength populates req.ContentLength when the upstream
-// body is wrapped in a BodyStorage (see relay/common/outbound_body.go).
-//
-// net/http.NewRequest only auto-detects ContentLength for *bytes.Reader,
-// *bytes.Buffer and *strings.Reader. When the body is a type-erased io.Reader
-// (which is the case for ReaderOnly(BodyStorage)), the Content-Length header
-// would otherwise be omitted, forcing chunked transfer encoding and breaking
-// some upstreams that require an explicit Content-Length.
-func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
-	if info == nil {
+// ApplyUpstreamBodyMetadata restores metadata that net/http cannot infer from
+// a ReplayableBody. Callers must pass the original body because NewRequest
+// hides its dynamic type behind req.Body's io.ReadCloser wrapper.
+func ApplyUpstreamBodyMetadata(req *http.Request, body io.Reader) {
+	replayable, ok := body.(common2.ReplayableBody)
+	if !ok {
 		return
 	}
-	if info.UpstreamRequestBodySize > 0 && req.ContentLength <= 0 {
-		req.ContentLength = info.UpstreamRequestBodySize
+
+	// BodyStorage structurally satisfies ReplayableBody, but it also exposes
+	// io.Closer. If a caller passes the storage directly instead of using
+	// NewReplayableBodyReader, hide Close before the transport takes ownership
+	// of req.Body so the shared replay source remains available to GetBody.
+	if _, rawStorage := body.(common2.BodyStorage); rawStorage {
+		req.Body = io.NopCloser(body)
+	}
+
+	req.ContentLength = replayable.Size()
+	if req.GetBody == nil {
+		req.GetBody = replayable.NewReader
 	}
 }
 
@@ -201,7 +234,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 			return "", false, fmt.Errorf("client_header placeholder name is empty: %q", template)
 		}
 		if c == nil || c.Request == nil {
-			return "", false, fmt.Errorf("missing request context for client_header placeholder")
+			return "", false, nil
 		}
 		clientHeaderValue := c.Request.Header.Get(name)
 		if strings.TrimSpace(clientHeaderValue) == "" {
@@ -237,7 +270,6 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 	}
 
 	headerOverrideSource := common.GetEffectiveHeaderOverride(info)
-
 	passAll := false
 	var passthroughRegex []*regexp.Regexp
 	if !info.IsChannelTest {
@@ -313,10 +345,6 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 		if !ok {
 			return nil, types.NewError(nil, types.ErrorCodeChannelHeaderOverrideInvalid)
 		}
-		if info.IsChannelTest && strings.HasPrefix(strings.TrimSpace(str), clientHeaderPlaceholderPrefix) {
-			continue
-		}
-
 		value, include, err := applyHeaderOverridePlaceholders(str, c, info.ApiKey)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
@@ -334,12 +362,35 @@ func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 	return processHeaderOverride(info, c)
 }
 
+func applyHeaderOverrideToHeaders(headers http.Header, headerOverride map[string]string) {
+	if headers == nil {
+		return
+	}
+	for key, value := range headerOverride {
+		// Header.Set canonicalizes the new key, but it does not remove an
+		// existing differently-cased map key. Delete all case variants first so
+		// the override is the only value that can reach the upstream request.
+		for existingKey := range headers {
+			if strings.EqualFold(existingKey, key) {
+				delete(headers, existingKey)
+			}
+		}
+		headers.Set(key, value)
+	}
+}
+
+// ApplyHeaderOverrideToHeaders applies explicit overrides while removing
+// differently-cased existing keys so a request cannot carry duplicate values.
+func ApplyHeaderOverrideToHeaders(headers http.Header, headerOverride map[string]string) {
+	applyHeaderOverrideToHeaders(headers, headerOverride)
+}
+
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
 	if req == nil {
 		return
 	}
+	applyHeaderOverrideToHeaders(req.Header, headerOverride)
 	for key, value := range headerOverride {
-		req.Header.Set(key, value)
 		// set Host in req
 		if strings.EqualFold(key, "Host") {
 			req.Host = value
@@ -352,45 +403,36 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
-	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
+	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
+	ApplyUpstreamBodyMetadata(req, requestBody)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	// P3 relay-runtime ClientIdentity：在 SetupRequestHeader 之后、Header Override 之前应用。
-	// 桥接方案——identity 从独立 context key 取得（由 distributor 从 OtherSettings JSON 解析），
-	// 不依赖 info.ChannelOtherSettings（旧版 dto 无 ClientIdentity 字段）。未配置时 identity=nil，
-	// Apply* 函数均 nil-safe 直接返回，保持旧版请求行为。
 	if info != nil && info.ChannelMeta != nil && info.ShouldUseChannelTestStyle() {
-		identity := resolveChannelClientIdentityFromContext(c)
 		switch info.ChannelType {
 		case rootconstant.ChannelTypeOpenAI, rootconstant.ChannelTypeAnthropic:
-			ApplyLightweightClientIdentity(req.Header, identity)
+			ApplyLightweightClientIdentity(req.Header, info.ChannelOtherSettings.ClientIdentity)
 		case rootconstant.ChannelTypeCodex:
-			// OAuth 凭证与账户路由仍由 adaptor 负责；client identity 在 Header Override 之前生成。
-			ApplyCodexLegacyClientIdentity(req.Header, identity)
+			// OAuth credentials and account routing remain owned by the adapter;
+			// the client identity is generated before Header Override is applied.
+			ApplyCodexLegacyClientIdentity(req.Header, info.ChannelOtherSettings.ClientIdentity)
 		case rootconstant.ChannelTypeCodexCompatibility:
-			ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, req.Header, info.ApiKey, info.IsStream, "", identity)
+			ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, req.Header, info.ApiKey, info.IsStream, "", info.ChannelOtherSettings.ClientIdentity)
 		case rootconstant.ChannelTypeClaudeCode:
-			ApplyClaudeCodeCompatibilityHeadersWithIdentity(req.Header, info.ApiKey, info.IsStream, info.EnsureClaudeCodeSessionID(), true, identity)
+			ApplyClaudeCodeCompatibilityHeadersWithIdentity(req.Header, info.ApiKey, info.IsStream, info.EnsureClaudeCodeSessionID(), true, info.ChannelOtherSettings.ClientIdentity)
 		case rootconstant.ChannelTypeCodeBuddy:
-			conversationID := ResolveCodeBuddyConversationID(c.Request.Header, nil)
-			if conversationID == "" {
-				if key := codeBuddyConversationKeyFromRequest(info.Request); key != "" {
-					conversationID = codeBuddyConversationUUID(key)
-				}
-			}
-			ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, req.Header, info.ApiKey, info.IsStream, conversationID, identity)
+			conversationID := ResolveCodeBuddyConversationID(c.Request.Header, info.Request)
+			ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, req.Header, info.ApiKey, info.IsStream, conversationID, info.ChannelOtherSettings.ClientIdentity)
 		}
 	}
-	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
-	// 这样可以覆盖默认的 Authorization header 设置
+	// Apply Header Override last so it wins over every ordinary header emitted
+	// by the adaptor or the compatibility profile.
 	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
 		return nil, err
@@ -408,12 +450,12 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
-	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
+	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
+	ApplyUpstreamBodyMetadata(req, requestBody)
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
@@ -421,12 +463,10 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	// P3 relay-runtime ClientIdentity（Form 路径仅标准 OpenAI/Anthropic 轻量 profile）。
 	if info != nil && info.ChannelMeta != nil && info.ShouldUseChannelTestStyle() {
-		identity := resolveChannelClientIdentityFromContext(c)
 		switch info.ChannelType {
 		case rootconstant.ChannelTypeOpenAI, rootconstant.ChannelTypeAnthropic:
-			ApplyLightweightClientIdentity(req.Header, identity)
+			ApplyLightweightClientIdentity(req.Header, info.ChannelOtherSettings.ClientIdentity)
 		}
 	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
@@ -453,27 +493,23 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	// P3 relay-runtime ClientIdentity（WSS 路径仅标准 OpenAI/Anthropic 轻量 profile）。
 	if info != nil && info.ChannelMeta != nil && info.ShouldUseChannelTestStyle() {
-		identity := resolveChannelClientIdentityFromContext(c)
 		switch info.ChannelType {
 		case rootconstant.ChannelTypeOpenAI, rootconstant.ChannelTypeAnthropic:
-			ApplyLightweightClientIdentity(targetHeader, identity)
+			ApplyLightweightClientIdentity(targetHeader, info.ChannelOtherSettings.ClientIdentity)
 		}
 	}
-	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
-	// 这样可以覆盖默认的 Authorization header 设置
+	// Keep the client Content-Type as an adaptor default. Header Override is
+	// applied after this assignment so it remains the final value.
+	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range headerOverride {
-		targetHeader.Set(key, value)
-	}
-	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	applyHeaderOverrideToHeaders(targetHeader, headerOverride)
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
-		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
+		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
 	}
 	// send request body
 	//all, err := io.ReadAll(requestBody)
@@ -481,10 +517,12 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	return targetConn, nil
 }
 
-func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.CancelFunc {
+func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) (context.CancelFunc, <-chan struct{}) {
 	pingerCtx, stopPinger := context.WithCancel(context.Background())
+	done := make(chan struct{})
 
 	gopool.Go(func() {
+		defer close(done)
 		defer func() {
 			// 增加panic恢复处理
 			if r := recover(); r != nil {
@@ -534,96 +572,150 @@ func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.Canc
 		}
 	})
 
-	return stopPinger
+	return stopPinger, done
 }
 
 func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
-	// 增加超时控制，防止锁死等待
-	done := make(chan error, 1)
-	go func() {
-		mutex.Lock()
-		defer mutex.Unlock()
+	mutex.Lock()
+	defer mutex.Unlock()
 
-		err := helper.PingData(c)
-		if err != nil {
-			logger.LogError(c, "SSE ping error: "+err.Error())
-			done <- err
-			return
-		}
-
-		logger.LogDebug(c, "SSE ping data sent")
-		done <- nil
-	}()
-
-	// 设置发送ping数据的超时时间
-	select {
-	case err := <-done:
+	// Bound the write so a slow client cannot block this goroutine forever;
+	// doRequest's defer waits for the pinger to exit before returning.
+	helper.ExtendWriteDeadline(c)
+	err := helper.PingData(c)
+	if err != nil {
+		logger.LogError(c, "SSE ping error: "+err.Error())
 		return err
-	case <-time.After(10 * time.Second):
-		return errors.New("SSE ping data send timeout")
-	case <-c.Request.Context().Done():
-		return errors.New("request context cancelled during ping")
 	}
+
+	logger.LogDebug(c, "SSE ping data sent")
+	return nil
 }
 
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
+
+// keepUpstreamRedirectResponse stops net/http from following redirects while
+// returning the upstream 3xx response to the relay without an extra error.
+func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
-	// P3-Bridge: 经 GetRelayHTTPClient 读取 context 中的 HTTP transport policy。
-	// 未配置 policy（默认）时内部走旧版 NewProxyHttpClient/GetHttpClient，行为零变化；
-	// 配置了 HTTPProtocol=http1 或 shards>1 时启用新版 transport 逻辑。
-	client, err := service.GetRelayHTTPClient(c, info.ChannelSetting.Proxy)
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
-		return nil, fmt.Errorf("new http client failed: %w", err)
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	// Clients are cached and shared across channels, so override redirect
+	// behavior on a shallow copy instead of mutating the cached client. This
+	// still reuses its transport and connection pools, including HTTP/2's
+	// transparent stream retries.
+	relayClient := *client
+	relayClient.CheckRedirect = keepUpstreamRedirectResponse
+	if common2.DebugEnabled && req != nil && req.URL != nil {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport select: host=%s protocol=%s shards=%d policy=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+		))
 	}
 
 	var stopPinger context.CancelFunc
+	var pingerDone <-chan struct{}
 	if info.IsStream {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
 		generalSettings := operation_setting.GetGeneralSetting()
 		if generalSettings.PingIntervalEnabled && !info.DisablePing {
 			pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
-			stopPinger = startPingKeepAlive(c, pingInterval)
+			stopPinger, pingerDone = startPingKeepAlive(c, pingInterval)
 			// 使用defer确保在任何情况下都能停止ping goroutine
 			defer func() {
 				if stopPinger != nil {
 					stopPinger()
+					<-pingerDone
 					logger.LogDebug(c, "SSE ping goroutine stopped by defer")
 				}
 			}()
 		}
 	}
 
-	// P2-1: Capture the outbound request body for on-demand raw diagnostics.
-	// Only active when the root-controlled switch is enabled; otherwise the
-	// request flows through unchanged, preserving the original behavior.
+	// Capture only bytes that the transport consumes, and only while the explicit
+	// root-controlled raw diagnostics switch is enabled.
 	var bodyCapture *requestDebugCaptureReadCloser
+	var latestCapture atomic.Pointer[requestDebugCaptureReadCloser]
 	if common2.IsRequestDebugRawEnabled() && req != nil && req.Body != nil {
 		bodyCapture = &requestDebugCaptureReadCloser{ReadCloser: req.Body}
 		req.Body = bodyCapture
+		latestCapture.Store(bodyCapture)
+		if getBody := req.GetBody; getBody != nil {
+			req.GetBody = func() (io.ReadCloser, error) {
+				body, err := getBody()
+				if err != nil {
+					return nil, err
+				}
+				// Each retry owns its capture: an abandoned writer may still be
+				// finishing while the transport begins reading the next body.
+				capture := &requestDebugCaptureReadCloser{ReadCloser: body}
+				latestCapture.Store(capture)
+				return capture, nil
+			}
+		}
 	}
-
-	resp, err := client.Do(req)
-
-	// Store the captured body regardless of success or failure. The error log
-	// is often the diagnostic record operators need most.
+	// Keep only the final attempt in the gin context. Retry callers reuse this
+	// context, so this does not create extra persisted log entries.
+	common2.SetContextKey(c, rootconstant.ContextKeyRequestDebug, map[string]interface{}{
+		"upstream": requestDebugUpstream(req, bodyCapture),
+	})
+	resp, err := relayClient.Do(req)
+	bodyCapture = latestCapture.Load()
+	bodyStored := false
 	if bodyCapture != nil {
 		requestID := c.GetString(common2.RequestIdKey)
 		if requestID != "" {
 			if storeErr := bodyCapture.storeBody(c.Request.Context(), requestID, req.Header.Get("Content-Type"), req.ContentLength, err); storeErr != nil {
-				logger.LogWarn(c, "failed to store request debug body: "+storeErr.Error())
+				logger.LogWarn(c, "failed to store full request debug body: "+storeErr.Error())
+			} else {
+				bodyStored = true
 			}
 		}
 	}
-
+	requestDebug := func() map[string]interface{} {
+		if bodyStored {
+			return requestDebugUpstreamReference(req, bodyCapture, c.GetString(common2.RequestIdKey))
+		}
+		return requestDebugUpstream(req, bodyCapture)
+	}
 	if err != nil {
+		// Preserve any bytes consumed before a transport failure as well. The
+		// error log is often the diagnostic record operators need most.
+		common2.SetContextKey(c, rootconstant.ContextKeyRequestDebug, map[string]interface{}{
+			"upstream": requestDebug(),
+		})
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
+	}
+	common2.SetContextKey(c, rootconstant.ContextKeyRequestDebug, map[string]interface{}{
+		"upstream": requestDebug(),
+		"response": common2.RequestDebugResponse(resp),
+	})
+	if common2.DebugEnabled {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport negotiated: host=%s protocol=%s shards=%d policy=%s negotiated=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+			resp.Proto,
+		))
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
@@ -635,19 +727,48 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return resp, nil
 }
 
+func requestDebugUpstream(req *http.Request, bodyCapture *requestDebugCaptureReadCloser) map[string]interface{} {
+	debug := common2.RequestDebugUpstream(req)
+	if bodyCapture != nil && debug != nil {
+		for key, value := range bodyCapture.debugBody(req.Header.Get("Content-Type"), req.ContentLength) {
+			debug[key] = value
+		}
+	}
+	return debug
+}
+
+func requestDebugUpstreamReference(req *http.Request, bodyCapture *requestDebugCaptureReadCloser, requestID string) map[string]interface{} {
+	debug := requestDebugUpstream(req, bodyCapture)
+	if debug == nil || bodyCapture == nil {
+		return debug
+	}
+	delete(debug, "body")
+	debug["body_available"] = true
+	debug["body_ref"] = requestID
+	bodyCapture.mu.Lock()
+	debug["body_truncated"] = bodyCapture.fullTruncated || (req.ContentLength > model.RequestDebugBodyMaxBytes) || (req.ContentLength >= 0 && bodyCapture.totalBytes < req.ContentLength)
+	bodyCapture.mu.Unlock()
+	return debug
+}
+
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	req, err := newTaskAPIRequest(c, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(requestBody), nil
-	}
+	ApplyUpstreamBodyMetadata(req, requestBody)
+	// Do NOT wrap requestBody in a GetBody closure here: returning the same
+	// (already consumed) reader would make any transport-level retry silently
+	// replay an empty body. http.NewRequest already derives a correct,
+	// snapshot-based GetBody for *bytes.Reader/Buffer/strings.Reader bodies
+	// (which most task adaptors pass in); ApplyUpstreamBodyMetadata wires the
+	// same contract for bodies that explicitly implement ReplayableBody.
+	// Otherwise GetBody stays nil so the transport fails the retry instead of
+	// sending a corrupted request.
 
 	err = a.BuildRequestHeader(c, req, info)
 	if err != nil {
@@ -660,17 +781,9 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	return resp, nil
 }
 
-// resolveChannelClientIdentityFromContext 读取桥接 context 中的 ClientIdentity。
-// P3-Bridge：identity 由 distributor 从渠道 OtherSettings JSON 解析并存入独立 context key，
-// 不依赖 info.ChannelOtherSettings（旧版 dto 无 ClientIdentity 字段）。
-// 未配置 / 解析失败 / key 缺失均返回 nil，调用方（Apply* 函数）nil-safe 直接返回，保持旧版行为。
-func resolveChannelClientIdentityFromContext(c *gin.Context) *relaykitdto.ClientIdentityConfig {
-	if c == nil {
-		return nil
+func newTaskAPIRequest(c *gin.Context, fullRequestURL string, requestBody io.Reader) (*http.Request, error) {
+	if c == nil || c.Request == nil {
+		return nil, errors.New("task client request is missing")
 	}
-	identity, ok := common2.GetContextKeyType[*relaykitdto.ClientIdentityConfig](c, rootconstant.ContextKeyChannelClientIdentity)
-	if !ok || identity == nil {
-		return nil
-	}
-	return identity
+	return http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 }

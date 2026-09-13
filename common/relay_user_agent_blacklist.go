@@ -84,8 +84,9 @@ func NormalizeRelayUserAgentBlacklist(value string) (string, error) {
 }
 
 // SetRelayUserAgentBlacklistConfig replaces the complete immutable matcher
-// snapshot so requests never compile regular expressions.
-func SetRelayUserAgentBlacklistConfig(enabled bool, value string, action string) (string, error) {
+// snapshot so requests never compile regular expressions. The optional action
+// selects what happens on a hit and defaults to reject-only.
+func SetRelayUserAgentBlacklistConfig(enabled bool, value string, action ...string) (string, error) {
 	normalized, err := NormalizeRelayUserAgentBlacklist(value)
 	if err != nil {
 		return "", err
@@ -101,9 +102,13 @@ func SetRelayUserAgentBlacklistConfig(enabled bool, value string, action string)
 			patterns = append(patterns, relayUserAgentPattern{source: pattern, re: compiled})
 		}
 	}
+	hitAction := RelayUserAgentBlacklistAction403
+	if len(action) > 0 {
+		hitAction = NormalizeRelayUserAgentBlacklistAction(action[0])
+	}
 	relayUserAgentBlacklist.Store(&relayUserAgentBlacklistConfig{
 		enabled:  enabled,
-		action:   NormalizeRelayUserAgentBlacklistAction(action),
+		action:   hitAction,
 		patterns: patterns,
 	})
 	return normalized, nil

@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -12,10 +15,15 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +48,7 @@ var channelUpstreamModelUpdateSelectFields = []string{
 	"status",
 	"base_url",
 	"models",
+	"config_revision",
 	"model_mapping",
 	"settings",
 	"setting",
@@ -255,8 +264,113 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 	return interval
 }
 
+func parseOpenAIModelIDs(body []byte) ([]string, error) {
+	var result struct {
+		Data *[]OpenAIModel `json:"data"`
+	}
+	if err := common.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("invalid OpenAI Models response: %w", err)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("invalid OpenAI Models response: data is required")
+	}
+	ids := normalizeModelNames(lo.Map(*result.Data, func(item OpenAIModel, _ int) string {
+		return item.ID
+	}))
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("OpenAI Models response contains no valid model IDs")
+	}
+	return ids, nil
+}
+
+func sanitizeFetchModelsError(err error, key string) error {
+	if err == nil {
+		return nil
+	}
+
+	// net/http includes the complete request URL in url.Error. Discovery routes
+	// may put the API key in a custom query name or value, so never return that
+	// wrapper to an API client.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		err = urlErr.Err
+	}
+
+	message := err.Error()
+	key = strings.TrimSpace(key)
+	if key != "" {
+		message = strings.ReplaceAll(message, key, "[REDACTED]")
+		message = strings.ReplaceAll(message, url.QueryEscape(key), "[REDACTED]")
+		message = strings.ReplaceAll(message, url.PathEscape(key), "[REDACTED]")
+	}
+	return errors.New(message)
+}
+
+func sanitizeAdvancedCustomRequestError(err error, key string, requestURL string) error {
+	err = sanitizeFetchModelsError(err, key)
+	if err == nil {
+		return nil
+	}
+	parsedURL, parseErr := url.Parse(requestURL)
+	if parseErr != nil {
+		return err
+	}
+	message := err.Error()
+	for _, value := range parsedURL.Query() {
+		for _, secret := range value {
+			if secret == "" {
+				continue
+			}
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+			message = strings.ReplaceAll(message, url.QueryEscape(secret), "[REDACTED]")
+			message = strings.ReplaceAll(message, url.PathEscape(secret), "[REDACTED]")
+		}
+	}
+	if key != "" {
+		message = strings.ReplaceAll(message, key, "[REDACTED]")
+		message = strings.ReplaceAll(message, url.QueryEscape(key), "[REDACTED]")
+		message = strings.ReplaceAll(message, url.PathEscape(key), "[REDACTED]")
+	}
+	return errors.New(message)
+}
+
+func getFetchModelsResponseBody(method string, requestURL string, channel *model.Channel, headers http.Header) ([]byte, error) {
+	request, err := http.NewRequest(method, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for name, values := range headers {
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+		if strings.EqualFold(name, "Host") {
+			request.Host = headers.Get(name)
+		}
+	}
+	client, err := service.NewProxyHttpClient(channel.GetSetting().Proxy)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code: %d", response.StatusCode)
+	}
+	return io.ReadAll(response.Body)
+}
+
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
-	baseURL := constant.ChannelBaseURLs[channel.Type]
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		plugin, ok := jsplugin.DefaultRegistry.Get(channel.GetSetting().TaskPluginKey)
+		if !ok {
+			return nil, fmt.Errorf("task plugin %q is not registered", channel.GetSetting().TaskPluginKey)
+		}
+		return normalizeModelNames(plugin.Meta.Models), nil
+	}
+	baseURL := constant.GetChannelBaseURL(channel.Type)
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()
 	}
@@ -285,6 +399,14 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return normalizeModelNames(models), nil
 	}
 
+	if channel.Type == constant.ChannelTypeAdvancedCustom {
+		return fetchAdvancedCustomUpstreamModelIDs(channel, baseURL)
+	}
+
+	if channel.Type == constant.ChannelTypeCodex {
+		return service.FetchCodexChannelModels(channel)
+	}
+
 	var url string
 	switch channel.Type {
 	case constant.ChannelTypeAli:
@@ -296,10 +418,13 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 			url = fmt.Sprintf("%s/api/paas/v4/models", baseURL)
 		}
 	case constant.ChannelTypeVolcEngine:
+		// 火山方舟 OpenAI 兼容 API 根路径是 /api/v3（chat/embeddings 均为
+		// {base}/api/v3/...，见 relay/channel/volcengine 的 GetRequestURL），
+		// 不存在 /v1/models 端点。原拼接会导致「获取模型列表」固定 404 失败。
 		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
 			url = fmt.Sprintf("%s/v1/models", plan.OpenAIBaseURL)
 		} else {
-			url = fmt.Sprintf("%s/v1/models", baseURL)
+			url = fmt.Sprintf("%s/api/v3/models", baseURL)
 		}
 	case constant.ChannelTypeMoonshot:
 		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
@@ -319,38 +444,77 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 
 	headers, err := buildFetchModelsHeaders(channel, key)
 	if err != nil {
-		return nil, err
+		return nil, sanitizeFetchModelsError(err, key)
 	}
 
-	body, err := GetResponseBody(http.MethodGet, url, channel, headers)
+	body, err := getFetchModelsResponseBody(http.MethodGet, url, channel, headers)
 	if err != nil {
-		return nil, err
+		return nil, sanitizeAdvancedCustomRequestError(err, key, url)
 	}
 
 	var result OpenAIModelsResponse
 	if err := common.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
-
 	ids := lo.Map(result.Data, func(item OpenAIModel, _ int) string {
 		if channel.Type == constant.ChannelTypeGemini {
 			return strings.TrimPrefix(item.ID, "models/")
 		}
 		return item.ID
 	})
-
 	return normalizeModelNames(ids), nil
 }
 
-func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.ChannelOtherSettings, updateModels bool) error {
+func fetchAdvancedCustomUpstreamModelIDs(channel *model.Channel, baseURL string) ([]string, error) {
+	key, _, apiErr := channel.GetNextEnabledKey()
+	if apiErr != nil {
+		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+	}
+	key = strings.TrimSpace(key)
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat:    types.RelayFormatOpenAI,
+		RelayMode:      relayconstant.RelayModeUnknown,
+		RequestURLPath: dto.AdvancedCustomModelListPath,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeAdvancedCustom,
+			ChannelBaseUrl:       baseURL,
+			ApiKey:               key,
+			ChannelOtherSettings: channel.GetOtherSettings(),
+		},
+	}
+
+	adaptor := &advancedcustom.Adaptor{}
+	url, headers, err := adaptor.BuildModelListRequest(info)
+	if err != nil {
+		return nil, sanitizeFetchModelsError(err, key)
+	}
+	if err := applyFetchModelsHeaderOverrides(channel, key, headers); err != nil {
+		return nil, sanitizeFetchModelsError(err, key)
+	}
+
+	body, err := getFetchModelsResponseBody(http.MethodGet, url, channel, headers)
+	if err != nil {
+		return nil, sanitizeFetchModelsError(err, key)
+	}
+	return parseOpenAIModelIDs(body)
+}
+
+func persistChannelUpstreamModelMutation(channel *model.Channel, expectedModels string, settings dto.ChannelOtherSettings, trigger service.ChannelMutationTrigger) (*service.ChannelUpstreamModelMutationResult, error) {
+	expectedRevision := channel.ConfigRevision
+	expectedOtherSettings := channel.OtherSettings
 	channel.SetOtherSettings(settings)
-	updates := map[string]interface{}{
-		"settings": channel.OtherSettings,
+	result, err := service.PersistChannelUpstreamModels(service.PersistChannelUpstreamModelMutation{
+		ChannelID: channel.Id, ExpectedRevision: expectedRevision, ExpectedModels: expectedModels, ExpectedOtherSettings: expectedOtherSettings, NextModels: channel.Models, OtherSettings: channel.OtherSettings, Trigger: trigger,
+	})
+	if err != nil {
+		return nil, err
 	}
-	if updateModels {
-		updates["models"] = channel.Models
-	}
-	return model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	channel.Models = result.Updated.Models
+	channel.OtherSettings = result.Updated.OtherSettings
+	channel.ConfigRevision = result.Updated.ConfigRevision
+	channel.AutoPriceGuardID = result.Updated.AutoPriceGuardID
+	return result, nil
 }
 
 func checkAndPersistChannelUpstreamModelUpdates(
@@ -359,6 +523,7 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	force bool,
 	allowAutoApply bool,
 ) (modelsChanged bool, autoAdded int, err error) {
+	expectedModels := channel.Models
 	now := common.GetTimestamp()
 	if !force {
 		minInterval := getUpstreamModelUpdateMinCheckIntervalSeconds()
@@ -371,7 +536,7 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	pendingAddModels, pendingRemoveModels, fetchErr := collectPendingUpstreamModelChanges(channel, *settings)
 	settings.UpstreamModelUpdateLastCheckTime = now
 	if fetchErr != nil {
-		if err = updateChannelUpstreamModelSettings(channel, *settings, false); err != nil {
+		if _, err = persistChannelUpstreamModelMutation(channel, expectedModels, *settings, service.ChannelMutationTriggerUpstreamApply); err != nil {
 			return false, 0, err
 		}
 		return false, 0, fetchErr
@@ -391,15 +556,15 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	}
 	settings.UpstreamModelUpdateLastRemovedModels = pendingRemoveModels
 
-	if err = updateChannelUpstreamModelSettings(channel, *settings, modelsChanged); err != nil {
+	trigger := service.ChannelMutationTriggerUpstreamApply
+	if modelsChanged {
+		trigger = service.ChannelMutationTriggerUpstreamAutoApply
+	}
+	mutation, err := persistChannelUpstreamModelMutation(channel, expectedModels, *settings, trigger)
+	if err != nil {
 		return false, autoAdded, err
 	}
-	if modelsChanged {
-		if err = channel.UpdateAbilities(nil); err != nil {
-			return true, autoAdded, err
-		}
-	}
-	return modelsChanged, autoAdded, nil
+	return mutation.ModelsChanged, autoAdded, nil
 }
 
 func refreshChannelRuntimeCache() {
@@ -413,7 +578,6 @@ func refreshChannelRuntimeCache() {
 			model.InitChannelCache()
 		}()
 	}
-	service.ResetProxyClientCache()
 }
 
 func shouldSendUpstreamModelUpdateNotification(now int64, changedChannels int, failedChannels int) bool {
@@ -736,7 +900,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 		refreshChannelRuntimeCache()
 	}
 
-	recordManageAudit(c, "channel.upstream_apply", map[string]interface{}{
+	recordManageAudit(c, "channel.upstream_apply", map[string]any{
 		"id": channel.Id,
 	})
 	c.JSON(http.StatusOK, gin.H{
@@ -820,6 +984,7 @@ func applyChannelUpstreamModelUpdates(
 	removeModels := intersectModelNames(removeModelsInput, pendingRemoveModels)
 	removeModels = subtractModelNames(removeModels, addModels)
 
+	expectedModels := channel.Models
 	originModels := normalizeModelNames(channel.GetModels())
 	nextModels := applySelectedModelChanges(originModels, addModels, removeModels)
 	modelsChanged = !slices.Equal(originModels, nextModels)
@@ -837,16 +1002,11 @@ func applyChannelUpstreamModelUpdates(
 	settings.UpstreamModelUpdateLastRemovedModels = remainingRemoveModels
 	settings.UpstreamModelUpdateLastCheckTime = common.GetTimestamp()
 
-	if err := updateChannelUpstreamModelSettings(channel, settings, modelsChanged); err != nil {
+	mutation, err := persistChannelUpstreamModelMutation(channel, expectedModels, settings, service.ChannelMutationTriggerUpstreamApply)
+	if err != nil {
 		return nil, nil, nil, nil, false, err
 	}
-
-	if modelsChanged {
-		if err := channel.UpdateAbilities(nil); err != nil {
-			return addModels, removeModels, remainingModels, remainingRemoveModels, true, err
-		}
-	}
-	return addModels, removeModels, remainingModels, remainingRemoveModels, modelsChanged, nil
+	return addModels, removeModels, remainingModels, remainingRemoveModels, mutation.ModelsChanged, nil
 }
 
 func collectPendingApplyUpstreamModelChanges(settings dto.ChannelOtherSettings) (pendingAddModels []string, pendingRemoveModels []string) {
@@ -934,7 +1094,7 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 		refreshChannelRuntimeCache()
 	}
 
-	recordManageAudit(c, "channel.upstream_apply_all", map[string]interface{}{
+	recordManageAudit(c, "channel.upstream_apply_all", map[string]any{
 		"count": len(results),
 	})
 	c.JSON(http.StatusOK, gin.H{
@@ -975,7 +1135,7 @@ func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "channel.upstream_detect_all", map[string]interface{}{
+	recordManageAudit(c, "channel.upstream_detect_all", map[string]any{
 		"task_id": task.TaskID,
 	})
 	c.JSON(http.StatusOK, gin.H{

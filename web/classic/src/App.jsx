@@ -21,7 +21,7 @@ import React, { lazy, Suspense, useContext, useMemo } from 'react';
 import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, RootRoute } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
 import LoginForm from './components/auth/LoginForm';
 import NotFound from './pages/NotFound';
@@ -61,6 +61,13 @@ import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
+import AuditLog from './pages/AuditLog';
+import TaskPlugin from './pages/TaskPlugin';
+import Drawing from './pages/Drawing';
+import ModelDetail from './pages/ModelDetail';
+import Error401 from './pages/Error401';
+import Error500 from './pages/Error500';
+import Error503 from './pages/Error503';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -406,6 +413,30 @@ function App() {
           }
         />
         <Route
+          path='/console/audit-log'
+          element={
+            <PrivateRoute>
+              <AuditLog />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/plugin/task'
+          element={
+            <RootRoute>
+              <TaskPlugin />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/drawing'
+          element={
+            <PrivateRoute>
+              <Drawing />
+            </PrivateRoute>
+          }
+        />
+        <Route
           path='/console'
           element={
             <PrivateRoute>
@@ -450,6 +481,25 @@ function App() {
             ) : (
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Pricing />
+              </Suspense>
+            )
+          }
+        />
+        <Route
+          path='/pricing/:modelId'
+          element={
+            pricingRequireAuth ? (
+              <PrivateRoute>
+                <Suspense
+                  fallback={<Loading></Loading>}
+                  key={location.pathname}
+                >
+                  <ModelDetail />
+                </Suspense>
+              </PrivateRoute>
+            ) : (
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <ModelDetail />
               </Suspense>
             )
           }
@@ -537,6 +587,9 @@ function App() {
             </PrivateRoute>
           }
         />
+        <Route path='/401' element={<Error401 />} />
+        <Route path='/500' element={<Error500 />} />
+        <Route path='/503' element={<Error503 />} />
         <Route path='*' element={<NotFound />} />
       </Routes>
     </SetupCheck>

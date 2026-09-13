@@ -9,7 +9,6 @@ import (
 )
 
 // ParseProxyURLStrict validates and normalizes a proxy URL for persistence.
-// Mirrors new-api-reference/common/proxy_url.go.
 func ParseProxyURLStrict(rawProxyURL string) (*url.URL, error) {
 	parsedURL, _, err := parseProxyURL(rawProxyURL, false)
 	return parsedURL, err

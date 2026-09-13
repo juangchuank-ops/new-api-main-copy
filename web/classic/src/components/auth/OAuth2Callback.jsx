@@ -26,11 +26,14 @@ import {
   showSuccess,
   showInfo,
   updateAPI,
-  setUserData,
+  applyLoginBundle,
+  isLoginChallenge,
+  isPendingRegistrationChallenge,
 } from '../../helpers';
 import { UserContext } from '../../context/User';
 import Loading from '../common/ui/Loading';
-import { Modal, Input, Button } from '@douyinfe/semi-ui';
+import TwoFAVerification from './TwoFAVerification';
+import { Modal, Input } from '@douyinfe/semi-ui';
 
 const OAuth2Callback = (props) => {
   const { t } = useTranslation();
@@ -41,49 +44,80 @@ const OAuth2Callback = (props) => {
   // 防止 React 18 Strict Mode 下重复执行
   const hasExecuted = useRef(false);
 
-  // 邀请码弹窗状态
-  const [showInvitationCodeModal, setShowInvitationCodeModal] = useState(false);
-  const [invitationCode, setInvitationCode] = useState('');
-  const [invitationCodeSubmitting, setInvitationCodeSubmitting] = useState(false);
+  // 注册码弹窗状态
+  const [showRegistrationCodeModal, setShowRegistrationCodeModal] =
+    useState(false);
+  const [registrationCode, setRegistrationCode] = useState('');
+  const [registrationCodeSubmitting, setRegistrationCodeSubmitting] =
+    useState(false);
+  const [registrationFlowToken, setRegistrationFlowToken] = useState('');
+
+  // 二次验证状态
+  const [showTwoFA, setShowTwoFA] = useState(false);
+  const [loginFlowToken, setLoginFlowToken] = useState('');
 
   // 最大重试次数
   const MAX_RETRIES = 3;
 
-  const handleLoginAfterRegistration = (data) => {
-    userDispatch({ type: 'login', payload: data });
-    localStorage.setItem('user', JSON.stringify(data));
-    setUserData(data);
+  const applyBundleOrChallenge = (data) => {
+    if (isLoginChallenge(data)) {
+      setLoginFlowToken(data.flow_token);
+      setShowTwoFA(true);
+      return;
+    }
+    const loggedInUser = applyLoginBundle(data, userDispatch);
+    if (!loggedInUser) {
+      showError(t('登录失败，请重试'));
+      return;
+    }
     updateAPI();
     showSuccess(t('登录成功！'));
     navigate('/console/token');
   };
 
-  const handleInvitationCodeSubmit = async () => {
-    if (!invitationCode.trim()) {
-      showInfo(t('请输入邀请码'));
+  const handleRegistrationCodeSubmit = async () => {
+    if (!registrationCode.trim()) {
+      showInfo(t('请输入注册码'));
       return;
     }
-    setInvitationCodeSubmitting(true);
+    setRegistrationCodeSubmitting(true);
     try {
-      const res = await API.post('/api/oauth/complete', {
-        invitation_code: invitationCode.trim(),
+      const res = await API.post('/api/user/register/complete', {
+        flow_token: registrationFlowToken,
+        registration_code: registrationCode.trim(),
       });
       const { success, message, data } = res.data;
       if (success) {
-        setShowInvitationCodeModal(false);
-        handleLoginAfterRegistration(data);
-      } else if (message && message.includes('already registered')) {
-        setShowInvitationCodeModal(false);
-        showInfo(t('账户已存在，请登录'));
+        setShowRegistrationCodeModal(false);
+        if (
+          data &&
+          typeof data === 'object' &&
+          (data.access_token || data.require_verification)
+        ) {
+          applyBundleOrChallenge(data);
+          return;
+        }
+        showSuccess(t('注册成功！'));
         navigate('/login');
       } else {
-        showError(message || t('邀请码无效'));
+        showError(message || t('注册码无效'));
       }
     } catch (error) {
       showError(t('注册失败，请重试'));
     } finally {
-      setInvitationCodeSubmitting(false);
+      setRegistrationCodeSubmitting(false);
     }
+  };
+
+  const handle2FASuccess = (data) => {
+    const loggedInUser = applyLoginBundle(data, userDispatch);
+    if (!loggedInUser) {
+      showError(t('登录失败，请重试'));
+      return;
+    }
+    updateAPI();
+    showSuccess(t('登录成功！'));
+    navigate('/console/token');
   };
 
   const sendCode = async (code, state, retry = 0) => {
@@ -95,11 +129,6 @@ const OAuth2Callback = (props) => {
       const { success, message, data } = resData;
 
       if (!success) {
-        // 检查是否需要邀请码
-        if (resData.invitation_code_required) {
-          setShowInvitationCodeModal(true);
-          return;
-        }
         // 业务错误不重试，直接显示错误
         showError(message || t('授权失败'));
         return;
@@ -108,9 +137,16 @@ const OAuth2Callback = (props) => {
       if (data?.action === 'bind') {
         showSuccess(t('绑定成功！'));
         navigate('/console/personal');
-      } else {
-        handleLoginAfterRegistration(data);
+        return;
       }
+
+      if (isPendingRegistrationChallenge(data)) {
+        setRegistrationFlowToken(data.flow_token);
+        setShowRegistrationCodeModal(true);
+        return;
+      }
+
+      applyBundleOrChallenge(data);
     } catch (error) {
       // 网络错误等可重试
       if (retry < MAX_RETRIES) {
@@ -147,14 +183,25 @@ const OAuth2Callback = (props) => {
 
   return (
     <>
-      <Loading />
+      {showTwoFA ? (
+        <TwoFAVerification
+          flowToken={loginFlowToken}
+          onSuccess={handle2FASuccess}
+          onBack={() => {
+            setShowTwoFA(false);
+            navigate('/login');
+          }}
+        />
+      ) : (
+        <Loading />
+      )}
       <Modal
-        title={t('需要邀请码')}
-        visible={showInvitationCodeModal}
+        title={t('需要注册码')}
+        visible={showRegistrationCodeModal}
         maskClosable={false}
-        onOk={handleInvitationCodeSubmit}
+        onOk={handleRegistrationCodeSubmit}
         onCancel={() => {
-          setShowInvitationCodeModal(false);
+          setShowRegistrationCodeModal(false);
           showInfo(t('注册已取消，请登录'));
           navigate('/login');
         }}
@@ -162,15 +209,17 @@ const OAuth2Callback = (props) => {
         cancelText={t('取消')}
         centered={true}
         okButtonProps={{
-          loading: invitationCodeSubmitting,
-          disabled: !invitationCode.trim(),
+          loading: registrationCodeSubmitting,
+          disabled: !registrationCode.trim(),
         }}
       >
-        <p style={{ marginBottom: 16 }}>{t('注册需要邀请码，请输入您的邀请码以继续。')}</p>
+        <p style={{ marginBottom: 16 }}>
+          {t('注册需要注册码，请输入您的注册码以继续。')}
+        </p>
         <Input
-          placeholder={t('请输入邀请码')}
-          value={invitationCode}
-          onChange={setInvitationCode}
+          placeholder={t('请输入注册码')}
+          value={registrationCode}
+          onChange={setRegistrationCode}
           autoFocus
         />
       </Modal>

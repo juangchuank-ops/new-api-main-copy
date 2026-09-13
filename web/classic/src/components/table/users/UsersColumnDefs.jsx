@@ -445,6 +445,32 @@ export const getUsersColumns = ({
       },
     },
     {
+      title: t('每分钟请求数'),
+      dataIndex: 'requests_per_minute',
+      render: (text, record) => {
+        const rpm = record.requests_per_minute;
+        // null/undefined: 后端 *int 为 nil，按全局默认速率限制处理
+        if (rpm === null || rpm === undefined) {
+          return (
+            <Tooltip content={t('未单独设置，使用全局默认限制')}>
+              <Tag color='white' shape='circle'>
+                {t('全局默认')}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        // 0: 后端视为不限制
+        if (rpm === 0) {
+          return (
+            <Tag color='green' shape='circle'>
+              {t('不限制')}
+            </Tag>
+          );
+        }
+        return <span>{rpm}</span>;
+      },
+    },
+    {
       title: t('邀请信息'),
       dataIndex: 'invite',
       render: (text, record, index) => renderInviteInfo(text, record, t),

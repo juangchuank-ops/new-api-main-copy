@@ -94,6 +94,8 @@ const EditUserModal = (props) => {
     quota_amount: 0,
     group: 'default',
     remark: '',
+    // null 表示未单独设置（后端 *int 为 nil，继承全局默认）；0 表示不限制
+    requests_per_minute: null,
   });
 
   const fetchGroups = async () => {
@@ -150,6 +152,12 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     delete payload.quota;
     delete payload.quota_amount;
+    // 表单已带入该用户当前的 requests_per_minute；留空提交 null 表示继承全局默认，
+    // 显式 0 表示不限制，二者语义与后端 *int 字段一致。
+    payload.requests_per_minute =
+      values.requests_per_minute === '' || values.requests_per_minute == null
+        ? null
+        : Number(values.requests_per_minute);
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -375,6 +383,41 @@ const EditUserModal = (props) => {
                           allowAdditions
                           search
                           rules={[{ required: true, message: t('请选择分组') }]}
+                        />
+                      </Col>
+
+                      <Col span={24}>
+                        <Form.InputNumber
+                          field='requests_per_minute'
+                          label={t('每分钟请求数')}
+                          placeholder={t('请输入每分钟请求数')}
+                          extraText={t('留空表示使用全局默认，0 表示不限制')}
+                          suffix={t('次/分钟')}
+                          min={0}
+                          max={1000000}
+                          step={1}
+                          precision={0}
+                          showClear
+                          style={{ width: '100%' }}
+                          rules={[
+                            {
+                              validator: (rule, value) => {
+                                if (value === '' || value == null) {
+                                  return Promise.resolve();
+                                }
+                                if (
+                                  !Number.isInteger(Number(value)) ||
+                                  Number(value) < 0 ||
+                                  Number(value) > 1000000
+                                ) {
+                                  return Promise.reject(
+                                    t('请输入 0 到 1000000 之间的整数'),
+                                  );
+                                }
+                                return Promise.resolve();
+                              },
+                            },
+                          ]}
                         />
                       </Col>
 

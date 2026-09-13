@@ -27,7 +27,12 @@ import {
   verifyJSON,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import { CHANNEL_OPTIONS, MODEL_FETCHABLE_CHANNEL_TYPES } from '../../../../constants';
+import {
+  CHANNEL_OPTIONS,
+  CHANNEL_TYPE_TASK_PLUGIN,
+  MODEL_FETCHABLE_CHANNEL_TYPES,
+} from '../../../../constants';
+import { useUserPermissions } from '../../../../hooks/common/useUserPermissions';
 import {
   CLIENT_IDENTITY_CHANNEL_TYPES,
   CLIENT_IDENTITY_DEFAULTS,
@@ -71,6 +76,13 @@ import ModelSelectModal from './ModelSelectModal';
 import SingleModelSelectModal from './SingleModelSelectModal';
 import OllamaModelModal from './OllamaModelModal';
 import ParamOverrideEditorModal from './ParamOverrideEditorModal';
+import ChannelQueueSettings, {
+  QUEUE_FORM_DEFAULTS,
+  buildQueueSettingsObject,
+  extractQueueFormValues,
+  getQueueSettingsError,
+} from './ChannelQueueSettings';
+import ChannelCustomBalanceCard from './ChannelCustomBalanceCard';
 import JSONEditor from '../../../common/ui/JSONEditor';
 import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
 import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
@@ -138,11 +150,6 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
 
 const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
 
-// 支持并且已适配通过接口获取模型列表的渠道类型
-const MODEL_FETCHABLE_TYPES = new Set([
-  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
-]);
-
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
   switch (type) {
@@ -169,12 +176,29 @@ function type2secretPrompt(type) {
   }
 }
 
+const FloatingChannelEditorShell = ({ children, footer }) => (
+  <div className='flex flex-col h-full w-full'>
+    <div className='flex-1 min-h-0 overflow-auto'>{children}</div>
+    <div
+      className='flex justify-end items-center gap-2 p-3'
+      style={{ borderTop: '1px solid var(--semi-color-border)' }}
+    >
+      {footer}
+    </div>
+  </div>
+);
+
 const EditChannelModal = (props) => {
   const { t } = useTranslation();
   const channelId = props.editingChannel.id;
   const isEdit = channelId !== undefined;
   const [loading, setLoading] = useState(isEdit);
   const isMobile = useIsMobile();
+  // 任务插件渠道（65）只有拿到 task_plugin.bind 权限的管理员才能绑定，
+  // 与后端 authz.TaskPluginBind 以及 web/default 的门控保持一致。
+  const { permissions } = useUserPermissions();
+  const canBindTaskPlugin =
+    permissions?.admin_permissions?.task_plugin?.bind === true;
   const handleCancel = () => {
     props.handleClose();
   };
@@ -228,6 +252,8 @@ const EditChannelModal = (props) => {
     upstream_model_update_last_check_time: 0,
     upstream_model_update_last_detected_models: [],
     upstream_model_update_ignored_models: '',
+    // 排队预热（存入 setting.queue）
+    ...QUEUE_FORM_DEFAULTS,
   };
   const [batch, setBatch] = useState(false);
   const [multiToSingle, setMultiToSingle] = useState(false);
@@ -556,6 +582,8 @@ const EditChannelModal = (props) => {
   const initialModelsRef = useRef([]);
   const initialModelMappingRef = useRef('');
   const initialStatusCodeMappingRef = useRef('');
+  // 打开表单时的原始 setting JSON，保存时作为合并基线，避免抹掉未在表单中展示的键
+  const initialSettingRef = useRef('');
   const doubaoCodingPlanDeprecationMessage =
     'Doubao Coding Plan 不再允许新增。根据火山方舟文档，Coding 套餐额度仅适用于 AI Coding 产品内调用，不适用于单独 API 调用；在非 AI Coding 产品中使用对应的 Base URL 和 API Key 可能被视为违规，并可能导致订阅停用或账号封禁。';
   const canKeepDeprecatedDoubaoCodingPlan =
@@ -980,18 +1008,21 @@ const EditChannelModal = (props) => {
         setMultiToSingle(false);
       }
       // 解析渠道额外设置并合并到data中
+      initialSettingRef.current =
+        typeof data.setting === 'string' ? data.setting : '';
       if (data.setting) {
+        let parsedSetting = null;
         try {
-          const parsedSettings = JSON.parse(data.setting);
-          data.force_format = parsedSettings.force_format || false;
+          parsedSetting = JSON.parse(data.setting);
+          data.force_format = parsedSetting.force_format || false;
           data.thinking_to_content =
-            parsedSettings.thinking_to_content || false;
-          data.proxy = parsedSettings.proxy || '';
+            parsedSetting.thinking_to_content || false;
+          data.proxy = parsedSetting.proxy || '';
           data.pass_through_body_enabled =
-            parsedSettings.pass_through_body_enabled || false;
-          data.system_prompt = parsedSettings.system_prompt || '';
+            parsedSetting.pass_through_body_enabled || false;
+          data.system_prompt = parsedSetting.system_prompt || '';
           data.system_prompt_override =
-            parsedSettings.system_prompt_override || false;
+            parsedSetting.system_prompt_override || false;
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -1001,6 +1032,7 @@ const EditChannelModal = (props) => {
           data.system_prompt = '';
           data.system_prompt_override = false;
         }
+        Object.assign(data, extractQueueFormValues(parsedSetting));
       } else {
         data.force_format = false;
         data.thinking_to_content = false;
@@ -1008,6 +1040,7 @@ const EditChannelModal = (props) => {
         data.pass_through_body_enabled = false;
         data.system_prompt = '';
         data.system_prompt_override = false;
+        Object.assign(data, QUEUE_FORM_DEFAULTS);
       }
 
       // 客户端身份默认值，settings 解析成功时会被覆盖
@@ -1174,7 +1207,8 @@ const EditChannelModal = (props) => {
         data.pass_through_body_enabled ||
         data.force_format ||
         data.claude_beta_query ||
-        data.system_prompt_override;
+        data.system_prompt_override ||
+        data.queue_enabled;
       if (hasAdvancedValues) {
         setAdvancedSettingsOpen(true);
       }
@@ -1444,6 +1478,7 @@ const EditChannelModal = (props) => {
     fetchGroups().then();
     if (!isEdit) {
       initialBaseUrlRef.current = '';
+      initialSettingRef.current = '';
       setInputs(originInputs);
       if (formApiRef.current) {
         formApiRef.current.setValues(originInputs);
@@ -1494,6 +1529,7 @@ const EditChannelModal = (props) => {
       initialModelsRef.current = [];
       initialModelMappingRef.current = '';
       initialStatusCodeMappingRef.current = '';
+      initialSettingRef.current = '';
     }
   }, [isEdit, props.visible]);
 
@@ -1880,8 +1916,37 @@ const EditChannelModal = (props) => {
       localInputs.other = 'v2.1';
     }
 
-    // 生成渠道额外设置JSON
+    // 排队预热：校验范围与后端 validateChannelQueueSettings 保持一致
+    const queueSettingsError = getQueueSettingsError(
+      t,
+      inputs,
+      normalizedModels,
+    );
+    if (queueSettingsError) {
+      showError(queueSettingsError);
+      return;
+    }
+
+    // 生成渠道额外设置JSON：以打开表单时的原始 setting 为基线合并，
+    // 只覆盖本表单管理的键，保留 queue 之外的未知键（如 http_protocol）。
+    let baseSetting = {};
+    const rawBaseSetting = initialSettingRef.current;
+    if (typeof rawBaseSetting === 'string' && rawBaseSetting.trim()) {
+      try {
+        const parsedBaseSetting = JSON.parse(rawBaseSetting);
+        if (
+          parsedBaseSetting &&
+          typeof parsedBaseSetting === 'object' &&
+          !Array.isArray(parsedBaseSetting)
+        ) {
+          baseSetting = parsedBaseSetting;
+        }
+      } catch (error) {
+        console.error('解析原始 setting 失败:', error);
+      }
+    }
     const channelExtraSettings = {
+      ...baseSetting,
       force_format: localInputs.force_format || false,
       thinking_to_content: localInputs.thinking_to_content || false,
       proxy: localInputs.proxy || '',
@@ -1889,6 +1954,12 @@ const EditChannelModal = (props) => {
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
     };
+    // 未启用排队预热时不写入 queue，避免残留脏数据
+    if (inputs.queue_enabled === true) {
+      channelExtraSettings.queue = buildQueueSettingsObject(inputs);
+    } else {
+      delete channelExtraSettings.queue;
+    }
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
     // 处理 settings 字段（包括企业账户设置和字段透传控制）
@@ -2029,6 +2100,10 @@ const EditChannelModal = (props) => {
     delete localInputs.client_identity_profile;
     delete localInputs.client_identity_version;
     delete localInputs.client_identity_platform;
+    // 排队预热临时字段不发送给后端（已合并进 setting.queue）
+    Object.keys(QUEUE_FORM_DEFAULTS).forEach((field) => {
+      delete localInputs[field];
+    });
 
     let res;
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
@@ -2254,12 +2329,14 @@ const EditChannelModal = (props) => {
 
   const channelOptionList = useMemo(
     () =>
-      CHANNEL_OPTIONS.map((opt) => ({
+      CHANNEL_OPTIONS.filter(
+        (opt) => opt.value !== CHANNEL_TYPE_TASK_PLUGIN || canBindTaskPlugin,
+      ).map((opt) => ({
         ...opt,
         // 保持 label 为纯文本以支持搜索
         label: opt.label,
       })),
-    [],
+    [canBindTaskPlugin],
   );
 
   const renderChannelOption = (renderProps) => {
@@ -2326,9 +2403,11 @@ const EditChannelModal = (props) => {
     );
   };
 
+  const Shell = props.floating ? FloatingChannelEditorShell : SideSheet;
+
   return (
     <>
-      <SideSheet
+      <Shell
         placement={isEdit ? 'right' : 'left'}
         title={
           <div className='flex items-center justify-between w-full'>
@@ -2707,6 +2786,21 @@ const EditChannelModal = (props) => {
                   <Form.TextArea field='system_prompt' label={t('系统提示词')} placeholder={t('输入系统提示词，用户的系统提示词将优先于此设置')} onChange={(value) => handleChannelSettingsChange('system_prompt', value)} autosize showClear extraText={t('用户优先：如果用户在请求中指定了系统提示词，将优先使用用户的设置')} />
                   <Form.Switch field='system_prompt_override' label={t('系统提示词拼接')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('system_prompt_override', value)} extraText={t('如果用户请求中包含系统提示词，则使用此设置拼接到用户的系统提示词前面')} />
                 </div>
+
+                {/* Auto Upstream Queue Warmer */}
+                <ChannelQueueSettings
+                  inputs={inputs}
+                  models={inputs.models}
+                  channelId={isEdit ? channelId : undefined}
+                  onChange={handleInputChange}
+                />
+
+                {/* Channel Custom Balance & Check-in */}
+                <ChannelCustomBalanceCard
+                  channelId={isEdit ? channelId : undefined}
+                  isEdit={isEdit}
+                  isMultiKey={isMultiKeyChannel}
+                />
               </div>
             );
 
@@ -4119,7 +4213,7 @@ const EditChannelModal = (props) => {
           visible={isModalOpenurl}
           onVisibleChange={(visible) => setIsModalOpenurl(visible)}
         />
-      </SideSheet>
+      </Shell>
       <StatusCodeRiskGuardModal
         visible={statusCodeRiskConfirmVisible}
         detailItems={statusCodeRiskDetailItems}

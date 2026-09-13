@@ -42,9 +42,11 @@ const { Text } = Typography;
 
 const SETTING_SEARCH_ITEMS = [
   { tab: 'operation', group: '运营设置', label: '通用设置', keywords: '站点 运营 通用' },
+  { tab: 'operation', group: '运营设置', label: '主题设置', keywords: '主题 主题色 主色 强调色 预设 外观 theme preset 自定义颜色' },
   { tab: 'operation', group: '运营设置', label: '额度设置', keywords: '额度 余额 credit' },
-  { tab: 'operation', group: '运营设置', label: '日志设置', keywords: '日志 log' },
+  { tab: 'operation', group: '运营设置', label: '日志设置', keywords: '日志 log 原始请求 诊断' },
   { tab: 'operation', group: '运营设置', label: '监控设置', keywords: '监控 monitoring' },
+  { tab: 'operation', group: '运营设置', label: '上游拦截设置', keywords: '上游 上游拦截 upstream 拦截 内容策略 规则 响应' },
   { tab: 'operation', group: '运营设置', label: '屏蔽词过滤设置', keywords: '敏感词 屏蔽词 过滤' },
   { tab: 'operation', group: '运营设置', label: '签到设置', keywords: '签到 checkin' },
   { tab: 'operation', group: '运营设置', label: '渠道亲和性', keywords: '渠道 亲和' },
@@ -62,7 +64,7 @@ const SETTING_SEARCH_ITEMS = [
   { tab: 'ratio', group: '分组与模型定价设置', label: '分组相关设置', keywords: '分组 分组管理 自动分组 分组倍率 可用分组' },
   { tab: 'ratio', group: '分组与模型定价设置', label: '模型定价设置', keywords: '模型 定价 倍率 价格' },
   { tab: 'ratio', group: '分组与模型定价设置', label: '工具调用定价设置', keywords: '工具 定价' },
-  { tab: 'ratelimit', group: '速率限制设置', label: '模型请求速率限制', keywords: '速率 限流 请求 RPM' },
+  { tab: 'ratelimit', group: '速率限制设置', label: '模型请求速率限制', keywords: '速率 限流 请求 RPM 用户 每分钟' },
   { tab: 'models', group: '模型相关设置', label: '全局设置', keywords: '模型 全局' },
   { tab: 'models', group: '模型相关设置', label: 'Claude 设置', keywords: '模型 Claude' },
   { tab: 'models', group: '模型相关设置', label: 'Gemini 设置', keywords: '模型 Gemini 思考' },

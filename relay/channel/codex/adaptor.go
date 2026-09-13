@@ -8,14 +8,15 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Adaptor struct {
@@ -99,11 +100,38 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if isCompact {
 		return request, nil
 	}
+
+	// Channel-test and queue warm-up payloads are built by testChannelWithOptions
+	// with only the bare Responses shape (model/input/instructions/stream/store).
+	// Real Codex CLI traffic (codex-rs ResponsesApiRequest) always carries a
+	// fixed set of extra fields; relay-style upstreams that shape-check the
+	// payload (e.g. Any station) reject requests missing them. Fill in stable
+	// defaults for channel tests and warm-ups only — user requests keep exactly
+	// whatever the client sent.
+	if info != nil && info.IsChannelTest {
+		if len(request.ToolChoice) == 0 {
+			request.ToolChoice = json.RawMessage(`"auto"`)
+		}
+		if len(request.ParallelToolCalls) == 0 {
+			request.ParallelToolCalls = json.RawMessage(`false`)
+		}
+		if len(request.Include) == 0 {
+			request.Include = json.RawMessage(`["reasoning.encrypted_content"]`)
+		}
+		if len(request.PromptCacheKey) == 0 {
+			request.PromptCacheKey = json.RawMessage(`"` + uuid.NewString() + `"`)
+		}
+		if request.Reasoning == nil {
+			request.Reasoning = &dto.Reasoning{Effort: "low", Summary: "none"}
+		}
+	}
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
 	// rm max_output_tokens
 	request.MaxOutputTokens = nil
 	request.Temperature = nil
+	request.FrequencyPenalty = nil
+	request.PresencePenalty = nil
 	return request, nil
 }
 
@@ -112,18 +140,20 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact {
+	switch info.RelayMode {
+	case relayconstant.RelayModeAlphaSearch:
+		// Alpha search responses are handled by relay.AlphaSearchHelper.
+		return nil, types.NewError(errors.New("codex channel: alpha search response should be handled by AlphaSearchHelper"), types.ErrorCodeInvalidRequest)
+	case relayconstant.RelayModeResponsesCompact:
+		return openai.OaiResponsesCompactionHandler(c, resp)
+	case relayconstant.RelayModeResponses:
+		if info.IsStream {
+			return openai.OaiResponsesStreamHandler(c, info, resp)
+		}
+		return openai.OaiResponsesHandler(c, info, resp)
+	default:
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
-
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		return openai.OaiResponsesCompactionHandler(c, resp)
-	}
-
-	if info.IsStream {
-		return openai.OaiResponsesStreamHandler(c, info, resp)
-	}
-	return openai.OaiResponsesHandler(c, info, resp)
 }
 
 func (a *Adaptor) GetModelList() []string {
@@ -135,12 +165,16 @@ func (a *Adaptor) GetChannelName() string {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact {
-		return "", errors.New("codex channel: only /v1/responses and /v1/responses/compact are supported")
-	}
-	path := "/backend-api/codex/responses"
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+	var path string
+	switch info.RelayMode {
+	case relayconstant.RelayModeResponses:
+		path = "/backend-api/codex/responses"
+	case relayconstant.RelayModeResponsesCompact:
 		path = "/backend-api/codex/responses/compact"
+	case relayconstant.RelayModeAlphaSearch:
+		path = "/backend-api/codex/alpha/search"
+	default:
+		return "", errors.New("codex channel: only /v1/responses, /v1/responses/compact and /v1/alpha/search are supported")
 	}
 	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, path, info.ChannelType), nil
 }
@@ -187,6 +221,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	} else if req.Get("Accept") == "" {
 		req.Set("Accept", "application/json")
 	}
+	// Channel 57 uses OAuth/account routing owned by this adapter. Only the
+	// explicit client identity version/platform may vary; credentials,
+	// Originator, and endpoint semantics stay fixed.
+	channel.ApplyCodexLegacyClientIdentity(*req, info.ChannelOtherSettings.ClientIdentity)
 
 	return nil
 }

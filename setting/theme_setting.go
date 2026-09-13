@@ -7,8 +7,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-// DefaultThemeOptionKey is the option key under which the default theme
-// customization JSON is stored in the options table.
 const DefaultThemeOptionKey = "theme.default"
 
 var (
@@ -43,10 +41,6 @@ var (
 	}
 )
 
-// DefaultTheme mirrors new-api-reference/setting/theme_setting.go. It is the
-// per-user default theme customization applied before a user picks their own.
-// It is distinct from setting/system_setting/theme.go which selects which
-// frontend bundle ("default" vs "classic") to serve.
 type DefaultTheme struct {
 	Mode            string `json:"mode"`
 	Preset          string `json:"preset"`

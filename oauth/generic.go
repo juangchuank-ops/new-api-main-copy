@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -93,8 +92,6 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
 
-	logger.LogDebug(ctx, "[OAuth-Generic-%s] ExchangeToken: code=%s...", p.config.Slug, code[:min(len(code), 10)])
-
 	redirectUri := fmt.Sprintf("%s/oauth/%s", system_setting.ServerAddress, p.config.Slug)
 	values := url.Values{}
 	values.Set("grant_type", "authorization_code")
@@ -132,10 +129,9 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 	logger.LogDebug(ctx, "[OAuth-Generic-%s] ExchangeToken: token_endpoint=%s, redirect_uri=%s, auth_style=%d",
 		p.config.Slug, p.config.TokenEndpoint, redirectUri, authStyle)
 
-	client, err := service.GetLoginHTTPClient(20 * time.Second)
+	client, err := GetLoginHTTPClient(20 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] ExchangeToken client error: %s", p.config.Slug, err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": p.config.Name}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -153,7 +149,6 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 	}
 
 	bodyStr := string(body)
-	logger.LogDebug(ctx, "[OAuth-Generic-%s] ExchangeToken response body: %s", p.config.Slug, bodyStr[:min(len(bodyStr), 500)])
 
 	// Try to parse as JSON first
 	var tokenResponse struct {
@@ -215,10 +210,9 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, token.AccessToken))
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(20 * time.Second)
+	client, err := GetLoginHTTPClient(20 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] GetUserInfo client error: %s", p.config.Slug, err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": p.config.Name}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -241,23 +235,18 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	}
 
 	bodyStr := string(body)
-	logger.LogDebug(ctx, "[OAuth-Generic-%s] GetUserInfo response body: %s", p.config.Slug, bodyStr[:min(len(bodyStr), 500)])
 
 	// Extract fields using gjson (supports JSONPath-like syntax)
 	userId := gjson.Get(bodyStr, p.config.UserIdField).String()
 	username := gjson.Get(bodyStr, p.config.UsernameField).String()
 	displayName := gjson.Get(bodyStr, p.config.DisplayNameField).String()
 	email := gjson.Get(bodyStr, p.config.EmailField).String()
-
-	avatarURL := ""
-	for _, field := range []string{"picture", "avatar_url", "avatar"} {
-		candidate := strings.TrimSpace(gjson.Get(bodyStr, field).String())
-		if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") {
-			avatarURL = candidate
-			break
-		}
+	avatarURL := gjson.Get(bodyStr, "avatar_url").String()
+	if avatarURL == "" {
+		avatarURL = gjson.Get(bodyStr, "picture").String()
 	}
 
+	// If user ID field returns a number, convert it
 	if userId == "" {
 		// Try to get as number
 		userIdNum := gjson.Get(bodyStr, p.config.UserIdField)
@@ -324,6 +313,11 @@ func (p *GenericOAuthProvider) SetProviderUserID(user *model.User, providerUserI
 
 func (p *GenericOAuthProvider) GetProviderPrefix() string {
 	return p.config.Slug + "_"
+}
+
+// ProviderUserIDColumn returns the users-table column storing this provider's user ID.
+func (p *GenericOAuthProvider) ProviderUserIDColumn() string {
+	return ""
 }
 
 // GetProviderId returns the provider ID for binding purposes

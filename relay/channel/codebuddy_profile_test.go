@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,37 +177,3 @@ func TestCleanupCodexForbiddenPhraseInMessages_NoMatchUnchanged(t *testing.T) {
 	assert.Equal(t, "you are a codex", original[2].Content)
 }
 
-// --- codeBuddyConversationKeyFromRequest ---
-
-func TestCodeBuddyConversationKeyFromRequest_GeneralOpenAIRequest(t *testing.T) {
-	req := &dto.GeneralOpenAIRequest{PromptCacheKey: "session-abc"}
-	key := codeBuddyConversationKeyFromRequest(req)
-	assert.Equal(t, "session-abc", key)
-	id := codeBuddyConversationUUID(key)
-	assert.NotEmpty(t, id)
-	// Same key → stable UUID
-	assert.Equal(t, id, codeBuddyConversationUUID(key))
-}
-
-func TestCodeBuddyConversationKeyFromRequest_EmptyKey(t *testing.T) {
-	req := &dto.GeneralOpenAIRequest{}
-	assert.Empty(t, codeBuddyConversationKeyFromRequest(req))
-}
-
-func TestCodeBuddyConversationKeyFromRequest_Nil(t *testing.T) {
-	assert.Empty(t, codeBuddyConversationKeyFromRequest(nil))
-}
-
-func TestCodeBuddyConversationKeyFromRequest_ResponsesRequest(t *testing.T) {
-	req := &dto.OpenAIResponsesRequest{
-		PromptCacheKey: json.RawMessage(`"resp-key"`),
-	}
-	assert.Equal(t, "resp-key", codeBuddyConversationKeyFromRequest(req))
-}
-
-func TestCodeBuddyConversationKeyFromRequest_ResponsesRequestFallback(t *testing.T) {
-	req := &dto.OpenAIResponsesRequest{
-		Conversation: json.RawMessage(`"conv-key"`),
-	}
-	assert.Equal(t, "conv-key", codeBuddyConversationKeyFromRequest(req))
-}

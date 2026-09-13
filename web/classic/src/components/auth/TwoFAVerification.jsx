@@ -29,12 +29,22 @@ import React, { useState } from 'react';
 
 const { Title, Text, Paragraph } = Typography;
 
-const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
+const TwoFAVerification = ({
+  flowToken,
+  onSuccess,
+  onBack,
+  isModal = false,
+}) => {
   const [loading, setLoading] = useState(false);
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
 
   const handleSubmit = async () => {
+    if (!flowToken) {
+      showError('登录状态已失效，请重新登录');
+      if (onBack) onBack();
+      return;
+    }
     if (!verificationCode) {
       showError('请输入验证码');
       return;
@@ -50,14 +60,14 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
 
     setLoading(true);
     try {
-      const res = await API.post('/api/user/login/2fa', {
+      const res = await API.post('/api/user/login/verify', {
+        flow_token: flowToken,
+        method: '2fa',
         code: verificationCode,
       });
 
       if (res.data.success) {
         showSuccess('登录成功');
-        // 保存用户信息到本地存储
-        localStorage.setItem('user', JSON.stringify(res.data.data));
         if (onSuccess) {
           onSuccess(res.data.data);
         }

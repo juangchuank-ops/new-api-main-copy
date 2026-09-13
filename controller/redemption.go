@@ -2,10 +2,12 @@ package controller
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -40,8 +42,9 @@ func GetAllRedemptions(c *gin.Context) {
 
 func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
+	status := c.Query("status")
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.SearchRedemptions(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.SearchRedemptions(keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -72,11 +75,6 @@ func GetRedemption(c *gin.Context) {
 }
 
 func AddRedemption(c *gin.Context) {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
-		return
-	}
-
 	redemption := model.Redemption{}
 	err := c.ShouldBindJSON(&redemption)
 	if err != nil {
@@ -91,12 +89,37 @@ func AddRedemption(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionCountPositive)
 		return
 	}
-	if redemption.Count > 1000 {
+	if redemption.Count > 100 {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionCountMax)
 		return
 	}
 	if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
+		return
+	}
+	redemption.CodeType = model.NormalizeRedemptionCodeType(redemption.CodeType)
+	var plan *model.SubscriptionPlan
+	switch redemption.CodeType {
+	case model.RedemptionCodeTypeRedemption:
+		if !operation_setting.IsPaymentComplianceConfirmed() {
+			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+			return
+		}
+		plan, err = validateRedemptionReward(&redemption)
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+		redemption.MaxUses = 1
+	case model.RedemptionCodeTypeRegistration:
+		if redemption.MaxUses <= 0 {
+			common.ApiErrorMsg(c, "注册码使用次数必须大于 0")
+			return
+		}
+		redemption.Quota = 0
+		redemption.PlanId = 0
+	default:
+		common.ApiErrorMsg(c, "无效的代码类型")
 		return
 	}
 	var keys []string
@@ -108,7 +131,11 @@ func AddRedemption(c *gin.Context) {
 			Key:         key,
 			CreatedTime: common.GetTimestamp(),
 			Quota:       redemption.Quota,
+			RewardType:  redemption.RewardType,
+			CodeType:    redemption.CodeType,
+			PlanId:      redemption.PlanId,
 			ExpiredTime: redemption.ExpiredTime,
+			MaxUses:     redemption.MaxUses,
 		}
 		err = cleanRedemption.Insert()
 		if err != nil {
@@ -122,11 +149,21 @@ func AddRedemption(c *gin.Context) {
 		}
 		keys = append(keys, key)
 	}
-	recordManageAudit(c, "redemption.create", map[string]interface{}{
-		"name":  redemption.Name,
-		"count": redemption.Count,
-		"quota": logger.LogQuota(redemption.Quota),
-	})
+	auditParams := map[string]any{
+		"name":        redemption.Name,
+		"count":       redemption.Count,
+		"code_type":   redemption.CodeType,
+		"reward_type": redemption.RewardType,
+	}
+	if redemption.CodeType == model.RedemptionCodeTypeRegistration {
+		auditParams["max_uses"] = redemption.MaxUses
+	} else if redemption.RewardType == model.RedemptionRewardTypeSubscription {
+		auditParams["plan_id"] = redemption.PlanId
+		auditParams["plan_title"] = plan.Title
+	} else {
+		auditParams["quota"] = logger.LogQuota(redemption.Quota)
+	}
+	recordManageAudit(c, "redemption.create", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -162,21 +199,60 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	expectedStatus := cleanRedemption.Status
+	expectedUsedCount := cleanRedemption.UsedCount
 	if statusOnly == "" {
+		if cleanRedemption.Status == common.RedemptionCodeStatusUsed {
+			common.ApiErrorMsg(c, "已使用的兑换码不能修改")
+			return
+		}
 		if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
 			return
 		}
 		// If you add more fields, please also update redemption.Update()
 		cleanRedemption.Name = redemption.Name
-		cleanRedemption.Quota = redemption.Quota
 		cleanRedemption.ExpiredTime = redemption.ExpiredTime
+		if cleanRedemption.CodeType == model.RedemptionCodeTypeRegistration {
+			if redemption.MaxUses <= 0 || redemption.MaxUses < cleanRedemption.UsedCount {
+				common.ApiErrorMsg(c, "注册码使用次数不能小于已使用次数")
+				return
+			}
+			cleanRedemption.MaxUses = redemption.MaxUses
+			if cleanRedemption.MaxUses == cleanRedemption.UsedCount {
+				cleanRedemption.Status = common.RedemptionCodeStatusUsed
+			}
+		} else {
+			if strings.TrimSpace(redemption.RewardType) == "" {
+				redemption.RewardType = cleanRedemption.RewardType
+				redemption.PlanId = cleanRedemption.PlanId
+			}
+			if _, err = validateRedemptionReward(&redemption); err != nil {
+				common.ApiErrorMsg(c, err.Error())
+				return
+			}
+			cleanRedemption.Quota = redemption.Quota
+			cleanRedemption.RewardType = redemption.RewardType
+			cleanRedemption.PlanId = redemption.PlanId
+		}
 	}
 	if statusOnly != "" {
+		if err = validateRedemptionStatusUpdate(cleanRedemption.Status, redemption.Status); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 		cleanRedemption.Status = redemption.Status
 	}
-	err = cleanRedemption.Update()
+	if cleanRedemption.CodeType == model.RedemptionCodeTypeRegistration {
+		err = cleanRedemption.UpdateRegistrationCode(expectedStatus, expectedUsedCount)
+	} else {
+		err = cleanRedemption.Update()
+	}
 	if err != nil {
+		if errors.Is(err, model.ErrRegistrationCodeChanged) {
+			common.ApiErrorMsg(c, "注册码已被其他请求修改，请刷新后重试")
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -188,25 +264,14 @@ func UpdateRedemption(c *gin.Context) {
 	return
 }
 
-func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteInvalidRedemptions()
-	if err != nil {
-		common.ApiError(c, err)
-		return
+func validateRedemptionStatusUpdate(currentStatus int, nextStatus int) error {
+	if currentStatus == common.RedemptionCodeStatusUsed {
+		return errors.New("已使用的兑换码不能重新启用")
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    rows,
-	})
-	return
-}
-
-func validateExpiredTime(c *gin.Context, expired int64) (bool, string) {
-	if expired != 0 && expired < common.GetTimestamp() {
-		return false, i18n.T(c, i18n.MsgRedemptionExpireTimeInvalid)
+	if nextStatus != common.RedemptionCodeStatusEnabled && nextStatus != common.RedemptionCodeStatusDisabled {
+		return errors.New("无效的兑换码状态")
 	}
-	return true, ""
+	return nil
 }
 
 func ExportRedemptions(c *gin.Context) {
@@ -269,8 +334,9 @@ func writeRedemptionsCSV(output io.Writer, redemptions []*model.Redemption) erro
 	}
 	w := csv.NewWriter(output)
 	if err := w.Write([]string{
-		"ID", "Name", "Code", "Quota", "Status",
-		"Created Time", "Expired Time", "Redeemed Time", "Used User ID",
+		"ID", "Name", "Reward Type", "Code", "Quota", "Plan ID", "Plan Title",
+		"Status", "Created Time", "Expired Time", "Redeemed Time", "Used User ID", "Subscription ID",
+		"Code Type", "Max Uses", "Used Count",
 	}); err != nil {
 		return err
 	}
@@ -278,19 +344,51 @@ func writeRedemptionsCSV(output io.Writer, redemptions []*model.Redemption) erro
 		if err := w.Write([]string{
 			strconv.Itoa(redemption.Id),
 			redemption.Name,
+			redemption.RewardType,
 			redemption.Key,
 			strconv.Itoa(redemption.Quota),
+			formatOptionalInt(redemption.PlanId),
+			redemption.PlanTitle,
 			redemptionExportStatus(redemption),
 			formatExportTimestamp(redemption.CreatedTime),
 			formatExportTimestamp(redemption.ExpiredTime),
 			formatExportTimestamp(redemption.RedeemedTime),
 			formatOptionalInt(redemption.UsedUserId),
+			formatOptionalInt(redemption.RedeemedSubscriptionId),
+			redemption.CodeType,
+			strconv.Itoa(redemption.MaxUses),
+			strconv.Itoa(redemption.UsedCount),
 		}); err != nil {
 			return err
 		}
 	}
 	w.Flush()
 	return w.Error()
+}
+
+func validateRedemptionReward(redemption *model.Redemption) (*model.SubscriptionPlan, error) {
+	redemption.CodeType = model.RedemptionCodeTypeRedemption
+	redemption.RewardType = model.NormalizeRedemptionRewardType(redemption.RewardType)
+	switch redemption.RewardType {
+	case model.RedemptionRewardTypeQuota:
+		redemption.PlanId = 0
+		return nil, redemption.ValidateQuotaReward()
+	case model.RedemptionRewardTypeSubscription:
+		redemption.Quota = 0
+		if redemption.PlanId <= 0 {
+			return nil, errors.New("请选择订阅套餐")
+		}
+		plan, err := model.GetSubscriptionPlanById(redemption.PlanId)
+		if err != nil {
+			return nil, errors.New("订阅套餐不存在")
+		}
+		if !plan.Enabled {
+			return nil, errors.New("订阅套餐已禁用")
+		}
+		return plan, nil
+	default:
+		return nil, errors.New("无效的兑换码类型")
+	}
 }
 
 func formatOptionalInt(value int) string {
@@ -321,4 +419,46 @@ func redemptionExportStatus(redemption *model.Redemption) string {
 	default:
 		return strconv.Itoa(redemption.Status)
 	}
+}
+
+func DeleteInvalidRedemption(c *gin.Context) {
+	rows, err := model.DeleteInvalidRedemptions()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    rows,
+	})
+	return
+}
+
+func validateExpiredTime(c *gin.Context, expired int64) (bool, string) {
+	if expired != 0 && expired < common.GetTimestamp() {
+		return false, i18n.T(c, i18n.MsgRedemptionExpireTimeInvalid)
+	}
+	return true, ""
+}
+
+func DeleteRedemptionBatch(c *gin.Context) {
+	var request struct {
+		Ids []int `json:"ids" binding:"required,min=1,max=1000,dive,gt=0"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	count, err := model.BatchDeleteRedemptions(request.Ids)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "redemption.delete_batch", map[string]any{
+		"count":                    count,
+		"total":                    len(request.Ids),
+		"requested_redemption_ids": request.Ids,
+	})
+	common.ApiSuccess(c, count)
 }

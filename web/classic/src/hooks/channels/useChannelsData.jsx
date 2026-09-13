@@ -84,6 +84,9 @@ export const useChannelsData = () => {
   const [currentTestChannel, setCurrentTestChannel] = useState(null);
   const [modelSearchKeyword, setModelSearchKeyword] = useState('');
   const [modelTestResults, setModelTestResults] = useState({});
+  // 能力诊断结果（POST /api/channel/test/:id 返回的 diagnostics），与普通测试结果分开存放
+  const [modelTestDiagnostics, setModelTestDiagnostics] = useState({});
+  const [diagnosingModels, setDiagnosingModels] = useState(new Set());
   const [testingModels, setTestingModels] = useState(new Set());
   const [selectedModelKeys, setSelectedModelKeys] = useState([]);
   const [isBatchTesting, setIsBatchTesting] = useState(false);
@@ -980,6 +983,79 @@ export const useChannelsData = () => {
     }
   };
 
+  // 能力诊断 - 走 POST /api/channel/test/:id 的详细测试，消费返回的 diagnostics 明细
+  // testType 仅支持 basic / tool_call（与后端 channelTestRequest 一致）
+  const testChannelDiagnostics = async (
+    record,
+    model,
+    endpointType = '',
+    stream = false,
+    testMessage = '',
+    testType = 'tool_call',
+  ) => {
+    const testKey = `${record.id}-${model}`;
+
+    setDiagnosingModels((prev) => new Set([...prev, model]));
+
+    try {
+      const payload = {
+        model,
+        test_type: testType,
+        stream: Boolean(stream),
+      };
+      if (endpointType) {
+        payload.endpoint_type = endpointType;
+      }
+      if (testMessage) {
+        payload.message = testMessage;
+      }
+      const res = await API.post(`/api/channel/test/${record.id}`, payload);
+      const { success, message, time, error_code, diagnostics } = res.data;
+
+      setModelTestDiagnostics((prev) => ({
+        ...prev,
+        [testKey]: {
+          success,
+          message,
+          time: time || 0,
+          errorCode: error_code || null,
+          diagnostics: diagnostics || null,
+          testType,
+          timestamp: Date.now(),
+        },
+      }));
+
+      if (diagnostics?.status === 'skipped') {
+        showInfo(t('当前端点不支持该诊断类型'));
+      } else if (success) {
+        showSuccess(t('能力诊断通过'));
+      } else {
+        showError(message || t('能力诊断失败'));
+      }
+    } catch (error) {
+      setModelTestDiagnostics((prev) => ({
+        ...prev,
+        [testKey]: {
+          success: false,
+          message:
+            error?.response?.data?.message || error.message || t('网络错误'),
+          time: 0,
+          errorCode: null,
+          diagnostics: null,
+          testType,
+          timestamp: Date.now(),
+        },
+      }));
+      showError(error?.response?.data?.message || error.message || t('诊断失败'));
+    } finally {
+      setDiagnosingModels((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(model);
+        return newSet;
+      });
+    }
+  };
+
   // 批量测试单个渠道的所有模型，参考旧版实现
   const batchTestModels = async () => {
     if (!currentTestChannel || !currentTestChannel.models) {
@@ -1213,6 +1289,8 @@ export const useChannelsData = () => {
     modelSearchKeyword,
     setModelSearchKeyword,
     modelTestResults,
+    modelTestDiagnostics,
+    diagnosingModels,
     testingModels,
     selectedModelKeys,
     setSelectedModelKeys,
@@ -1266,6 +1344,7 @@ export const useChannelsData = () => {
     fixChannelsAbilities,
     checkOllamaVersion,
     testChannel,
+    testChannelDiagnostics,
     batchTestModels,
     handleCloseModal,
     getFormValues,

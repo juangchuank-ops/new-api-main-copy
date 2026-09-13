@@ -28,9 +28,10 @@ import {
   updateAPI,
   getSystemName,
   getOAuthProviderIcon,
-  setUserData,
   onDiscordOAuthClicked,
   onCustomOAuthClicked,
+  applyLoginBundle,
+  isPendingRegistrationChallenge,
 } from '../../helpers';
 import Turnstile from 'react-turnstile';
 import {
@@ -84,6 +85,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
+    registration_code: '',
   });
   const { username, password, password2 } = inputs;
   const [userState, userDispatch] = useContext(UserContext);
@@ -92,6 +94,10 @@ const RegisterForm = () => {
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
   const [showWeChatLoginModal, setShowWeChatLoginModal] = useState(false);
+  const [showRegistrationCodeModal, setShowRegistrationCodeModal] =
+    useState(false);
+  const [registrationFlowToken, setRegistrationFlowToken] = useState('');
+  const [registrationCodeLoading, setRegistrationCodeLoading] = useState(false);
   const [showEmailRegister, setShowEmailRegister] = useState(false);
   const [wechatLoading, setWechatLoading] = useState(false);
   const [githubLoading, setGithubLoading] = useState(false);
@@ -212,9 +218,11 @@ const RegisterForm = () => {
       );
       const { success, message, data } = res.data;
       if (success) {
-        userDispatch({ type: 'login', payload: data });
-        localStorage.setItem('user', JSON.stringify(data));
-        setUserData(data);
+        const loggedInUser = applyLoginBundle(data, userDispatch);
+        if (!loggedInUser) {
+          showError('登录失败，请重试');
+          return;
+        }
         updateAPI();
         navigate('/');
         showSuccess('登录成功！');
@@ -261,8 +269,13 @@ const RegisterForm = () => {
           `/api/user/register?turnstile=${turnstileToken}`,
           inputs,
         );
-        const { success, message } = res.data;
+        const { success, message, data } = res.data;
         if (success) {
+          if (isPendingRegistrationChallenge(data)) {
+            setRegistrationFlowToken(data.flow_token);
+            setShowRegistrationCodeModal(true);
+            return;
+          }
           navigate('/login');
           showSuccess('注册成功！');
         } else {
@@ -275,6 +288,44 @@ const RegisterForm = () => {
       }
     }
   }
+
+  const submitRegistrationCode = async () => {
+    if (!inputs.registration_code) {
+      showInfo('请输入注册码！');
+      return;
+    }
+    if (!registrationFlowToken) {
+      showError('注册流程已失效，请重新注册');
+      setShowRegistrationCodeModal(false);
+      return;
+    }
+    setRegistrationCodeLoading(true);
+    try {
+      const res = await API.post('/api/user/register/complete', {
+        flow_token: registrationFlowToken,
+        registration_code: inputs.registration_code,
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setShowRegistrationCodeModal(false);
+        const loggedInUser = applyLoginBundle(data, userDispatch);
+        if (loggedInUser) {
+          updateAPI();
+          showSuccess('注册成功！');
+          navigate('/');
+          return;
+        }
+        showSuccess('注册成功！');
+        navigate('/login');
+      } else {
+        showError(message);
+      }
+    } catch (error) {
+      showError('注册失败，请重试');
+    } finally {
+      setRegistrationCodeLoading(false);
+    }
+  };
 
   const sendVerificationCode = async () => {
     if (inputs.email === '') return;
@@ -518,10 +569,12 @@ const RegisterForm = () => {
       const res = await API.get(`/api/oauth/telegram/login`, { params });
       const { success, message, data } = res.data;
       if (success) {
-        userDispatch({ type: 'login', payload: data });
-        localStorage.setItem('user', JSON.stringify(data));
+        const loggedInUser = applyLoginBundle(data, userDispatch);
+        if (!loggedInUser) {
+          showError('登录失败，请重试');
+          return;
+        }
         showSuccess('登录成功！');
-        setUserData(data);
         updateAPI();
         navigate('/');
       } else {
@@ -961,6 +1014,37 @@ const RegisterForm = () => {
     );
   };
 
+  const renderRegistrationCodeModal = () => {
+    return (
+      <Modal
+        title={t('输入注册码')}
+        visible={showRegistrationCodeModal}
+        maskClosable={false}
+        onOk={submitRegistrationCode}
+        onCancel={() => setShowRegistrationCodeModal(false)}
+        okText={t('确认')}
+        centered={true}
+        okButtonProps={{
+          loading: registrationCodeLoading,
+        }}
+      >
+        <div className='text-center mb-4'>
+          <p>{t('本站开启了注册码校验，请输入注册码以完成注册')}</p>
+        </div>
+
+        <Form>
+          <Form.Input
+            field='registration_code'
+            placeholder={t('注册码')}
+            label={t('注册码')}
+            value={inputs.registration_code}
+            onChange={(value) => handleChange('registration_code', value)}
+          />
+        </Form>
+      </Modal>
+    );
+  };
+
   return (
     <div className='classic-page-fill relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
       {/* 背景模糊晕染球 */}
@@ -977,6 +1061,7 @@ const RegisterForm = () => {
           ? renderEmailRegisterForm()
           : renderOAuthOptions()}
         {renderWeChatLoginModal()}
+        {renderRegistrationCodeModal()}
 
         {turnstileEnabled && (
           <div className='flex justify-center mt-6'>

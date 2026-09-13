@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Banner } from '@douyinfe/semi-ui';
 import { IconAlertTriangle } from '@douyinfe/semi-icons';
 import CardPro from '../../common/ui/CardPro';
@@ -27,6 +27,7 @@ import ChannelsFilters from './ChannelsFilters';
 import ChannelsTabs from './ChannelsTabs';
 import { useChannelsData } from '../../../hooks/channels/useChannelsData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { FLOATING_WINDOW_REFRESH_EVENT } from '../../floating-window';
 import BatchTagModal from './modals/BatchTagModal';
 import ModelTestModal from './modals/ModelTestModal';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
@@ -39,6 +40,27 @@ import { createCardProPagination } from '../../../helpers/utils';
 const ChannelsPage = () => {
   const channelsData = useChannelsData();
   const isMobile = useIsMobile();
+  const refreshRef = useRef(channelsData.refresh);
+
+  refreshRef.current = channelsData.refresh;
+
+  useEffect(() => {
+    const handleFloatingWindowRefresh = () => {
+      refreshRef.current?.();
+    };
+
+    window.addEventListener(
+      FLOATING_WINDOW_REFRESH_EVENT,
+      handleFloatingWindowRefresh,
+    );
+
+    return () => {
+      window.removeEventListener(
+        FLOATING_WINDOW_REFRESH_EVENT,
+        handleFloatingWindowRefresh,
+      );
+    };
+  }, []);
 
   return (
     <>

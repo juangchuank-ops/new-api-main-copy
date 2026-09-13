@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,7 +16,6 @@ import (
 const (
 	maxAutoSyncResultIDs    = 100
 	maxAutoSyncResultErrors = 20
-	autoSyncSchedulerInterval = 15 * time.Second
 )
 
 type AutoPriceSyncTaskSummary struct {
@@ -168,8 +166,6 @@ func RunAutoPriceSyncBatch(ctx context.Context, cutoffGeneration int64) (AutoSyn
 	return out, nil
 }
 
-// RunAutoModelMetadataSyncBatch 在旧版中降级运行：旧版无 SyncModelMetadata /
-// WithNamedLease，事件仍被消费以防队列无限增长，但不执行实际元数据同步。
 func RunAutoModelMetadataSyncBatch(ctx context.Context, cutoffGeneration int64) (AutoSyncTaskRunResult[AutoModelMetadataSyncTaskSummary], error) {
 	out := AutoSyncTaskRunResult[AutoModelMetadataSyncTaskSummary]{Summary: AutoModelMetadataSyncTaskSummary{Errors: []string{}}}
 	events, err := model.ListPendingAutoSyncEvents(AutoModelMetadataSyncEventType, cutoffGeneration)
@@ -183,13 +179,27 @@ func RunAutoModelMetadataSyncBatch(ctx context.Context, cutoffGeneration int64) 
 	if len(events) == 0 {
 		return out, nil
 	}
-	// 旧版降级：model metadata sync 不可用，事件被消费以防队列无限增长。
-	logger.LogWarn(ctx, "auto model metadata sync is not available in legacy mode; events consumed without syncing")
+	holder := fmt.Sprintf("auto-model-sync-%d", time.Now().UnixNano())
+	err = WithNamedLease(ctx, "model-metadata-sync", holder, time.Minute, func(leaseCtx context.Context) error {
+		summary, syncErr := SyncModelMetadata(leaseCtx, ModelMetadataSyncOptions{CreateMissingOnly: true, Locale: ""})
+		if syncErr != nil {
+			return syncErr
+		}
+		out.Summary.CreatedModels = summary.CreatedModels
+		out.Summary.CreatedVendors = summary.CreatedVendors
+		out.Summary.SkippedModels = len(summary.SkippedModels)
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return out, err
+		}
+		out.Failed = true
+		appendAutoSyncError(&out.Summary.Errors, err)
+	}
 	return out, nil
 }
 
-// finalizeAutoPriceGuard 适配旧版：使用 InitialConfigHash 替代 ConfigRevision 比较，
-// 使用 GetPendingAutoPriceGuardByChannelTx 替代 AutoPriceGuardID 指针比较。
 func finalizeAutoPriceGuard(guardID int64) (decision string, channelID int, cacheChanged bool, err error) {
 	guard, err := model.GetAutoPriceGuard(guardID)
 	if err != nil {
@@ -247,17 +257,7 @@ func finalizeAutoPriceGuard(guardID int64) (decision string, channelID int, cach
 			decision = "retained"
 			return resolveGuardAndClearChannelTx(tx, &currentGuard, "base price available")
 		}
-		// 方案 E 适配：使用 config hash 比较 ConfigRevision
-		if computeChannelConfigHash(&channel) != currentGuard.InitialConfigHash {
-			decision = "retained"
-			return resolveGuardAndClearChannelTx(tx, &currentGuard, "channel configuration changed")
-		}
-		// 方案 E 适配：使用 pending guard 查询替代 AutoPriceGuardID 指针比较
-		pendingGuard, lookupErr := model.GetPendingAutoPriceGuardByChannelTx(tx, channel.Id)
-		if lookupErr != nil {
-			return lookupErr
-		}
-		if pendingGuard == nil || pendingGuard.ID != currentGuard.ID {
+		if channel.ConfigRevision != currentGuard.InitialRevision || channel.AutoPriceGuardID != currentGuard.ID {
 			decision = "retained"
 			return resolveGuardAndClearChannelTx(tx, &currentGuard, "channel configuration changed")
 		}
@@ -296,11 +296,15 @@ func finalizeAutoPriceGuard(guardID int64) (decision string, channelID int, cach
 	return decision, channelID, cacheChanged, err
 }
 
-// resolveGuardAndClearChannelTx 方案 E 适配：旧版 Channel 无 auto_price_guard_id 列，
-// 仅 resolve guard 即可，无需清零指针。
 func resolveGuardAndClearChannelTx(tx *gorm.DB, guard *model.AutoPriceGuard, reason string) error {
-	_, err := model.ResolveAutoPriceGuardTx(tx, guard.ID, reason)
-	return err
+	resolved, err := model.ResolveAutoPriceGuardTx(tx, guard.ID, reason)
+	if err != nil {
+		return err
+	}
+	if resolved {
+		return tx.Model(&model.Channel{}).Where("id = ? AND auto_price_guard_id = ?", guard.ChannelID, guard.ID).Update("auto_price_guard_id", 0).Error
+	}
+	return nil
 }
 
 func hasAnyBasePriceTx(tx *gorm.DB, names []string) (bool, error) {
@@ -358,111 +362,4 @@ func sortedStringSet(values map[string]struct{}) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-// --- Handler implementations ---
-
-// autoPriceSyncHandler 实现 ScheduledSystemTaskHandler，由旧版调度器周期触发。
-type autoPriceSyncHandler struct{}
-
-func (autoPriceSyncHandler) Type() string         { return AutoPriceSyncEventType }
-func (autoPriceSyncHandler) Interval() time.Duration { return autoSyncSchedulerInterval }
-func (autoPriceSyncHandler) NewPayload() any {
-	return model.AutoSyncTaskPayload{EventType: AutoPriceSyncEventType}
-}
-
-func (autoPriceSyncHandler) Enabled() bool {
-	config, err := LoadChannelAutoSyncConfigTx(model.DB)
-	if err != nil {
-		return false
-	}
-	return config.PriceEnabled
-}
-
-func (h autoPriceSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	var payload model.AutoSyncTaskPayload
-	_ = task.DecodePayload(&payload)
-
-	cutoff := payload.CutoffGeneration
-	if cutoff == 0 {
-		var due bool
-		var err error
-		cutoff, due, err = model.FreezeDueAutoSyncBatchTx(model.DB, AutoPriceSyncEventType, common.GetTimestamp())
-		if err != nil {
-			failSystemTask(task, runnerID, err)
-			return
-		}
-		if !due {
-			_ = model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, nil, "")
-			return
-		}
-	}
-
-	result, err := RunAutoPriceSyncBatch(ctx, cutoff)
-	if err != nil {
-		failSystemTask(task, runnerID, err)
-		return
-	}
-
-	if err := model.FinalizeAutoSyncBatchTx(model.DB, AutoPriceSyncEventType, cutoff, result.EventIDs, task.TaskID); err != nil {
-		failSystemTask(task, runnerID, err)
-		return
-	}
-
-	_ = model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, result.Summary, "")
-}
-
-// autoModelMetadataSyncHandler 实现 ScheduledSystemTaskHandler，由旧版调度器周期触发。
-type autoModelMetadataSyncHandler struct{}
-
-func (autoModelMetadataSyncHandler) Type() string         { return AutoModelMetadataSyncEventType }
-func (autoModelMetadataSyncHandler) Interval() time.Duration { return autoSyncSchedulerInterval }
-func (autoModelMetadataSyncHandler) NewPayload() any {
-	return model.AutoSyncTaskPayload{EventType: AutoModelMetadataSyncEventType}
-}
-
-func (autoModelMetadataSyncHandler) Enabled() bool {
-	enabled, err := readBoolOption(AutoModelMetadataSyncEnabledOptionKey)
-	if err != nil {
-		return false
-	}
-	return enabled
-}
-
-func (h autoModelMetadataSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	var payload model.AutoSyncTaskPayload
-	_ = task.DecodePayload(&payload)
-
-	cutoff := payload.CutoffGeneration
-	if cutoff == 0 {
-		var due bool
-		var err error
-		cutoff, due, err = model.FreezeDueAutoSyncBatchTx(model.DB, AutoModelMetadataSyncEventType, common.GetTimestamp())
-		if err != nil {
-			failSystemTask(task, runnerID, err)
-			return
-		}
-		if !due {
-			_ = model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, nil, "")
-			return
-		}
-	}
-
-	result, err := RunAutoModelMetadataSyncBatch(ctx, cutoff)
-	if err != nil {
-		failSystemTask(task, runnerID, err)
-		return
-	}
-
-	if err := model.FinalizeAutoSyncBatchTx(model.DB, AutoModelMetadataSyncEventType, cutoff, result.EventIDs, task.TaskID); err != nil {
-		failSystemTask(task, runnerID, err)
-		return
-	}
-
-	_ = model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, result.Summary, "")
-}
-
-func init() {
-	RegisterSystemTaskHandler(autoPriceSyncHandler{})
-	RegisterSystemTaskHandler(autoModelMetadataSyncHandler{})
 }

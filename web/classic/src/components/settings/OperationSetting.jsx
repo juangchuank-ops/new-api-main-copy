@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
 import SettingsGeneral from '../../pages/Setting/Operation/SettingsGeneral';
+import SettingsTheme from '../../pages/Setting/Operation/SettingsTheme';
 import SettingsHeaderNavModules from '../../pages/Setting/Operation/SettingsHeaderNavModules';
 import SettingsSidebarModulesAdmin from '../../pages/Setting/Operation/SettingsSidebarModulesAdmin';
 import SettingsSensitiveWords from '../../pages/Setting/Operation/SettingsSensitiveWords';
@@ -28,6 +29,7 @@ import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
 import SettingsAutoSync from '../../pages/Setting/Operation/SettingsAutoSync';
+import SettingsUpstreamInterception from '../../pages/Setting/Operation/SettingsUpstreamInterception';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -64,6 +66,10 @@ const OperationSetting = () => {
 
     /* 日志设置 */
     LogConsumeEnabled: false,
+    'request_debug.raw_enabled': false,
+
+    /* 上游拦截设置 */
+    UpstreamInterceptionConfig: '',
 
     /* 监控设置 */
     ChannelDisableThreshold: 0,
@@ -127,6 +133,10 @@ const OperationSetting = () => {
         <Card style={{ marginTop: '10px' }}>
           <SettingsGeneral options={inputs} refresh={onRefresh} />
         </Card>
+        {/* 主题设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsTheme options={inputs} refresh={onRefresh} />
+        </Card>
         {/* 顶栏模块管理 */}
         <div style={{ marginTop: '10px' }}>
           <SettingsHeaderNavModules options={inputs} refresh={onRefresh} />
@@ -146,6 +156,10 @@ const OperationSetting = () => {
         {/* 监控设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsMonitoring options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 上游拦截设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsUpstreamInterception options={inputs} refresh={onRefresh} />
         </Card>
         {/* 额度设置 */}
         <Card style={{ marginTop: '10px' }}>

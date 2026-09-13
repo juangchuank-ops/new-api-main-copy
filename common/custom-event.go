@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 )
 
 type stringWriter interface {
@@ -48,13 +47,13 @@ var dataReplacer = strings.NewReplacer(
 	"\n", "\n",
 	"\r", "\\r")
 
+// CustomEvent does not synchronize writes to the response writer. Streaming
+// callers must serialize event writes at the stream level.
 type CustomEvent struct {
 	Event string
 	Id    string
 	Retry uint
-	Data  interface{}
-
-	Mutex sync.Mutex
+	Data  any
 }
 
 func encode(writer io.Writer, event CustomEvent) error {
@@ -62,24 +61,20 @@ func encode(writer io.Writer, event CustomEvent) error {
 	return writeData(w, event.Data)
 }
 
-func writeData(w stringWriter, data interface{}) error {
-	dataStr := fmt.Sprint(data)
-	dataReplacer.WriteString(w, dataStr)
-	// Safe type assertion with ok pattern
-	if str, ok := data.(string); ok && strings.HasPrefix(str, "data") {
+func writeData(w stringWriter, data any) error {
+	dataReplacer.WriteString(w, fmt.Sprint(data))
+	if strings.HasPrefix(data.(string), "data") {
 		w.writeString("\n\n")
 	}
 	return nil
 }
 
-func (r *CustomEvent) Render(w http.ResponseWriter) error {
+func (r CustomEvent) Render(w http.ResponseWriter) error {
 	r.WriteContentType(w)
-	return encode(w, *r)
+	return encode(w, r)
 }
 
-func (r *CustomEvent) WriteContentType(w http.ResponseWriter) {
-	r.Mutex.Lock()
-	defer r.Mutex.Unlock()
+func (r CustomEvent) WriteContentType(w http.ResponseWriter) {
 	header := w.Header()
 	header["Content-Type"] = writeContentType
 

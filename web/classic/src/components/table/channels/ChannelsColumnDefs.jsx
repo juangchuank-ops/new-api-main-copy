@@ -50,6 +50,10 @@ import {
   IconAlertTriangle,
 } from '@douyinfe/semi-icons';
 import { FaRandom } from 'react-icons/fa';
+import {
+  isFloatingWindowSupported,
+  openFloatingChannelEditor,
+} from '../../floating-window';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
@@ -722,6 +726,22 @@ export const getChannelsColumns = ({
                   title: t('确定是否要复制此渠道？'),
                   content: t('复制渠道的所有信息'),
                   onOk: () => copySelectedChannel(record),
+                });
+              },
+            },
+            {
+              node: 'item',
+              name: t('在新窗口打开'),
+              type: 'tertiary',
+              onClick: () => {
+                if (!isFloatingWindowSupported()) {
+                  setEditingChannel(record);
+                  setShowEdit(true);
+                  return;
+                }
+                openFloatingChannelEditor({
+                  mode: 'edit',
+                  channelId: record.id,
                 });
               },
             },

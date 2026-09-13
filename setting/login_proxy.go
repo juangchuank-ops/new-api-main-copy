@@ -14,7 +14,6 @@ type loginProxyConfig struct {
 var loginProxy atomic.Pointer[loginProxyConfig]
 
 // NormalizeLoginProxyURL validates a proxy URL and returns its canonical form.
-// Mirrors new-api-reference/setting/login_proxy.go.
 func NormalizeLoginProxyURL(rawURL string) (string, error) {
 	trimmedURL := strings.TrimSpace(rawURL)
 	if trimmedURL == "" {

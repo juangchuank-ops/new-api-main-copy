@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
@@ -116,6 +116,24 @@ func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.Embeddi
 	return embeddingRequest, nil
 }
 
+// maxTokensLimit bounds user-supplied max token fields. These values feed
+// pre-consume quota math (preConsumedTokens * ratio); an unbounded value can
+// overflow the conversion and corrupt billing.
+const maxTokensLimit = math.MaxInt32 / 2
+
+// MaxTokensLimit is also used by plugin request validation so passthrough
+// formats enforce the same ceiling as the native relay DTOs.
+const MaxTokensLimit = maxTokensLimit
+
+func exceedsMaxTokensLimit(values ...*uint) bool {
+	for _, v := range values {
+		if lo.FromPtrOr(v, uint(0)) > maxTokensLimit {
+			return true
+		}
+	}
+	return false
+}
+
 func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest, error) {
 	request := &dto.OpenAIResponsesRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
@@ -128,23 +146,12 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	if request.Input == nil {
 		return nil, errors.New("input is required")
 	}
-	return request, nil
-}
-
-func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIResponsesCompactionRequest, error) {
-	request := &dto.OpenAIResponsesCompactionRequest{}
-	if err := common.UnmarshalBodyReusable(c, request); err != nil {
-		return nil, err
-	}
-	if request.Model == "" {
-		return nil, errors.New("model is required")
+	if exceedsMaxTokensLimit(request.MaxOutputTokens) {
+		return nil, errors.New("max_output_tokens is invalid")
 	}
 	return request, nil
 }
 
-// GetAndValidateAlphaSearchRequest parses the standalone Codex web search
-// request (/v1/alpha/search). The raw body is preserved so unknown fields are
-// forwarded intact to upstream. Mirrors new-api-reference/relay/helper/valid_request.go.
 func GetAndValidateAlphaSearchRequest(c *gin.Context) (*dto.AlphaSearchRequest, error) {
 	request := &dto.AlphaSearchRequest{}
 	if err := common.UnmarshalBodyReusable(c, request); err != nil {
@@ -165,6 +172,17 @@ func GetAndValidateAlphaSearchRequest(c *gin.Context) (*dto.AlphaSearchRequest, 
 	return request, nil
 }
 
+func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIResponsesCompactionRequest, error) {
+	request := &dto.OpenAIResponsesCompactionRequest{}
+	if err := common.UnmarshalBodyReusable(c, request); err != nil {
+		return nil, err
+	}
+	if request.Model == "" {
+		return nil, errors.New("model is required")
+	}
+	return request, nil
+}
+
 func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageRequest, error) {
 	imageRequest := &dto.ImageRequest{}
 
@@ -180,7 +198,13 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			c.Request.PostForm = formData
 			imageRequest.Prompt = formData.Get("prompt")
 			imageRequest.Model = formData.Get("model")
-			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
+			if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
+				n, err := strconv.Atoi(nValue)
+				if err != nil || n < 0 || n > dto.MaxImageN {
+					return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+				}
+				imageRequest.N = common.GetPointer(uint(n))
+			}
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
 			if streamValue := strings.TrimSpace(formData.Get("stream")); streamValue != "" {
@@ -224,6 +248,10 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 
 		if strings.Contains(imageRequest.Size, "×") {
 			return nil, errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
+		}
+
+		if imageRequest.N != nil && *imageRequest.N > dto.MaxImageN {
+			return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 		}
 
 		// Not "256x256", "512x512", or "1024x1024"
@@ -274,6 +302,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if textRequest.Model == "" {
 		return nil, errors.New("field model is required")
 	}
+	if exceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
+		return nil, errors.New("max_tokens is invalid")
+	}
 
 	//if textRequest.Stream {
 	//	relayInfo.IsStream = true
@@ -296,7 +327,7 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 		textRequest.Model = c.Param("model")
 	}
 
-	if lo.FromPtrOr(textRequest.MaxTokens, uint(0)) > math.MaxInt32/2 {
+	if exceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxCompletionTokens) {
 		return nil, errors.New("max_tokens is invalid")
 	}
 	if textRequest.Model == "" {
@@ -348,6 +379,9 @@ func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error)
 	}
 	if len(request.Contents) == 0 && len(request.Requests) == 0 {
 		return nil, errors.New("contents is required")
+	}
+	if exceedsMaxTokensLimit(request.GenerationConfig.MaxOutputTokens) {
+		return nil, errors.New("maxOutputTokens is invalid")
 	}
 
 	//if c.Query("alt") == "sse" {

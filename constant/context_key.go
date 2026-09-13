@@ -15,30 +15,30 @@ const (
 	ContextKeyTokenKey               ContextKey = "token_key"
 	ContextKeyTokenId                ContextKey = "token_id"
 	ContextKeyTokenGroup             ContextKey = "token_group"
-	ContextKeyTokenSpecificChannelId ContextKey = "specific_channel_id"
+	ContextKeyOriginTasks            ContextKey = "origin_tasks"
+	ContextKeyChannelConstraints     ContextKey = "channel_constraints"
 	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
 	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
 	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
+	ContextKeyTokenAutoGroups        ContextKey = "token_auto_groups"
 
 	/* channel related keys */
-	ContextKeyChannelId                  ContextKey = "channel_id"
-	ContextKeyChannelName                ContextKey = "channel_name"
-	ContextKeyChannelCreateTime          ContextKey = "channel_create_time"
-	ContextKeyChannelBaseUrl             ContextKey = "base_url"
-	ContextKeyChannelType                ContextKey = "channel_type"
-	ContextKeyChannelSetting             ContextKey = "channel_setting"
-	ContextKeyChannelOtherSetting        ContextKey = "channel_other_setting"
-	ContextKeyChannelClientIdentity      ContextKey = "channel_client_identity"       // P3-Bridge: 解析自 OtherSettings JSON 的 relaykit/dto.ClientIdentityConfig（桥接，不改动旧版 dto.ChannelOtherSettings）
-	ContextKeyChannelHTTPTransportPolicy ContextKey = "channel_http_transport_policy" // P3-Bridge: 解析自 Setting JSON 的 service.HTTPTransportPolicy（桥接，不改动旧版 dto.ChannelSettings）
-	ContextKeyChannelParamOverride       ContextKey = "param_override"
-	ContextKeyChannelHeaderOverride      ContextKey = "header_override"
-	ContextKeyChannelOrganization        ContextKey = "channel_organization"
-	ContextKeyChannelAutoBan             ContextKey = "auto_ban"
-	ContextKeyChannelModelMapping        ContextKey = "model_mapping"
-	ContextKeyChannelStatusCodeMapping   ContextKey = "status_code_mapping"
-	ContextKeyChannelIsMultiKey          ContextKey = "channel_is_multi_key"
-	ContextKeyChannelMultiKeyIndex       ContextKey = "channel_multi_key_index"
-	ContextKeyChannelKey                 ContextKey = "channel_key"
+	ContextKeyChannelId                ContextKey = "channel_id"
+	ContextKeyChannelName              ContextKey = "channel_name"
+	ContextKeyChannelCreateTime        ContextKey = "channel_create_time"
+	ContextKeyChannelBaseUrl           ContextKey = "base_url"
+	ContextKeyChannelType              ContextKey = "channel_type"
+	ContextKeyChannelSetting           ContextKey = "channel_setting"
+	ContextKeyChannelOtherSetting      ContextKey = "channel_other_setting"
+	ContextKeyChannelParamOverride     ContextKey = "param_override"
+	ContextKeyChannelHeaderOverride    ContextKey = "header_override"
+	ContextKeyChannelOrganization      ContextKey = "channel_organization"
+	ContextKeyChannelAutoBan           ContextKey = "auto_ban"
+	ContextKeyChannelModelMapping      ContextKey = "model_mapping"
+	ContextKeyChannelStatusCodeMapping ContextKey = "status_code_mapping"
+	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
+	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
+	ContextKeyChannelKey               ContextKey = "channel_key"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
@@ -74,4 +74,18 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyRequestDebug stores sanitized upstream request/response metadata
+	// collected during relay execution and merged into the eventual log entry.
+	ContextKeyRequestDebug ContextKey = "request_debug"
+
+	// ContextKeyWebSearchRequests stores the number of server-side web search
+	// requests made immediately before a Playground relay round so text billing
+	// can apply the existing web_search per-call price exactly once.
+	ContextKeyWebSearchRequests ContextKey = "web_search_requests"
+
+	// ContextKeyTokenAuditParams contains only the API token operation's safe metadata.
+	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
+	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
+	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 )

@@ -1,15 +1,580 @@
 package controller
 
 import (
+	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newAdvancedCustomModelListChannel(baseURL string, key string, upstreamPath string, auth *dto.AdvancedCustomRouteAuth) *model.Channel {
+	config := &dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: dto.AdvancedCustomModelListPath,
+				UpstreamPath: upstreamPath,
+				Converter:    "none",
+				Auth:         auth,
+			},
+		},
+	}
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeAdvancedCustom,
+		Key:     key,
+		BaseURL: &baseURL,
+	}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: config})
+	return channel
+}
+
+func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		want      []string
+		wantError string
+	}{
+		{name: "malformed JSON", body: `{"data":`, wantError: "invalid OpenAI Models response"},
+		{name: "missing data", body: `{"object":"list"}`, wantError: "data is required"},
+		{name: "null data", body: `{"data":null}`, wantError: "data is required"},
+		{name: "empty data", body: `{"data":[]}`, wantError: "no valid model IDs"},
+		{name: "all IDs empty", body: `{"data":[{"id":""},{"id":"   "}]}`, wantError: "no valid model IDs"},
+		{
+			name: "filters empty IDs and normalizes valid IDs",
+			body: `{"data":[{"id":" gpt-4.1 "},{"id":""},{"id":"gpt-4.1"},{"id":"o3"}]}`,
+			want: []string{"gpt-4.1", "o3"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			models, err := parseOpenAIModelIDs([]byte(test.body))
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				require.Nil(t, models)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, models)
+		})
+	}
+}
+
+func TestFetchAdvancedCustomModelsAppliesHeaderOverrideAfterRouteAuth(t *testing.T) {
+	type receivedRequest struct {
+		Headers http.Header
+		Host    string
+	}
+	received := make(chan receivedRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- receivedRequest{Headers: r.Header.Clone(), Host: r.Host}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4.1"}]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "secret-key", "/provider/models", &dto.AdvancedCustomRouteAuth{
+		Type:  dto.AdvancedCustomAuthTypeHeader,
+		Name:  "X-Route-Key",
+		Value: "route-{api_key}",
+	})
+	headerOverride := `{
+		"X-Route-Key":"global-{api_key}",
+		"X-Static":"static-value",
+		"X-Client":"{client_header:X-Client}",
+		"Host":"models.example.test",
+		"*":""
+	}`
+	channel.HeaderOverride = &headerOverride
+
+	models, err := fetchChannelUpstreamModelIDs(channel)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-4.1"}, models)
+
+	request := <-received
+	require.Equal(t, "global-secret-key", request.Headers.Get("X-Route-Key"))
+	require.Equal(t, "static-value", request.Headers.Get("X-Static"))
+	require.Empty(t, request.Headers.Get("X-Client"))
+	require.Equal(t, "models.example.test", request.Host)
+}
+
+func TestFetchAdvancedCustomModelsUsesEnabledSavedMultiKey(t *testing.T) {
+	authorization := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4.1-mini"}]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "disabled-key\nenabled-key", "/v1/models", nil)
+	channel.ChannelInfo = model.ChannelInfo{
+		IsMultiKey: true,
+		MultiKeyStatusList: map[int]int{
+			0: common.ChannelStatusManuallyDisabled,
+			1: common.ChannelStatusEnabled,
+		},
+	}
+
+	models, err := fetchChannelUpstreamModelIDs(channel)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-4.1-mini"}, models)
+	require.Equal(t, "Bearer enabled-key", <-authorization)
+}
+
+func TestFetchAdvancedCustomModelsRejectsNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"data":[{"id":"must-not-be-used"}]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "secret-key", "/v1/models", nil)
+	models, err := fetchChannelUpstreamModelIDs(channel)
+	require.ErrorContains(t, err, "status code: 502")
+	require.Nil(t, models)
+}
+
+func TestFetchAdvancedCustomModelsRedactsQueryKeyFromTransportErrors(t *testing.T) {
+	const secret = "secret key/+"
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	baseURL := server.URL
+	server.Close()
+
+	channel := newAdvancedCustomModelListChannel(baseURL, secret, "/v1/models", &dto.AdvancedCustomRouteAuth{
+		Type:  dto.AdvancedCustomAuthTypeQuery,
+		Name:  "custom-token",
+		Value: "prefix-{api_key}",
+	})
+
+	_, err := fetchChannelUpstreamModelIDs(channel)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), secret)
+	require.NotContains(t, err.Error(), "custom-token")
+	require.NotContains(t, err.Error(), "prefix-")
+
+	direct := sanitizeFetchModelsError(&url.Error{
+		Op:  http.MethodGet,
+		URL: baseURL + "/v1/models?custom-token=prefix-" + url.QueryEscape(secret),
+		Err: errors.New("connection refused"),
+	}, secret)
+	require.EqualError(t, direct, "connection refused")
+
+	queryValue := "prefix-" + secret
+	queryError := sanitizeAdvancedCustomRequestError(
+		errors.New("dial "+queryValue+": connection refused"),
+		queryValue,
+		baseURL+"/v1/models?custom-token="+url.QueryEscape(queryValue),
+	)
+	require.NotContains(t, queryError.Error(), queryValue)
+	require.EqualError(t, queryError, "dial [REDACTED]: connection refused")
+}
+
+func TestFetchOrdinaryOpenAIModelsKeepsExistingEmptyDataBehavior(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"object":"list"}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeOpenAI,
+		Key:     "ordinary-key",
+		BaseURL: &baseURL,
+	}
+	models, err := fetchChannelUpstreamModelIDs(channel)
+	require.NoError(t, err)
+	require.Empty(t, models)
+}
+
+func TestApplyFetchModelsOtherSettingsCarriesStandardClientIdentity(t *testing.T) {
+	rawSettings, err := common.Marshal(dto.ChannelOtherSettings{
+		ClientIdentity: &dto.ClientIdentityConfig{
+			ClientType: dto.ClientIdentityClientTypeCodex,
+			Profile:    dto.ClientIdentityProfileCodexCLI,
+			Version:    "0.147.0",
+			Platform:   dto.ClientIdentityPlatformLinuxX64,
+		},
+	})
+	require.NoError(t, err)
+
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI}
+	require.NoError(t, applyFetchModelsOtherSettings(channel, rawSettings, nil))
+
+	settings := channel.GetOtherSettings()
+	require.NotNil(t, settings.ClientIdentity)
+	assert.Equal(t, dto.ClientIdentityClientTypeCodex, settings.ClientIdentity.ClientType)
+	assert.Equal(t, dto.ClientIdentityProfileCodexCLI, settings.ClientIdentity.Profile)
+	assert.Equal(t, "0.147.0", settings.ClientIdentity.Version)
+	assert.Equal(t, dto.ClientIdentityPlatformLinuxX64, settings.ClientIdentity.Platform)
+}
+
+func TestApplyFetchModelsOtherSettingsRejectsStandardChannelProfileMismatch(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeAnthropic}
+	identity := &dto.ClientIdentityConfig{
+		ClientType: dto.ClientIdentityClientTypeCodeBuddy,
+		Profile:    dto.ClientIdentityProfileCodeBuddy,
+	}
+
+	err := applyFetchModelsOtherSettings(channel, nil, identity)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+}
+
+func TestFetchModelsAdvancedCustomCreatePreview(t *testing.T) {
+	receivedAuthorization := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuthorization <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[{"id":"preview-model"}]}`))
+	}))
+	defer server.Close()
+
+	config := dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: dto.AdvancedCustomModelListPath,
+		UpstreamPath: "/preview/models",
+		Converter:    "none",
+	}}}
+	configBytes, err := common.Marshal(config)
+	require.NoError(t, err)
+	rawConfig := string(configBytes)
+	baseURL := server.URL
+	emptyProxy := ""
+	req := fetchModelsRequest{
+		BaseURL:        &baseURL,
+		Type:           constant.ChannelTypeAdvancedCustom,
+		Key:            "create-preview-key",
+		AdvancedCustom: &rawConfig,
+		Proxy:          &emptyProxy,
+	}
+	body, err := common.Marshal(req)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	FetchModels(ctx)
+
+	var response struct {
+		Success bool     `json:"success"`
+		Message string   `json:"message"`
+		Data    []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, []string{"preview-model"}, response.Data)
+	require.Equal(t, "Bearer create-preview-key", <-receivedAuthorization)
+}
+
+func TestFetchModelsAdvancedCustomEditPreviewUsesSavedKeyAndExplicitClears(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	receivedHeaders := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders <- r.Header.Clone()
+		_, _ = w.Write([]byte(`{"data":[{"id":"edited-preview-model"}]}`))
+	}))
+	defer server.Close()
+
+	savedChannel := newAdvancedCustomModelListChannel("http://127.0.0.1:1", "disabled-saved-key\nenabled-saved-key", "/saved/models", nil)
+	savedChannel.Name = "saved advanced channel"
+	savedChannel.Models = "old-model"
+	savedChannel.ChannelInfo = model.ChannelInfo{
+		IsMultiKey: true,
+		MultiKeyStatusList: map[int]int{
+			0: common.ChannelStatusManuallyDisabled,
+			1: common.ChannelStatusEnabled,
+		},
+	}
+	savedHeaderOverride := `{"X-Saved":"must-not-be-sent"}`
+	savedChannel.HeaderOverride = &savedHeaderOverride
+	savedChannel.SetSetting(dto.ChannelSettings{Proxy: "http://127.0.0.1:1"})
+	require.NoError(t, db.Create(savedChannel).Error)
+
+	preserved, err := buildAdvancedCustomModelPreviewChannel(fetchModelsRequest{ChannelID: savedChannel.Id})
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:1", preserved.GetBaseURL())
+	require.Equal(t, savedHeaderOverride, *preserved.HeaderOverride)
+	require.Equal(t, "http://127.0.0.1:1", preserved.GetSetting().Proxy)
+
+	previewConfig := dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: dto.AdvancedCustomModelListPath,
+		UpstreamPath: "/edited/models",
+		Converter:    "none",
+	}}}
+	configBytes, err := common.Marshal(previewConfig)
+	require.NoError(t, err)
+	rawConfig := string(configBytes)
+	baseURL := server.URL
+	explicitEmpty := ""
+	req := fetchModelsRequest{
+		ChannelID:      savedChannel.Id,
+		BaseURL:        &baseURL,
+		Type:           constant.ChannelTypeAdvancedCustom,
+		Key:            "request-key-must-be-ignored",
+		AdvancedCustom: &rawConfig,
+		HeaderOverride: &explicitEmpty,
+		Proxy:          &explicitEmpty,
+	}
+	cleared, err := buildAdvancedCustomModelPreviewChannel(fetchModelsRequest{
+		ChannelID:      savedChannel.Id,
+		BaseURL:        &explicitEmpty,
+		AdvancedCustom: &rawConfig,
+		HeaderOverride: &explicitEmpty,
+		Proxy:          &explicitEmpty,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cleared.BaseURL)
+	require.Empty(t, *cleared.BaseURL)
+	require.NotNil(t, cleared.HeaderOverride)
+	require.Empty(t, *cleared.HeaderOverride)
+	require.Empty(t, cleared.GetSetting().Proxy)
+
+	body, err := common.Marshal(req)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	FetchModels(ctx)
+
+	var response struct {
+		Success bool     `json:"success"`
+		Message string   `json:"message"`
+		Data    []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, []string{"edited-preview-model"}, response.Data)
+	require.NotContains(t, recorder.Body.String(), "enabled-saved-key")
+	require.NotContains(t, recorder.Body.String(), "request-key-must-be-ignored")
+
+	headers := <-receivedHeaders
+	require.Equal(t, "Bearer enabled-saved-key", headers.Get("Authorization"))
+	require.Empty(t, headers.Get("X-Saved"))
+}
+
+func TestFailedAdvancedCustomDetectionDoesNotStageFullRemoval(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "secret-key", "/v1/models", nil)
+	channel.Name = "empty discovery response"
+	channel.Models = "gpt-4.1,o3"
+	settings := channel.GetOtherSettings()
+	settings.UpstreamModelUpdateCheckEnabled = true
+	settings.UpstreamModelUpdateAutoSyncEnabled = true
+	channel.SetOtherSettings(settings)
+	require.NoError(t, db.Create(channel).Error)
+
+	modelsChanged, autoAdded, err := checkAndPersistChannelUpstreamModelUpdates(channel, &settings, true, true)
+	require.ErrorContains(t, err, "no valid model IDs")
+	require.False(t, modelsChanged)
+	require.Zero(t, autoAdded)
+	require.Empty(t, settings.UpstreamModelUpdateLastDetectedModels)
+	require.Empty(t, settings.UpstreamModelUpdateLastRemovedModels)
+
+	reloaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	persistedSettings := reloaded.GetOtherSettings()
+	require.Empty(t, persistedSettings.UpstreamModelUpdateLastDetectedModels)
+	require.Empty(t, persistedSettings.UpstreamModelUpdateLastRemovedModels)
+	require.Equal(t, "gpt-4.1,o3", reloaded.Models)
+}
+
+func TestFetchModelsUsesSharedChannelFetchBehavior(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("x-api-key") != "first-key" {
+			t.Errorf("unexpected x-api-key header: %s", r.Header.Get("x-api-key"))
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected Authorization header: %s", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":" claude-sonnet "},{"id":"claude-sonnet"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	body, err := common.Marshal(map[string]any{
+		"base_url": server.URL,
+		"type":     constant.ChannelTypeAnthropic,
+		"key":      "first-key\nsecond-key",
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	FetchModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"success":true,"message":"","data":["claude-sonnet"]}`, recorder.Body.String())
+}
+
+func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		assert.Equal(t, "Bearer new-api-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":" gpt-5-mini "}]}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeNewAPI,
+		Key:     "new-api-key",
+		BaseURL: &baseURL,
+	}
+
+	models, err := fetchChannelUpstreamModelIDs(channel)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, models)
+}
+
+func TestBuildFetchModelsHeadersUsesCompatibilityIdentities(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		assertions  func(t *testing.T, headers http.Header)
+	}{
+		{
+			name:        "Codex",
+			channelType: constant.ChannelTypeCodexCompatibility,
+			assertions: func(t *testing.T, headers http.Header) {
+				assert.Equal(t, "Bearer test-key", headers.Get("Authorization"))
+				assert.Equal(t, "responses=experimental", headers.Get("OpenAI-Beta"))
+				assert.Equal(t, "codex_cli_rs", headers.Get("Originator"))
+				assert.Equal(t, "codex_cli_rs/0.146.0", headers.Get("User-Agent"))
+			},
+		},
+		{
+			name:        "Claude Code",
+			channelType: constant.ChannelTypeClaudeCode,
+			assertions: func(t *testing.T, headers http.Header) {
+				assert.Equal(t, "Bearer test-key", headers.Get("Authorization"))
+				assert.Empty(t, headers.Get("x-api-key"))
+				assert.Equal(t, "claude-cli/2.1.214 (external, cli)", headers.Get("User-Agent"))
+				assert.Equal(t, "cli", headers.Get("X-App"))
+				assert.Equal(t, "2023-06-01", headers.Get("Anthropic-Version"))
+				assert.Empty(t, headers.Get("X-Claude-Code-Session-Id"))
+			},
+		},
+		{
+			name:        "CodeBuddy",
+			channelType: constant.ChannelTypeCodeBuddy,
+			assertions: func(t *testing.T, headers http.Header) {
+				assert.Equal(t, "Bearer test-key", headers.Get("Authorization"))
+				assert.Equal(t, "test-key", headers.Get("X-API-Key"))
+				assert.Equal(t, "WorkBuddy/5.3.8 WorkBuddy/5.3.8 CLI/2.115.0", headers.Get("User-Agent"))
+				assert.Equal(t, "1", headers.Get("X-CodeBuddy-Request"))
+				assert.Empty(t, headers.Get("X-API-Mock-WorkBuddy-Compatible"))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			headers, err := buildFetchModelsHeaders(&model.Channel{Type: test.channelType}, "test-key")
+
+			require.NoError(t, err)
+			test.assertions(t, headers)
+		})
+	}
+}
+
+func TestBuildFetchModelsHeadersAppliesStandardClientIdentityWithoutChangingChannelType(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		identity    *dto.ClientIdentityConfig
+		assertions  func(*testing.T, http.Header)
+	}{
+		{
+			name:        "standard OpenAI uses Codex CLI identity",
+			channelType: constant.ChannelTypeOpenAI,
+			identity: &dto.ClientIdentityConfig{
+				Profile:  dto.ClientIdentityProfileCodexCLI,
+				Version:  "1.2.3",
+				Platform: dto.ClientIdentityPlatformLinuxX64,
+			},
+			assertions: func(t *testing.T, headers http.Header) {
+				assert.Equal(t, "Bearer test-key", headers.Get("Authorization"))
+				assert.Equal(t, "codex_cli_rs/1.2.3 (linux-x64)", headers.Get("User-Agent"))
+			},
+		},
+		{
+			name:        "standard Anthropic uses Claude CLI identity",
+			channelType: constant.ChannelTypeAnthropic,
+			identity: &dto.ClientIdentityConfig{
+				Profile:  dto.ClientIdentityProfileClaudeCLI,
+				Version:  "2.1.224",
+				Platform: dto.ClientIdentityPlatformMacOSArm64,
+			},
+			assertions: func(t *testing.T, headers http.Header) {
+				assert.Equal(t, "test-key", headers.Get("X-Api-Key"))
+				assert.Equal(t, "2023-06-01", headers.Get("Anthropic-Version"))
+				assert.Equal(t, "claude-cli/2.1.224 (external, cli; macos-arm64)", headers.Get("User-Agent"))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			channel := &model.Channel{Type: test.channelType}
+			channel.SetOtherSettings(dto.ChannelOtherSettings{ClientIdentity: test.identity})
+
+			headers, err := buildFetchModelsHeaders(channel, "test-key")
+			require.NoError(t, err)
+			test.assertions(t, headers)
+		})
+	}
+}
+
+func TestBuildFetchModelsHeadersAppliesHeaderOverrideLast(t *testing.T) {
+	safeOverrides := `{"Authorization":"override-auth","User-Agent":"override-agent","Anthropic-Version":"override-version","X-Safe-Static":"survives","Anthropic-Beta":"interleaved-thinking-2025-05-14"}`
+	headers, err := buildFetchModelsHeaders(&model.Channel{
+		Type:           constant.ChannelTypeClaudeCode,
+		HeaderOverride: &safeOverrides,
+	}, "test-key")
+	require.NoError(t, err)
+	assert.Equal(t, "override-auth", headers.Get("Authorization"))
+	assert.Equal(t, "override-agent", headers.Get("User-Agent"))
+	assert.Equal(t, "override-version", headers.Get("Anthropic-Version"))
+	assert.Equal(t, "application/json", headers.Get("Accept"))
+	assert.Equal(t, "application/json", headers.Get("Content-Type"))
+	assert.Equal(t, "survives", headers.Get("X-Safe-Static"))
+	assert.Equal(t, "interleaved-thinking-2025-05-14", headers.Get("Anthropic-Beta"))
+	assert.Empty(t, headers.Get("X-Api-Key"))
+	assert.Empty(t, headers.Get("X-Claude-Code-Session-Id"))
+
+	reservedOverride := `{"X-Api-Key":"override"}`
+	headers, err = buildFetchModelsHeaders(&model.Channel{
+		Type:           constant.ChannelTypeClaudeCode,
+		HeaderOverride: &reservedOverride,
+	}, "test-key")
+	require.NoError(t, err)
+	assert.Equal(t, "override", headers.Get("X-Api-Key"))
+}
 
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{
@@ -128,7 +693,7 @@ func TestCollectPendingUpstreamModelChangesFromModels_WithIgnoredRegexPatterns(t
 
 func TestBuildUpstreamModelUpdateTaskNotificationContent_OmitOverflowDetails(t *testing.T) {
 	channelSummaries := make([]upstreamModelUpdateChannelSummary, 0, 12)
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		channelSummaries = append(channelSummaries, upstreamModelUpdateChannelSummary{
 			ChannelName: "channel-" + string(rune('A'+i)),
 			AddCount:    i + 1,

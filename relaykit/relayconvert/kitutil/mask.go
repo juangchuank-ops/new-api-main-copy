@@ -48,10 +48,7 @@ func maskHostForPlainDomain(domain string) string {
 		return domain
 	}
 	tail := maskHostTail(parts)
-	numStars := len(parts) - len(tail)
-	if numStars < 1 {
-		numStars = 1
-	}
+	numStars := max(len(parts)-len(tail), 1)
 	stars := strings.TrimSuffix(strings.Repeat("***.", numStars), ".")
 	return stars + "." + strings.Join(tail, ".")
 }
@@ -127,7 +124,7 @@ func MaskSensitiveInfo(str string) string {
 	// Mask IP addresses
 	str = maskIPPattern.ReplaceAllString(str, "***.***.***.***")
 
-	// Mask API keys (e.g., "api_key:AIza<google-api-key>" -> "api_key:***")
+	// Mask API keys (e.g., "api_key:AIzaSyAAAaUooTUni8AdaOkSRMda30n_Q4vrV70" -> "api_key:***")
 	str = maskApiKeyPattern.ReplaceAllString(str, "${1}api_key:***${3}")
 
 	return str

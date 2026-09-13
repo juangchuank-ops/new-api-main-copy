@@ -39,22 +39,6 @@ func TestRequestDebugBodyStoresAndRetrievesFullPayload(t *testing.T) {
 	require.Greater(t, chunkCount, int64(1))
 }
 
-func TestRequestDebugBodyHandlesEmptyAndMissing(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	previousDB := DB
-	DB = db
-	t.Cleanup(func() { DB = previousDB })
-	require.NoError(t, db.AutoMigrate(&RequestDebugBodyRecord{}, &RequestDebugBodyChunk{}))
-
-	// Empty request ID should error
-	require.Error(t, StoreRequestDebugBody(context.Background(), "", "text/plain", []byte("x"), 1, false))
-
-	// Non-existent request ID should return ErrRecordNotFound
-	_, err = GetRequestDebugBody(context.Background(), "non-existent")
-	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-}
-
 func TestDeleteOldRequestDebugBodyBatchRemovesMetadataAndChunks(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

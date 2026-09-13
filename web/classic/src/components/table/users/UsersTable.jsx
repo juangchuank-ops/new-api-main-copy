@@ -24,7 +24,7 @@ import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import { API, showSuccess, showError } from '../../../helpers';
+import { API, showSuccess, showError, setUserData } from '../../../helpers';
 import { getUsersColumns } from './UsersColumnDefs';
 import PromoteUserModal from './modals/PromoteUserModal';
 import PermissionAdminModal from './modals/PermissionAdminModal';
@@ -271,7 +271,7 @@ const UsersTable = (usersData) => {
     try {
       const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
       currentUser.role = newRole;
-      localStorage.setItem('user', JSON.stringify(currentUser));
+      setUserData(currentUser);
     } catch (e) {
       // 解析失败时忽略，整页刷新会从服务端重新拉取
     }

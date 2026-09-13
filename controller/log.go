@@ -29,6 +29,11 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if c.GetInt("role") < common.RoleRootUser {
+		model.FormatAdminLogs(logs)
+	} else {
+		model.FormatRootLogs(logs)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
@@ -97,6 +102,27 @@ func GetLogByKey(c *gin.Context) {
 	})
 }
 
+func GetRequestDebugBody(c *gin.Context) {
+	if !common.IsRequestDebugRawEnabled() {
+		common.ApiError(c, errors.New("raw request diagnostics are disabled"))
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("request_id"))
+	stored, err := model.GetRequestDebugBody(c.Request.Context(), requestID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := common.RequestDebugBodyRepresentation(stored.Data, stored.ContentType, stored.BodyTruncated)
+	result["body_available"] = true
+	result["body_ref"] = requestID
+	result["body_bytes"] = stored.BodyBytes
+	result["stored_bytes"] = stored.StoredBytes
+	result["content_type"] = stored.ContentType
+	result["compression"] = stored.Compression
+	common.ApiSuccess(c, result)
+}
+
 func GetLogsStat(c *gin.Context) {
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -152,49 +178,19 @@ func GetLogsSelfStat(c *gin.Context) {
 	return
 }
 
-func GetRequestDebugBody(c *gin.Context) {
-	if !common.IsRequestDebugRawEnabled() {
-		common.ApiError(c, errors.New("raw request diagnostics are disabled"))
-		return
-	}
-	requestID := strings.TrimSpace(c.Param("request_id"))
-	stored, err := model.GetRequestDebugBody(c.Request.Context(), requestID)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	result := common.RequestDebugBodyRepresentation(stored.Data, stored.ContentType, stored.BodyTruncated)
-	result["body_available"] = true
-	result["body_ref"] = requestID
-	result["body_bytes"] = stored.BodyBytes
-	result["stored_bytes"] = stored.StoredBytes
-	result["content_type"] = stored.ContentType
-	result["compression"] = stored.Compression
-	common.ApiSuccess(c, result)
-}
-
-// DeleteHistoryLogs is the legacy synchronous log cleanup endpoint (DELETE /api/log/).
-// It deletes directly instead of going through the async system task. It is kept only
-// for the classic frontend; the default frontend uses POST /api/system-task/log-cleanup.
-// TODO: remove this handler (and its route) once the classic frontend is removed.
+// DeleteHistoryLogs is the legacy synchronous direct-delete route used only by
+// the classic frontend. The default frontend uses /system-task/log-cleanup.
 func DeleteHistoryLogs(c *gin.Context) {
 	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
 	if targetTimestamp == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "target timestamp is required",
-		})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "target timestamp is required"})
 		return
 	}
-	count, err := model.DeleteOldLog(c.Request.Context(), targetTimestamp, 100)
+	count, err := model.DeleteOldLogBatch(c.Request.Context(), targetTimestamp, 100)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    count,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": count})
 	return
 }

@@ -30,6 +30,7 @@ import {
   buildRegistrationResult,
   isPasskeySupported,
   setUserData,
+  logoutAuthentication,
 } from '../../helpers';
 import { UserContext } from '../../context/User';
 import { Modal } from '@douyinfe/semi-ui';
@@ -388,9 +389,8 @@ const PersonalSetting = () => {
 
     if (success) {
       showSuccess(t('账户已删除！'));
-      await API.get('/api/user/logout');
+      await logoutAuthentication();
       userDispatch({ type: 'logout' });
-      localStorage.removeItem('user');
       navigate('/login');
     } else {
       showError(message);

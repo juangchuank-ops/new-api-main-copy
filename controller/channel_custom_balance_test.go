@@ -1,0 +1,126 @@
+package controller
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setupChannelCustomBalanceControllerDB(t *testing.T) *model.Channel {
+	t.Helper()
+	db := usePricingControllerDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.ChannelCustomBalance{}, &model.NamedLease{}))
+	key := "controller-channel-key"
+	channel := &model.Channel{Key: key, Name: "controller-custom-balance"}
+	require.NoError(t, db.Create(channel).Error)
+	return channel
+}
+
+func TestChannelCustomBalanceAPIDoesNotReturnCredential(t *testing.T) {
+	channel := setupChannelCustomBalanceControllerDB(t)
+	requestBody := []byte(`{"enabled":false,"use_channel_key":false,"ignore_balance_auto_ban":true,"credential":"controller-secret"}`)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel/1/custom-balance", bytes.NewReader(requestBody))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannelCustomBalance(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.NotContains(t, recorder.Body.String(), "controller-secret")
+	assert.NotContains(t, recorder.Body.String(), "EncryptedCredential")
+	assert.Contains(t, recorder.Body.String(), `"credential_set":true`)
+	assert.Contains(t, recorder.Body.String(), `"ignore_balance_auto_ban":true`)
+	var stored model.ChannelCustomBalance
+	require.NoError(t, model.DB.First(&stored, "channel_id = ?", channel.Id).Error)
+	assert.NotContains(t, recorder.Body.String(), stored.EncryptedCredential)
+
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: intString(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/1/custom-balance", nil)
+	GetChannelCustomBalance(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.NotContains(t, recorder.Body.String(), "controller-secret")
+}
+
+func TestChannelCustomBalanceAPIRejectsInvalidQuota(t *testing.T) {
+	channel := setupChannelCustomBalanceControllerDB(t)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: intString(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel/1/custom-balance", bytes.NewBufferString(`{"quota_per_unit":0}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannelCustomBalance(ctx)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "quota_per_unit")
+}
+
+func TestChannelCustomBalanceAPIAcceptsNumericUserID(t *testing.T) {
+	channel := setupChannelCustomBalanceControllerDB(t)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: intString(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel/1/custom-balance", bytes.NewBufferString(`{"user_id":42}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannelCustomBalance(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"user_id":"42"`)
+}
+
+func TestUpdateChannelBalanceUsesConfiguredCustomBalance(t *testing.T) {
+	channel := setupChannelCustomBalanceControllerDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/user/self", r.URL.Path)
+		assert.Equal(t, "Bearer controller-channel-key", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"data":{"quota":1000000}}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	require.NoError(t, model.DB.Model(channel).Updates(map[string]any{"base_url": baseURL}).Error)
+	enabled, useChannelKey := true, true
+	_, err := service.UpdateChannelCustomBalanceConfig(context.Background(), channel.Id, service.ChannelCustomBalanceUpdate{
+		Enabled:       &enabled,
+		UseChannelKey: &useChannelKey,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: intString(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/1/update_balance", nil)
+
+	UpdateChannelBalance(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	assert.Contains(t, recorder.Body.String(), `"balance":2`)
+}
+
+func TestChannelCustomBalanceAPIPreservesLargeNumericUserID(t *testing.T) {
+	channel := setupChannelCustomBalanceControllerDB(t)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: intString(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel/1/custom-balance", bytes.NewBufferString(`{"user_id":9007199254740993}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannelCustomBalance(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"user_id":"9007199254740993"`)
+}
+
+func intString(value int) string {
+	return strconv.Itoa(value)
+}

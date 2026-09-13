@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useMemo, useContext, useRef } from 'react';
 import { StatusContext } from '../../context/Status';
-import { API } from '../../helpers';
+import { API, setUserData } from '../../helpers';
 
 // 创建一个全局事件系统来同步所有useSidebar实例
 const sidebarEventTarget = new EventTarget();
@@ -30,6 +30,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     playground: true,
     chat: true,
+    drawing: true,
   },
   console: {
     enabled: true,
@@ -38,6 +39,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     log: true,
     midjourney: true,
     task: true,
+    audit: true,
   },
   personal: {
     enabled: true,
@@ -62,6 +64,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     'upstream-account': true,
     'ip-ban': true,
     'browser-fingerprint-ban': true,
+    'task-plugins': true,
   },
 };
 
@@ -147,7 +150,7 @@ export const useSidebar = () => {
               JSON.stringify(cachedUser.sidebar_modules) !==
                 JSON.stringify(nextUser.sidebar_modules);
             if (userChanged) {
-              localStorage.setItem('user', JSON.stringify(nextUser));
+              setUserData(nextUser);
               window.dispatchEvent(new Event('user-updated'));
             }
           } catch (e) {

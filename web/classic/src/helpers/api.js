@@ -23,6 +23,12 @@ import {
   formatMessageForAPI,
   isValidMessage,
 } from './utils';
+import {
+  getAccessToken,
+  refreshAuthentication,
+  logoutAuthentication,
+} from './auth-session';
+import { getStoredUser } from './data';
 import axios from 'axios';
 import { MESSAGE_ROLES } from '../constants/playground.constants';
 
@@ -74,11 +80,56 @@ function attachBrowserFingerprint(instance) {
   });
 }
 
+// 新版鉴权要求所有受保护请求携带 Authorization: Bearer <access_token>。
+// 令牌可能在页面生命周期内被刷新（登录/刷新/切换账号），因此每次请求都从
+// localStorage 动态读取，而不是在实例创建时固定下来。
+function attachAuthHeaders(instance) {
+  instance.interceptors.request.use((config) => {
+    const token = getAccessToken();
+    if (token) {
+      config.headers = config.headers || {};
+      if (!config.headers['Authorization']) {
+        config.headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+    return config;
+  });
+}
+
 function attachResponseErrorHandler(instance) {
   instance.interceptors.response.use(
     (response) => response,
-    (error) => {
-      if (error.config && error.config.skipErrorHandler) {
+    async (error) => {
+      const config = error.config;
+      const status = error.response?.status;
+
+      // 401 时先尝试用刷新 Cookie 换取新 access token 并重放一次请求，
+      // 避免令牌过期导致用户被强制登出。刷新请求走独立的 axios 实例，
+      // 不会再次进入本拦截器，因此不存在递归。
+      if (
+        status === 401 &&
+        config &&
+        !config._authRetried &&
+        !config.skipErrorHandler &&
+        !config.skipAuthRefresh &&
+        getStoredUser()
+      ) {
+        config._authRetried = true;
+        const outcome = await refreshAuthentication();
+        if (outcome.kind === 'authenticated') {
+          config.headers = config.headers || {};
+          config.headers['Authorization'] = `Bearer ${getAccessToken()}`;
+          config.headers['New-API-User'] = getUserIdFromLocalStorage();
+          return instance.request(config);
+        }
+        // 刷新仅因网络/服务端瞬时故障失败时不清除登录态，直接提示重试。
+        if (outcome.kind === 'transient_error') {
+          showError({ message: '会话刷新失败，请稍后重试' });
+          return Promise.reject(error);
+        }
+      }
+
+      if (config && config.skipErrorHandler) {
         return Promise.reject(error);
       }
       showError(error);
@@ -88,6 +139,7 @@ function attachResponseErrorHandler(instance) {
 }
 
 attachBrowserFingerprint(API);
+attachAuthHeaders(API);
 attachResponseErrorHandler(API);
 
 function redirectToOAuthUrl(url, options = {}) {
@@ -148,10 +200,10 @@ export function updateAPI() {
   });
 
   attachBrowserFingerprint(API);
+  attachAuthHeaders(API);
   attachResponseErrorHandler(API);
   patchAPIInstance(API);
 }
-
 
 // playground
 
@@ -287,39 +339,32 @@ export const processGroupsData = (data, userGroup) => {
 
 // 原来components中的utils.js
 
-export async function getOAuthState(invitationCode) {
-  let path = '/api/oauth/state';
-  const params = [];
+export async function getOAuthState(provider, options = {}) {
+  const { invitationCode, intent = 'login' } = options;
+  const body = { provider, intent };
   let affCode = localStorage.getItem('aff');
   if (affCode && affCode.length > 0) {
-    params.push(`aff=${affCode}`);
+    body.aff = affCode;
   }
   if (invitationCode) {
-    params.push(`invitation_code=${encodeURIComponent(invitationCode)}`);
+    body.invitation_code = invitationCode;
   }
-  if (params.length > 0) {
-    path += `?${params.join('&')}`;
-  }
-  const res = await API.get(path);
+  const res = await API.post('/api/oauth/state', body);
   const { success, message, data } = res.data;
-  if (success) {
-    return data;
-  } else {
-    showError(message);
-    return '';
+  if (success && data && data.flow_token) {
+    return data.flow_token;
   }
+  showError(message || '获取授权状态失败');
+  return '';
 }
 
-async function prepareOAuthState(options = {}) {
-  const { shouldLogout = false, invitationCode } = options;
+async function prepareOAuthState(provider, options = {}) {
+  const { shouldLogout = false } = options;
   if (shouldLogout) {
-    try {
-      await API.get('/api/user/logout', { skipErrorHandler: true });
-    } catch (err) {}
-    localStorage.removeItem('user');
+    await logoutAuthentication();
     updateAPI();
   }
-  return await getOAuthState(invitationCode);
+  return await getOAuthState(provider, options);
 }
 
 export async function checkInvitationCode(code) {
@@ -336,7 +381,7 @@ export async function checkInvitationCode(code) {
 }
 
 export async function onDiscordOAuthClicked(client_id, options = {}) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState('discord', options);
   if (!state) return;
   const redirect_uri = `${window.location.origin}/oauth/discord`;
   const response_type = 'code';
@@ -352,7 +397,7 @@ export async function onOIDCClicked(
   openInNewTab = false,
   options = {},
 ) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState('oidc', options);
   if (!state) return;
   const url = new URL(auth_url);
   url.searchParams.set('client_id', client_id);
@@ -364,7 +409,7 @@ export async function onOIDCClicked(
 }
 
 export async function onGitHubOAuthClicked(github_client_id, options = {}) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState('github', options);
   if (!state) return;
   redirectToOAuthUrl(
     `https://github.com/login/oauth/authorize?client_id=${github_client_id}&state=${state}&scope=user:email`,
@@ -375,7 +420,7 @@ export async function onLinuxDOOAuthClicked(
   linuxdo_client_id,
   options = { shouldLogout: false },
 ) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState('linuxdo', options);
   if (!state) return;
   redirectToOAuthUrl(
     `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${linuxdo_client_id}&state=${state}`,
@@ -383,7 +428,7 @@ export async function onLinuxDOOAuthClicked(
 }
 
 export async function onGoogleOAuthClicked(google_client_id, options = {}) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState('google', options);
   if (!state) return;
   const redirect_uri = `${window.location.origin}/oauth/google`;
   const response_type = 'code';
@@ -404,7 +449,7 @@ export async function onGoogleOAuthClicked(google_client_id, options = {}) {
  * @param {boolean} options.shouldLogout - Whether to logout first
  */
 export async function onCustomOAuthClicked(provider, options = {}) {
-  const state = await prepareOAuthState(options);
+  const state = await prepareOAuthState(provider.slug, options);
   if (!state) return;
 
   try {

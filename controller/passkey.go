@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,15 +9,72 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	passkeysvc "github.com/QuantumNous/new-api/service/passkey"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 )
+
+type passkeyFinishRequest struct {
+	FlowToken  string          `json:"flow_token"`
+	Credential json.RawMessage `json:"credential"`
+}
+
+type passkeyRegisterBeginRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+// passkeyCredentialResponse deliberately exposes only management-safe data.
+// Credential IDs and public keys are authentication secrets/identifiers and
+// must never be returned through the dashboard API.
+type passkeyCredentialResponse struct {
+	ID             int                               `json:"id"`
+	DisplayName    string                            `json:"display_name"`
+	CreatedAt      time.Time                         `json:"created_at"`
+	LastUsedAt     *time.Time                        `json:"last_used_at"`
+	Attachment     string                            `json:"attachment,omitempty"`
+	Transports     []protocol.AuthenticatorTransport `json:"transports,omitempty"`
+	BackupEligible bool                              `json:"backup_eligible"`
+	BackupState    bool                              `json:"backup_state"`
+}
+
+type passkeyVerifyBeginRequest struct {
+	Scope   string          `json:"scope"`
+	Context json.RawMessage `json:"context,omitempty"`
+}
+
+func passkeyCredentialResponses(credentials []model.PasskeyCredential) []passkeyCredentialResponse {
+	items := make([]passkeyCredentialResponse, 0, len(credentials))
+	for i := range credentials {
+		items = append(items, passkeyCredentialResponse{
+			ID:             credentials[i].ID,
+			DisplayName:    credentials[i].DisplayName,
+			CreatedAt:      credentials[i].CreatedAt,
+			LastUsedAt:     credentials[i].LastUsedAt,
+			Attachment:     credentials[i].Attachment,
+			Transports:     credentials[i].TransportList(),
+			BackupEligible: credentials[i].BackupEligible,
+			BackupState:    credentials[i].BackupState,
+		})
+	}
+	return items
+}
+
+func parsePasskeyFinishRequest(c *gin.Context) (*passkeyFinishRequest, error) {
+	var request passkeyFinishRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		return nil, err
+	}
+	if request.FlowToken == "" || len(request.Credential) == 0 {
+		return nil, errors.New("Passkey 流程参数不完整")
+	}
+	return &request, nil
+}
 
 func PasskeyRegisterBegin(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
@@ -27,49 +85,69 @@ func PasskeyRegisterBegin(c *gin.Context) {
 		return
 	}
 
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
 		return
 	}
-
-	if !requirePasskeyRegistrationVerification(c, user.Id) {
+	var request passkeyRegisterBeginRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, errors.New("无效的 Passkey 注册请求"))
 		return
 	}
-
-	credential, err := model.GetPasskeyByUserID(user.Id)
-	if err != nil && !errors.Is(err, model.ErrPasskeyNotFound) {
+	displayName, err := model.ValidateNewPasskeyCredential(user.Id, request.DisplayName)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if errors.Is(err, model.ErrPasskeyNotFound) {
-		credential = nil
+
+	authorization := middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopePasskeyRegister})
+	if authorization == nil {
+		return
+	}
+
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
 	}
 
 	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	waUser := passkeysvc.NewWebAuthnUser(user, credential)
-	var options []webauthnlib.RegistrationOption
-	if credential != nil {
-		descriptor := credential.ToWebAuthnCredential().Descriptor()
-		options = append(options, webauthnlib.WithExclusions([]protocol.CredentialDescriptor{descriptor}))
+	waUser := passkeysvc.NewWebAuthnUser(user, credentials)
+	selection := wa.Config.AuthenticatorSelection
+	selection.UserVerification = protocol.VerificationRequired
+	options := []webauthnlib.RegistrationOption{webauthnlib.WithAuthenticatorSelection(selection)}
+	if len(credentials) > 0 {
+		descriptors := make([]protocol.CredentialDescriptor, 0, len(credentials))
+		for i := range credentials {
+			descriptors = append(descriptors, credentials[i].ToWebAuthnCredential().Descriptor())
+		}
+		options = append(options, webauthnlib.WithExclusions(descriptors))
 	}
 
 	creation, sessionData, err := wa.BeginRegistration(waUser, options...)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if err := passkeysvc.SaveSessionData(c, passkeysvc.RegistrationSessionKey, sessionData); err != nil {
-		common.ApiError(c, err)
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		return
+	}
+	flowToken, expiresAt, err := passkeysvc.CreateSessionDataFlow(
+		model.AuthFlowPurposePasskeyRegister,
+		passkeysvc.FlowSecurity{AuthSessionIdentity: identity, Scope: authorization.Scope, ContextHash: authorization.ContextHash, Authorization: authorization, DisplayName: displayName},
+		sessionData,
+	)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -77,7 +155,9 @@ func PasskeyRegisterBegin(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"options": creation,
+			"options":    creation,
+			"flow_token": flowToken,
+			"expires_at": expiresAt,
 		},
 	})
 }
@@ -91,44 +171,61 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		return
 	}
 
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
 		return
 	}
-
-	if !requirePasskeyRegistrationVerification(c, user.Id) {
+	request, err := parsePasskeyFinishRequest(c)
+	if err != nil {
+		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		return
+	}
+	parsedCredential, err := protocol.ParseCredentialCreationResponseBytes(request.Credential)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
 	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	credentialRecord, err := model.GetPasskeyByUserID(user.Id)
-	if err != nil && !errors.Is(err, model.ErrPasskeyNotFound) {
-		common.ApiError(c, err)
-		return
-	}
-	if errors.Is(err, model.ErrPasskeyNotFound) {
-		credentialRecord = nil
-	}
-
-	sessionData, err := passkeysvc.PopSessionData(c, passkeysvc.RegistrationSessionKey)
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	waUser := passkeysvc.NewWebAuthnUser(user, credentialRecord)
-	credential, err := wa.FinishRegistration(waUser, *sessionData, c.Request)
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		return
+	}
+	sessionData, security, err := passkeysvc.PopSessionDataFlow(
+		request.FlowToken,
+		model.AuthFlowPurposePasskeyRegister,
+		identity,
+	)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if sessionData.UserVerification != protocol.VerificationRequired {
+		writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+		return
+	}
+	if err := service.ValidateFlowAuthorization(identity, service.VerificationOperation{Scope: service.VerificationScopePasskeyRegister}, security.Authorization); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+
+	waUser := passkeysvc.NewWebAuthnUser(user, credentials)
+	credential, err := wa.CreateCredential(waUser, *sessionData, parsedCredential)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -137,9 +234,15 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		common.ApiErrorMsg(c, "无法创建 Passkey 凭证")
 		return
 	}
+	passkeyCredential.DisplayName = security.DisplayName
 
-	if err := model.UpsertPasskeyCredential(passkeyCredential); err != nil {
-		common.ApiError(c, err)
+	if err := model.RegisterPasskeyForSession(identity, passkeyCredential); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "passkey_registered")
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -147,70 +250,144 @@ func PasskeyRegisterFinish(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Passkey 注册成功",
+		"data":    authRotationData(bundle),
 	})
 }
 
 func PasskeyDelete(c *gin.Context) {
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if !requirePasskeyDeleteVerification(c, user.Id) {
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopePasskeyDelete}) == nil {
 		return
 	}
 
-	if err := model.DeletePasskeyByUserID(user.Id); err != nil {
-		common.ApiError(c, err)
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		return
+	}
+	if err := model.DeletePasskeyForSession(identity); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "passkey_deleted")
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	recordUserSecurityAudit(c, user.Id, "user.passkey_delete", nil)
+	recordUserSecurityAudit(c, user.Id, "user.passkey_delete_all", nil)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Passkey 已解绑",
+		"data":    authRotationData(bundle),
 	})
 }
 
 func PasskeyStatus(c *gin.Context) {
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	credential, err := model.GetPasskeyByUserID(user.Id)
-	if errors.Is(err, model.ErrPasskeyNotFound) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"data": gin.H{
-				"enabled": false,
-			},
-		})
-		return
-	}
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
 	data := gin.H{
-		"enabled":      true,
-		"last_used_at": credential.LastUsedAt,
+		"enabled": len(credentials) > 0,
+		"count":   len(credentials),
+	}
+	var lastUsedAt *time.Time
+	for i := range credentials {
+		if credentials[i].LastUsedAt != nil && (lastUsedAt == nil || credentials[i].LastUsedAt.After(*lastUsedAt)) {
+			lastUsedAt = credentials[i].LastUsedAt
+		}
+	}
+	if lastUsedAt != nil {
+		data["last_used_at"] = lastUsedAt
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data":    data,
+	})
+}
+
+func PasskeyList(c *gin.Context) {
+	user, err := getAuthenticatedUser(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := passkeyCredentialResponses(credentials)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"credentials": items,
+			"count":       len(items),
+		},
+	})
+}
+
+func PasskeyDeleteByID(c *gin.Context) {
+	user, err := getAuthenticatedUser(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorMsg(c, "无效的 Passkey ID")
+		return
+	}
+	operationContext, err := common.Marshal(service.PasskeyDeleteContext{CredentialID: id})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopePasskeyDelete, Context: operationContext}) == nil {
+		return
+	}
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiError(c, errors.New("当前认证方式不支持安全验证"))
+		return
+	}
+	if err := model.DeletePasskeyCredentialForSession(identity, id); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "passkey_deleted")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordUserSecurityAudit(c, user.Id, "user.passkey_delete", map[string]interface{}{"passkey_id": id})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Passkey 已解绑",
+		"data":    authRotationData(bundle),
 	})
 }
 
@@ -225,18 +402,23 @@ func PasskeyLoginBegin(c *gin.Context) {
 
 	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	assertion, sessionData, err := wa.BeginDiscoverableLogin()
+	assertion, sessionData, err := wa.BeginDiscoverableLogin(webauthnlib.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if err := passkeysvc.SaveSessionData(c, passkeysvc.LoginSessionKey, sessionData); err != nil {
-		common.ApiError(c, err)
+	flowToken, expiresAt, err := passkeysvc.CreateSessionDataFlow(
+		model.AuthFlowPurposePasskeyLogin,
+		passkeysvc.FlowSecurity{},
+		sessionData,
+	)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -244,7 +426,9 @@ func PasskeyLoginBegin(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"options": assertion,
+			"options":    assertion,
+			"flow_token": flowToken,
+			"expires_at": expiresAt,
 		},
 	})
 }
@@ -258,15 +442,34 @@ func PasskeyLoginFinish(c *gin.Context) {
 		return
 	}
 
-	wa, err := passkeysvc.BuildWebAuthn(c.Request)
+	request, err := parsePasskeyFinishRequest(c)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		return
+	}
+	parsedCredential, err := protocol.ParseCredentialRequestResponseBytes(request.Credential)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	sessionData, err := passkeysvc.PopSessionData(c, passkeysvc.LoginSessionKey)
+	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
+		return
+	}
+
+	sessionData, _, err := passkeysvc.PopSessionDataFlow(
+		request.FlowToken,
+		model.AuthFlowPurposePasskeyLogin,
+		service.AuthIdentity{},
+	)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if sessionData.UserVerification != protocol.VerificationRequired {
+		writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
 		return
 	}
 
@@ -284,7 +487,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 		}
 
 		if user.Status != common.UserStatusEnabled {
-			return nil, errors.New("该用户已被禁用")
+			return nil, model.ErrUserSessionInactive
 		}
 
 		if len(userHandle) > 0 {
@@ -297,12 +500,12 @@ func PasskeyLoginFinish(c *gin.Context) {
 			}
 		}
 
-		return passkeysvc.NewWebAuthnUser(user, credential), nil
+		return passkeysvc.NewWebAuthnUser(user, []model.PasskeyCredential{*credential}), nil
 	}
 
-	waUser, credential, err := wa.FinishPasskeyLogin(handler, *sessionData, c.Request)
+	waUser, credential, err := wa.ValidatePasskeyLogin(handler, *sessionData, parsedCredential)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -322,21 +525,17 @@ func PasskeyLoginFinish(c *gin.Context) {
 		common.ApiErrorMsg(c, "该用户已被禁用")
 		return
 	}
-
-	// 更新凭证信息
-	updatedCredential := model.NewPasskeyCredentialFromWebAuthn(modelUser.Id, credential)
-	if updatedCredential == nil {
-		common.ApiErrorMsg(c, "Passkey 凭证更新失败")
-		return
-	}
-	now := time.Now()
-	updatedCredential.LastUsedAt = &now
-	if err := model.UpsertPasskeyCredential(updatedCredential); err != nil {
-		common.ApiError(c, err)
+	if rejectAutoBannedLogin(c, modelUser) {
 		return
 	}
 
-	setupLogin(modelUser, c)
+	if err := model.UpdatePasskeyAssertionState(modelUser.Id, credential, time.Now()); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+
+	c.Set("login_verification_method", service.VerificationMethodPasskey)
+	setupLoginAtAuthVersion(modelUser, modelUser.AuthVersion, c)
 }
 
 func AdminResetPasskey(c *gin.Context) {
@@ -348,7 +547,7 @@ func AdminResetPasskey(c *gin.Context) {
 
 	user := &model.User{Id: id}
 	if err := user.FillUserById(); err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 	myRole := c.GetInt("role")
@@ -357,24 +556,29 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	if _, err := model.GetPasskeyByUserID(user.Id); err != nil {
-		if errors.Is(err, model.ErrPasskeyNotFound) {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "该用户尚未绑定 Passkey",
-			})
-			return
-		}
-		common.ApiError(c, err)
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if len(credentials) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "该用户尚未绑定 Passkey",
+		})
 		return
 	}
 
-	if err := model.DeletePasskeyByUserID(user.Id); err != nil {
-		common.ApiError(c, err)
+	if err := model.DeleteAllPasskeyCredentialsByUserID(user.Id); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if _, err := model.RevokeAllUserSessions(user.Id, "admin_passkey_reset"); err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	recordManageAuditFor(c, user.Id, "user.reset_passkey", map[string]interface{}{
+	recordManageAuditFor(c, user.Id, "user.reset_passkey", map[string]any{
 		"username": user.Username,
 		"id":       user.Id,
 	})
@@ -393,17 +597,37 @@ func PasskeyVerifyBegin(c *gin.Context) {
 		return
 	}
 
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
+		return
+	}
+	var request passkeyVerifyBeginRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		return
+	}
+	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: request.Scope, Context: request.Context})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	if _, err := service.RequireVerificationMethod(identity, request.Scope, service.VerificationMethodPasskey); err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	credential, err := model.GetPasskeyByUserID(user.Id)
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(credentials) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "该用户尚未绑定 Passkey",
@@ -413,19 +637,24 @@ func PasskeyVerifyBegin(c *gin.Context) {
 
 	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	waUser := passkeysvc.NewWebAuthnUser(user, credential)
-	assertion, sessionData, err := wa.BeginLogin(waUser)
+	waUser := passkeysvc.NewWebAuthnUser(user, credentials)
+	assertion, sessionData, err := wa.BeginLogin(waUser, webauthnlib.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if err := passkeysvc.SaveSessionData(c, passkeysvc.VerifySessionKey, sessionData); err != nil {
-		common.ApiError(c, err)
+	flowToken, expiresAt, err := passkeysvc.CreateSessionDataFlow(
+		model.AuthFlowPurposePasskeyStepUp,
+		passkeysvc.FlowSecurity{AuthSessionIdentity: identity, Scope: binding.Scope, ContextHash: binding.ContextHash},
+		sessionData,
+	)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -433,7 +662,9 @@ func PasskeyVerifyBegin(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"options": assertion,
+			"options":    assertion,
+			"flow_token": flowToken,
+			"expires_at": expiresAt,
 		},
 	})
 }
@@ -447,23 +678,35 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		return
 	}
 
-	user, err := getSessionUser(c)
+	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		writeSecurityOperationError(c, err)
+		return
+	}
+
+	request, err := parsePasskeyFinishRequest(c)
+	if err != nil {
+		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		return
+	}
+	parsedCredential, err := protocol.ParseCredentialRequestResponseBytes(request.Credential)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
 	wa, err := passkeysvc.BuildWebAuthn(c.Request)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	credential, err := model.GetPasskeyByUserID(user.Id)
+	credentials, err := model.ListPasskeyCredentialsByUserID(user.Id)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(credentials) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "该用户尚未绑定 Passkey",
@@ -471,116 +714,58 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		return
 	}
 
-	sessionData, err := passkeysvc.PopSessionData(c, passkeysvc.VerifySessionKey)
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		return
+	}
+	sessionData, security, err := passkeysvc.PopSessionDataFlow(
+		request.FlowToken,
+		model.AuthFlowPurposePasskeyStepUp,
+		identity,
+	)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if sessionData.UserVerification != protocol.VerificationRequired {
+		writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
 		return
 	}
 
-	waUser := passkeysvc.NewWebAuthnUser(user, credential)
-	_, err = wa.FinishLogin(waUser, *sessionData, c.Request)
+	waUser := passkeysvc.NewWebAuthnUser(user, credentials)
+	validatedCredential, err := wa.ValidateLogin(waUser, *sessionData, parsedCredential)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	// 更新凭证的最后使用时间
-	now := time.Now()
-	credential.LastUsedAt = &now
-	if err := model.UpsertPasskeyCredential(credential); err != nil {
-		common.ApiError(c, err)
+	if err := model.UpdatePasskeyAssertionState(user.Id, validatedCredential, time.Now()); err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	session := sessions.Default(c)
-	// Mark passkey as ready; /api/verify will convert this into the final secure verification session.
-	session.Set(PasskeyReadySessionKey, time.Now().Unix())
-	session.Delete(SecureVerificationSessionKey)
-	session.Delete(secureVerificationMethodSessionKey)
-	if err := session.Save(); err != nil {
-		common.ApiError(c, fmt.Errorf("保存验证状态失败: %v", err))
+	proof, err := service.CompleteSecurityVerification(identity, service.VerificationBinding{Scope: security.Scope, ContextHash: security.ContextHash}, service.VerificationMethodPasskey)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Passkey 验证成功",
-	})
+	recordUserSecurityAudit(c, user.Id, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope})
+	common.ApiSuccess(c, proof)
 }
 
-func getSessionUser(c *gin.Context) (*model.User, error) {
-	session := sessions.Default(c)
-	idRaw := session.Get("id")
-	if idRaw == nil {
-		return nil, errors.New("未登录")
+func getAuthenticatedUser(c *gin.Context) (*model.User, error) {
+	id := c.GetInt("id")
+	if id == 0 {
+		return nil, service.ErrAuthTokenInvalid
 	}
-	id, ok := idRaw.(int)
-	if !ok {
-		return nil, errors.New("无效的会话信息")
-	}
-	user := &model.User{Id: id}
-	if err := user.FillUserById(); err != nil {
+	user, err := model.GetUserById(id, false)
+	if err != nil {
 		return nil, err
 	}
 	if user.Status != common.UserStatusEnabled {
-		return nil, errors.New("该用户已被禁用")
+		return nil, model.ErrUserSessionInactive
 	}
 	return user, nil
-}
-
-func requirePasskeyRegistrationVerification(c *gin.Context, userID int) bool {
-	twoFA, err := model.GetTwoFAByUserId(userID)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	if twoFA == nil || !twoFA.IsEnabled {
-		return true
-	}
-	return requireSecureVerificationMethod(c, secureVerificationMethod2FA)
-}
-
-func requirePasskeyDeleteVerification(c *gin.Context, userID int) bool {
-	twoFA, err := model.GetTwoFAByUserId(userID)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	if twoFA != nil && twoFA.IsEnabled {
-		return requireSecureVerificationMethod(c, secureVerificationMethod2FA)
-	}
-
-	_, err = model.GetPasskeyByUserID(userID)
-	if err != nil {
-		if errors.Is(err, model.ErrPasskeyNotFound) {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "该用户尚未绑定 Passkey",
-			})
-			return false
-		}
-		common.ApiError(c, err)
-		return false
-	}
-
-	return requireSecureVerificationMethod(c, secureVerificationMethodPasskey)
-}
-
-func requireSecureVerificationMethod(c *gin.Context, method string) bool {
-	session := sessions.Default(c)
-	verifiedAt, ok := session.Get(SecureVerificationSessionKey).(int64)
-	if !ok || time.Now().Unix()-verifiedAt >= SecureVerificationTimeout {
-		session.Delete(SecureVerificationSessionKey)
-		session.Delete(secureVerificationMethodSessionKey)
-		_ = session.Save()
-		common.ApiErrorMsg(c, "请先完成安全验证")
-		return false
-	}
-
-	if verifiedMethod, ok := session.Get(secureVerificationMethodSessionKey).(string); !ok || verifiedMethod != method {
-		common.ApiErrorMsg(c, "请先完成对应的安全验证")
-		return false
-	}
-
-	return true
 }

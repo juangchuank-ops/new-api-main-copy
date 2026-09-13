@@ -16,16 +16,16 @@ const (
 	SystemTaskStatusSucceeded SystemTaskStatus = "succeeded"
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
 
-	SystemTaskTypeLogCleanup     = "log_cleanup"
-	SystemTaskTypeChannelTest    = "channel_test"
-	SystemTaskTypeModelUpdate    = "model_update"
-	SystemTaskTypeMidjourneyPoll = "midjourney_poll"
-	SystemTaskTypeAsyncTaskPoll  = "async_task_poll"
-	// Auto Sync 任务类型：与新版保持一致，供 Auto Sync 调度与事件队列使用。
-	SystemTaskTypeAutoPriceSync = "auto_price_sync"
-	SystemTaskTypeAutoModelSync = "auto_model_metadata_sync"
-	// UpstreamAccount 定时签到/余额刷新任务
-	SystemTaskTypeUpstreamAccount = "upstream_account_maintenance"
+	SystemTaskTypeLogCleanup           = "log_cleanup"
+	SystemTaskTypeChannelTest          = "channel_test"
+	SystemTaskTypeModelUpdate          = "model_update"
+	SystemTaskTypeMidjourneyPoll       = "midjourney_poll"
+	SystemTaskTypeAsyncTaskPoll        = "async_task_poll"
+	SystemTaskTypeAutoPriceSync        = "auto_price_sync"
+	SystemTaskTypeAutoModelSync        = "auto_model_metadata_sync"
+	SystemTaskTypeChannelQueueWarmup   = "channel_queue_warmup"
+	SystemTaskTypeChannelCustomBalance = "channel_custom_balance"
+	SystemTaskTypeChannelCustomCheckin = "channel_custom_checkin"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
@@ -98,10 +98,9 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 	return CreateSystemTaskTx(DB, taskType, payload, state)
 }
 
-// CreateSystemTaskTx 在已存在的事务内创建一个普通 singleton 系统任务。
-// 其 active-key 语义刻意与 CreateSystemTask 保持一致：任务类型本身作为
-// active key，从而沿用旧版 singleton 去重行为。调用方签名不变，旧调用方
-// 仍走 CreateSystemTask → CreateSystemTaskTx(DB, ...)。
+// CreateSystemTaskTx creates a normal singleton system task in an existing
+// transaction. Its active-key semantics deliberately match CreateSystemTask:
+// the task type remains the active key.
 func CreateSystemTaskTx(tx *gorm.DB, taskType string, payload any, state any) (*SystemTask, error) {
 	if tx == nil {
 		return nil, errors.New("system task transaction is nil")
@@ -338,7 +337,23 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	if result.Error != nil {
 		return result.Error
 	}
-	if result.RowsAffected == 0 {
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL counts changed rows, not matched rows. A no-op persist of the same
+	// state in the same second therefore returns RowsAffected == 0 even while
+	// the lease is still held. Confirm the lock before treating this as loss.
+	// Reuse `now` from the UPDATE so a clock tick cannot reintroduce false
+	// lock-loss; a lease that expires during the write is caught by the next heartbeat.
+	var held int64
+	err = DB.Model(&SystemTask{}).
+		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
+		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+		Count(&held).Error
+	if err != nil {
+		return err
+	}
+	if held == 0 {
 		return ErrSystemTaskLockLost
 	}
 	return nil
@@ -397,12 +412,28 @@ func ReleaseSystemTaskLock(taskID string, lockedBy string) error {
 }
 
 func FinishSystemTask(taskID string, lockedBy string, status SystemTaskStatus, resultPayload any, errorMessage string) error {
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		return FinishSystemTaskTx(tx, taskID, lockedBy, status, resultPayload, errorMessage)
+	})
+	if err != nil {
+		return err
+	}
+	return ReleaseSystemTaskLock(taskID, lockedBy)
+}
+
+// FinishSystemTaskTx terminally updates a running task without releasing its
+// lease. Auto-sync handlers compose it with event finalization in one
+// transaction, then release the lease after commit.
+func FinishSystemTaskTx(tx *gorm.DB, taskID string, lockedBy string, status SystemTaskStatus, resultPayload any, errorMessage string) error {
+	if tx == nil {
+		return errors.New("system task transaction is nil")
+	}
 	resultText, err := marshalSystemTaskJSON(resultPayload)
 	if err != nil {
 		return err
 	}
 	now := common.GetTimestamp()
-	result := DB.Model(&SystemTask{}).
+	result := tx.Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
 		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
 		Updates(map[string]any{
@@ -418,7 +449,7 @@ func FinishSystemTask(taskID string, lockedBy string, status SystemTaskStatus, r
 	if result.RowsAffected == 0 {
 		return ErrSystemTaskLockLost
 	}
-	return ReleaseSystemTaskLock(taskID, lockedBy)
+	return nil
 }
 
 func (task *SystemTask) DecodePayload(v any) error {

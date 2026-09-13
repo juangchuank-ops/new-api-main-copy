@@ -1,136 +1,99 @@
 package channel
 
 import (
-	"context"
+	"bytes"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	common2 "github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-
-	"github.com/glebarez/sqlite"
 )
 
-// TestRequestDebugCaptureWriteChain tests the real write → read chain:
-// requestDebugCaptureReadCloser.Read() → storeBody() → model.GetRequestDebugBody()
-// This verifies that a real request body flows through the capture, gets stored
-// in the database, and can be retrieved intact.
-func TestRequestDebugCaptureWriteChain(t *testing.T) {
-	// Set up in-memory DB
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+func TestRequestDebugCapturePreservesRequestStreamAndBoundsBody(t *testing.T) {
+	payload := strings.Repeat("x", common2.RequestDebugBodyLimit+1)
+	capture := &requestDebugCaptureReadCloser{ReadCloser: io.NopCloser(strings.NewReader(payload))}
+	read, err := io.ReadAll(capture)
 	require.NoError(t, err)
-	previousDB := model.DB
-	model.DB = db
-	t.Cleanup(func() { model.DB = previousDB })
-	require.NoError(t, db.AutoMigrate(&model.RequestDebugBodyRecord{}, &model.RequestDebugBodyChunk{}))
+	require.Equal(t, payload, string(read), "capture must not alter the upstream request stream")
 
-	// Simulate a JSON request body
-	payload := `{"model":"gpt-4","messages":[{"role":"user","content":"Hello, world!"}],"stream":true}`
-	contentType := "application/json"
-	requestID := "test-capture-write-chain-001"
-
-	// Create the capture wrapper around the body reader (same as doRequest does)
-	capture := &requestDebugCaptureReadCloser{
-		ReadCloser: io.NopCloser(strings.NewReader(payload)),
-	}
-
-	// Read all bytes — this is what client.Do(req) does internally
-	consumed, err := io.ReadAll(capture)
-	require.NoError(t, err)
-	require.Equal(t, payload, string(consumed), "capture must not alter the upstream request stream")
-
-	// Store the captured body (same as doRequest calls after client.Do)
-	err = capture.storeBody(context.Background(), requestID, contentType, int64(len(payload)), nil)
-	require.NoError(t, err)
-
-	// Retrieve it back via the model (same as controller.GetRequestDebugBody calls)
-	stored, err := model.GetRequestDebugBody(context.Background(), requestID)
-	require.NoError(t, err)
-	require.Equal(t, payload, string(stored.Data))
-	require.Equal(t, int64(len(payload)), stored.BodyBytes)
-	require.Equal(t, contentType, stored.ContentType)
-	require.Equal(t, "gzip", stored.Compression)
-	require.False(t, stored.BodyTruncated)
-
-	// Verify chunks were created
-	var chunkCount int64
-	require.NoError(t, db.Model(&model.RequestDebugBodyChunk{}).Where("request_id = ?", requestID).Count(&chunkCount).Error)
-	require.GreaterOrEqual(t, chunkCount, int64(1))
+	body := capture.debugBody("text/plain", int64(len(payload)))
+	require.Len(t, body["body"].(string), common2.RequestDebugBodyLimit)
+	require.True(t, body["body_truncated"].(bool))
 }
 
-// TestRequestDebugCaptureBoundsStoredBody verifies that the capture respects
-// the RequestDebugBodyMaxBytes limit and marks the body as truncated.
-func TestRequestDebugCaptureBoundsStoredBody(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	previousDB := model.DB
-	model.DB = db
-	t.Cleanup(func() { model.DB = previousDB })
-	require.NoError(t, db.AutoMigrate(&model.RequestDebugBodyRecord{}, &model.RequestDebugBodyChunk{}))
+type requestDebugTransportFunc func(*http.Request) (*http.Response, error)
 
-	// Create a payload larger than RequestDebugBodyMaxBytes
-	oversized := strings.Repeat("A", int(model.RequestDebugBodyMaxBytes+1000))
-	requestID := "test-capture-bounded-002"
-
-	capture := &requestDebugCaptureReadCloser{
-		ReadCloser: io.NopCloser(strings.NewReader(oversized)),
-	}
-	consumed, err := io.ReadAll(capture)
-	require.NoError(t, err)
-	require.Equal(t, oversized, string(consumed), "upstream stream must be fully consumed regardless of capture limit")
-
-	err = capture.storeBody(context.Background(), requestID, "text/plain", int64(len(oversized)), nil)
-	require.NoError(t, err)
-
-	stored, err := model.GetRequestDebugBody(context.Background(), requestID)
-	require.NoError(t, err)
-	require.True(t, stored.BodyTruncated, "body should be marked as truncated")
-	require.Equal(t, model.RequestDebugBodyMaxBytes, int64(len(stored.Data)), "stored data should be capped at max")
+func (f requestDebugTransportFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
-// TestRequestDebugCaptureEmptyBody verifies that an empty request body
-// is handled gracefully.
-func TestRequestDebugCaptureEmptyBody(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	previousDB := model.DB
-	model.DB = db
-	t.Cleanup(func() { model.DB = previousDB })
-	require.NoError(t, db.AutoMigrate(&model.RequestDebugBodyRecord{}, &model.RequestDebugBodyChunk{}))
+func TestRequestDebugCaptureUsesReplayedBodyAndHonorsRawSetting(t *testing.T) {
+	service.InitHttpClient()
+	client := service.GetHttpClient()
+	previousTransport := client.Transport
+	previousRaw := common2.IsRequestDebugRawEnabled()
+	t.Cleanup(func() {
+		client.Transport = previousTransport
+		common2.SetRequestDebugRawEnabled(previousRaw)
+	})
 
-	requestID := "test-capture-empty-003"
-	capture := &requestDebugCaptureReadCloser{
-		ReadCloser: io.NopCloser(strings.NewReader("")),
+	for _, rawEnabled := range []bool{true, false} {
+		name := "raw disabled"
+		if rawEnabled {
+			name = "raw enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			common2.SetRequestDebugRawEnabled(rawEnabled)
+			payload := []byte("complete replay request")
+			storage, err := common2.CreateBodyStorage(payload)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, storage.Close()) })
+			body := common2.NewReplayableBodyReader(storage)
+			req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "text/plain")
+			ApplyUpstreamBodyMetadata(req, body)
+			var replayed []byte
+			client.Transport = requestDebugTransportFunc(func(request *http.Request) (*http.Response, error) {
+				prefix := make([]byte, 3)
+				if _, readErr := io.ReadFull(request.Body, prefix); readErr != nil {
+					return nil, readErr
+				}
+				_ = request.Body.Close()
+				replay, replayErr := request.GetBody()
+				if replayErr != nil {
+					return nil, replayErr
+				}
+				defer replay.Close()
+				replayed, replayErr = io.ReadAll(replay)
+				if replayErr != nil {
+					return nil, replayErr
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
+			})
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/relay", bytes.NewReader(payload))
+			response, err := doRequest(ctx, req, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+			assert.Equal(t, payload, replayed)
+			debug := common2.GetContextKeyStringMap(ctx, constant.ContextKeyRequestDebug)
+			upstream, ok := debug["upstream"].(map[string]interface{})
+			require.True(t, ok)
+			if rawEnabled {
+				assert.Equal(t, string(payload), upstream["body"])
+				assert.Equal(t, false, upstream["body_truncated"])
+			} else {
+				assert.NotContains(t, upstream, "body")
+			}
+		})
 	}
-	consumed, err := io.ReadAll(capture)
-	require.NoError(t, err)
-	require.Empty(t, consumed)
-
-	err = capture.storeBody(context.Background(), requestID, "application/json", 0, nil)
-	require.NoError(t, err)
-
-	stored, err := model.GetRequestDebugBody(context.Background(), requestID)
-	require.NoError(t, err)
-	require.Empty(t, stored.Data)
-	require.Equal(t, int64(0), stored.BodyBytes)
-	require.False(t, stored.BodyTruncated)
-}
-
-// TestRequestDebugRepresentation verifies the common.RequestDebugBodyRepresentation
-// function used by the controller to format the API response.
-func TestRequestDebugRepresentation(t *testing.T) {
-	// JSON body should be returned as readable text
-	jsonBody := []byte(`{"key":"value"}`)
-	result := common2.RequestDebugBodyRepresentation(jsonBody, "application/json", false)
-	require.Equal(t, string(jsonBody), result["body"])
-	require.False(t, result["body_truncated"].(bool))
-	_, hasEncoding := result["body_encoding"]
-	require.False(t, hasEncoding, "textual body should not have base64 encoding")
-
-	// Truncated textual body should be marked
-	truncated := common2.RequestDebugBodyRepresentation(jsonBody, "application/json", true)
-	require.True(t, truncated["body_truncated"].(bool))
 }

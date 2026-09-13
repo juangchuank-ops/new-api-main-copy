@@ -5,73 +5,70 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
-
 	"github.com/gin-gonic/gin"
 )
 
-// GetAutoPriceSyncStatus 返回 Auto Price Sync 的配置与运行状态。
+type autoPriceSyncConfigRequest struct {
+	Enabled *bool                            `json:"enabled"`
+	Source  *service.PricingSourceDescriptor `json:"source,omitempty"`
+}
+
+type autoModelSyncConfigRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
 func GetAutoPriceSyncStatus(c *gin.Context) {
-	view, err := service.GetAutoPriceSyncStatus()
+	status, err := service.GetAutoPriceSyncStatus()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    view,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": status})
 }
 
-// UpdateAutoPriceSyncConfig 更新 Auto Price Sync 的启用状态与定价源。
 func UpdateAutoPriceSyncConfig(c *gin.Context) {
-	var req struct {
-		Enabled bool                          `json:"enabled"`
-		Source  *service.PricingSourceDescriptor `json:"source"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiError(c, err)
+	request := autoPriceSyncConfigRequest{}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid auto price sync configuration"})
 		return
 	}
-	if err := service.UpdateAutoPriceSyncConfig(req.Enabled, req.Source); err != nil {
-		common.ApiError(c, err)
+	if err := service.UpdateAutoPriceSyncConfig(*request.Enabled, request.Source); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": service.SanitizePricingError(err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
-}
-
-// GetAutoModelSyncStatus 返回 Auto Model Metadata Sync 的配置与运行状态。
-func GetAutoModelSyncStatus(c *gin.Context) {
-	view, err := service.GetAutoModelSyncStatus()
+	recordManageAudit(c, "auto_sync.price_config_update", map[string]interface{}{"enabled": *request.Enabled, "source_changed": request.Source != nil})
+	status, err := service.GetAutoPriceSyncStatus()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    view,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": status})
 }
 
-// UpdateAutoModelSyncConfig 更新 Auto Model Metadata Sync 的启用状态。
+func GetAutoModelSyncStatus(c *gin.Context) {
+	status, err := service.GetAutoModelSyncStatus()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": status})
+}
+
 func UpdateAutoModelSyncConfig(c *gin.Context) {
-	var req struct {
-		Enabled bool `json:"enabled"`
+	request := autoModelSyncConfigRequest{}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid auto model sync configuration"})
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := service.UpdateAutoModelSyncConfig(*request.Enabled); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := service.UpdateAutoModelSyncConfig(req.Enabled); err != nil {
+	recordManageAudit(c, "auto_sync.model_config_update", map[string]interface{}{"enabled": *request.Enabled})
+	status, err := service.GetAutoModelSyncStatus()
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": status})
 }

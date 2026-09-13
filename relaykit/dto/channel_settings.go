@@ -11,6 +11,7 @@ import (
 )
 
 type ChannelSettings struct {
+	TaskPluginKey          string `json:"task_plugin_key,omitempty"`
 	ForceFormat            bool   `json:"force_format,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
 	Proxy                  string `json:"proxy"`
@@ -23,6 +24,39 @@ type ChannelSettings struct {
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// Queue enables the auto upstream queue warmer for this channel. When non-nil
+	// and enabled, a master-node background worker periodically sends warm-up
+	// calls to hold an upstream queue slot for a single model, so real requests
+	// do not have to re-queue. It is pure data: business validation lives in the
+	// host module (model.Channel.ValidateSettings), keeping relaykit independent.
+	Queue *ChannelQueueSettings `json:"queue,omitempty"`
+}
+
+// ChannelQueueSettings configures the auto upstream queue warmer for a channel.
+// A queue-enabled channel targets exactly one model: to warm multiple models,
+// configure multiple channels. EndpointType uses relaykit/types (not the host
+// constant package) so this struct stays buildable inside the independent
+// relaykit module.
+type ChannelQueueSettings struct {
+	Enabled       bool   `json:"enabled,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Interval      int    `json:"interval,omitempty"`      // seconds between warm-up calls
+	EndpointType  string `json:"endpoint_type,omitempty"` // relaykit/types.EndpointType; empty = auto-detect
+	WarmupMessage string `json:"warmup_message,omitempty"`
+	MaxTokens     *uint  `json:"max_tokens,omitempty"` // cap warm-up request size; nil = test default
+	Timeout       int    `json:"timeout,omitempty"`    // per-call timeout seconds
+
+	// Circuit breaker. Failures are classified: queue-busy responses
+	// (QueueBusyStatusCodes, e.g. 429/503) never trip the breaker and only
+	// trigger backoff; genuine failures (auth/config/connection) count toward
+	// MaxConsecutiveFailures. The breaker only pauses warming for this channel
+	// — it never disables the channel or affects real requests.
+	CircuitBreakerEnabled  bool  `json:"circuit_breaker_enabled,omitempty"`
+	MaxConsecutiveFailures int   `json:"max_consecutive_failures,omitempty"`
+	CooldownSeconds        int   `json:"cooldown_seconds,omitempty"`
+	MaxQueueAttempts       int   `json:"max_queue_attempts,omitempty"` // per-round squeeze attempts before backoff
+	BackoffSeconds         int   `json:"backoff_seconds,omitempty"`
+	QueueBusyStatusCodes   []int `json:"queue_busy_status_codes,omitempty"`
 }
 
 const (
@@ -56,8 +90,6 @@ const (
 	ClientIdentityProfileClaudeCLI           = "claude_cli"
 	ClientIdentityProfileCodeBuddyCLI        = "codebuddy_cli"
 	ClientIdentityProfileWorkBuddyDesktop    = "workbuddy_desktop"
-	ClientIdentityProfileCodexDesktop        = "codex_desktop"
-	ClientIdentityProfileClaudeDesktop       = "claude_desktop"
 	ClientIdentitySourceNPM                  = "npm"
 	ClientIdentitySourceWorkBuddy            = "workbuddy"
 	ClientIdentitySourceManual               = "manual"
@@ -86,11 +118,12 @@ type ClientIdentitySourceMetadata struct {
 // contract. An absent client_identity object, or an object with only empty
 // values, keeps the legacy runtime defaults unchanged.
 type ClientIdentityConfig struct {
-	ClientType string                        `json:"client_type,omitempty"`
-	Profile    string                        `json:"profile,omitempty"`
-	Version    string                        `json:"version,omitempty"`
-	Platform   string                        `json:"platform,omitempty"`
-	Source     *ClientIdentitySourceMetadata `json:"source,omitempty"`
+	ClientType       string                        `json:"client_type,omitempty"`
+	Profile          string                        `json:"profile,omitempty"`
+	Version          string                        `json:"version,omitempty"`
+	Platform         string                        `json:"platform,omitempty"`
+	Context1MEnabled bool                          `json:"context_1m_enabled,omitempty"`
+	Source           *ClientIdentitySourceMetadata `json:"source,omitempty"`
 }
 
 func (c ClientIdentityConfig) isEmpty() bool {
@@ -98,6 +131,7 @@ func (c ClientIdentityConfig) isEmpty() bool {
 		strings.TrimSpace(c.Profile) == "" &&
 		strings.TrimSpace(c.Version) == "" &&
 		strings.TrimSpace(c.Platform) == "" &&
+		!c.Context1MEnabled &&
 		(c.Source == nil || c.Source.isEmpty())
 }
 
@@ -191,9 +225,7 @@ func ClientIdentityChannelTypeForProfile(profile string) int {
 		ClientIdentityProfileCodexCLI,
 		ClientIdentityProfileClaudeCLI,
 		ClientIdentityProfileCodeBuddyCLI,
-		ClientIdentityProfileWorkBuddyDesktop,
-		ClientIdentityProfileCodexDesktop,
-		ClientIdentityProfileClaudeDesktop:
+		ClientIdentityProfileWorkBuddyDesktop:
 		return ClientIdentityChannelTypeOpenAI
 	case ClientIdentityProfileCodexLegacy:
 		return ClientIdentityChannelTypeCodexLegacy
@@ -216,11 +248,7 @@ func clientIdentityClientTypeForProfile(profile string) string {
 		return ClientIdentityClientTypeCodex
 	case ClientIdentityProfileCodexCLI:
 		return ClientIdentityClientTypeCodex
-	case ClientIdentityProfileCodexDesktop:
-		return ClientIdentityClientTypeCodex
 	case ClientIdentityProfileClaudeCLI:
-		return ClientIdentityClientTypeClaude
-	case ClientIdentityProfileClaudeDesktop:
 		return ClientIdentityClientTypeClaude
 	case ClientIdentityProfileClaudeCode:
 		return ClientIdentityClientTypeClaudeCode
@@ -246,9 +274,7 @@ func NormalizeClientIdentityProfile(profile string) (string, error) {
 		ClientIdentityProfileCodexCLI,
 		ClientIdentityProfileClaudeCLI,
 		ClientIdentityProfileCodeBuddyCLI,
-		ClientIdentityProfileWorkBuddyDesktop,
-		ClientIdentityProfileCodexDesktop,
-		ClientIdentityProfileClaudeDesktop:
+		ClientIdentityProfileWorkBuddyDesktop:
 		return profile, nil
 	default:
 		return "", fmt.Errorf("invalid client identity profile: %s", profile)
@@ -476,6 +502,9 @@ func (c *ClientIdentityConfig) Normalize(channelType int) error {
 	if !clientIdentityProfileAllowedForChannel(c.Profile, channelType, defaults.Profile) {
 		return fmt.Errorf("client identity profile %s is not supported for channel type %d", c.Profile, channelType)
 	}
+	if c.Context1MEnabled && c.Profile != ClientIdentityProfileClaudeCode {
+		return fmt.Errorf("client identity context_1m_enabled requires claude_code profile")
+	}
 	if c.Profile == ClientIdentityProfileNone {
 		if c.Version != "" || c.Platform != "" || c.Source != nil {
 			return fmt.Errorf("client identity version, platform, and source require a client profile")
@@ -534,9 +563,7 @@ func clientIdentityProfileAllowedForChannel(profile string, channelType int, def
 			ClientIdentityProfileCodexCLI,
 			ClientIdentityProfileClaudeCLI,
 			ClientIdentityProfileCodeBuddyCLI,
-			ClientIdentityProfileWorkBuddyDesktop,
-			ClientIdentityProfileCodexDesktop,
-			ClientIdentityProfileClaudeDesktop:
+			ClientIdentityProfileWorkBuddyDesktop:
 			return true
 		default:
 			return false
@@ -579,12 +606,8 @@ func ClientIdentitySourceForProfile(profile string) (kind string, name string, e
 	switch profile {
 	case ClientIdentityProfileNone,
 		ClientIdentityProfileCodeBuddyCLI,
-		ClientIdentityProfileWorkBuddyDesktop,
-		ClientIdentityProfileClaudeDesktop:
+		ClientIdentityProfileWorkBuddyDesktop:
 		return ClientIdentitySourceManual, "", nil
-	case ClientIdentityProfileCodexDesktop:
-		// 桌面端内置的 codex 核心与 npm @openai/codex 同版本发布，版本列表直接复用 npm 源
-		return ClientIdentitySourceNPM, ClientIdentityNPMCodexPackage, nil
 	case ClientIdentityProfileCodexCLI:
 		return ClientIdentitySourceNPM, ClientIdentityNPMCodexPackage, nil
 	case ClientIdentityProfileClaudeCLI:
@@ -655,6 +678,10 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	// ToolLossPolicy is a channel-level opt-in for request-phase conversion
+	// rejection. Empty follows the default allow policy. Accepted values:
+	// "", "allow", "safe", "strict".
+	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
@@ -662,6 +689,20 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 		return false
 	}
 	return *s.OpenRouterEnterprise
+}
+
+// ValidateToolLossPolicy validates the channel-level request-phase tool-loss
+// policy. Empty keeps the default allow policy.
+func (s *ChannelOtherSettings) ValidateToolLossPolicy() error {
+	if s == nil {
+		return nil
+	}
+	switch strings.TrimSpace(s.ToolLossPolicy) {
+	case "", string(types.ConversionLossPolicyAllow), string(types.ConversionLossPolicySafe), string(types.ConversionLossPolicyStrict):
+		return nil
+	default:
+		return fmt.Errorf("invalid tool_loss_policy: %s", s.ToolLossPolicy)
+	}
 }
 
 const (
@@ -715,8 +756,12 @@ const (
 	advancedCustomEndpointPathEmbeddings             = "/v1/embeddings"
 )
 
-// AdvancedCustomModelListPath identifies the optional OpenAI Models discovery route.
-const AdvancedCustomModelListPath = "/v1/models"
+const (
+	// AdvancedCustomModelListPath identifies the optional OpenAI Models discovery route.
+	AdvancedCustomModelListPath = "/v1/models"
+	// AdvancedCustomBalancePath identifies the optional balance lookup route used by channel management.
+	AdvancedCustomBalancePath = "/v1/dashboard/billing/credit_grants"
+)
 
 // MatchPath returns the first route whose IncomingPath matches requestPath.
 // Matching mirrors the relay adaptor: exact match, {model} placeholder, and
@@ -757,6 +802,19 @@ func (c *AdvancedCustomConfig) ModelListRoute() (AdvancedCustomRoute, bool) {
 	}
 	for _, route := range c.Routes {
 		if strings.TrimSpace(route.IncomingPath) == AdvancedCustomModelListPath {
+			return route, true
+		}
+	}
+	return AdvancedCustomRoute{}, false
+}
+
+// BalanceRoute returns the explicitly configured channel-management balance route.
+func (c *AdvancedCustomConfig) BalanceRoute() (AdvancedCustomRoute, bool) {
+	if c == nil {
+		return AdvancedCustomRoute{}, false
+	}
+	for _, route := range c.Routes {
+		if strings.TrimSpace(route.IncomingPath) == AdvancedCustomBalancePath {
 			return route, true
 		}
 	}
@@ -930,6 +988,7 @@ func (c *AdvancedCustomConfig) Validate() error {
 
 	paths := make(map[string]*advancedCustomPathModelState, len(c.Routes))
 	modelListRouteIndex := -1
+	balanceRouteIndex := -1
 	for i := range c.Routes {
 		route := c.Routes[i]
 		route.IncomingPath = strings.TrimSpace(route.IncomingPath)
@@ -948,19 +1007,28 @@ func (c *AdvancedCustomConfig) Validate() error {
 		if strings.Contains(route.IncomingPath, "?") {
 			return fmt.Errorf("advanced_custom.advanced_routes[%d].incoming_path must not include query", i)
 		}
-		if route.IncomingPath == AdvancedCustomModelListPath {
-			if modelListRouteIndex >= 0 {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d] duplicates the /v1/models route at advanced_routes[%d]", i, modelListRouteIndex)
+		if route.IncomingPath == AdvancedCustomModelListPath || route.IncomingPath == AdvancedCustomBalancePath {
+			managementRouteName := route.IncomingPath
+			previousIndex := modelListRouteIndex
+			if route.IncomingPath == AdvancedCustomBalancePath {
+				previousIndex = balanceRouteIndex
 			}
-			modelListRouteIndex = i
+			if previousIndex >= 0 {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d] duplicates the %s route at advanced_routes[%d]", i, managementRouteName, previousIndex)
+			}
+			if route.IncomingPath == AdvancedCustomModelListPath {
+				modelListRouteIndex = i
+			} else {
+				balanceRouteIndex = i
+			}
 			if len(normalizeAdvancedCustomRouteModels(route.Models)) > 0 {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].models must be empty for /v1/models", i)
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].models must be empty for %s", i, managementRouteName)
 			}
 			if route.Converter != advancedCustomConverterNone {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter must be none for /v1/models", i)
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter must be none for %s", i, managementRouteName)
 			}
 			if strings.Contains(upstreamPath, advancedCustomModelPlaceholder) {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].upstream_path must not contain %s for /v1/models", i, advancedCustomModelPlaceholder)
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].upstream_path must not contain %s for %s", i, advancedCustomModelPlaceholder, managementRouteName)
 			}
 		}
 		if err := validateAdvancedCustomRouteModels(i, route.IncomingPath, route.Models, paths); err != nil {

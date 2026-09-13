@@ -50,8 +50,11 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", setting.WaffoPancakeMinTopUp)})
 		return
 	}
-
 	id := c.GetInt("id")
+	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+		return
+	}
+
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "获取用户分组失败"})
@@ -373,8 +376,13 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", setting.WaffoPancakeMinTopUp)})
 		return
 	}
-
 	id := c.GetInt("id")
+	if req.ProductType != "invitation_code" {
+		if rejectInvalidTopUpQuota(c, id, req.Amount) {
+			return
+		}
+	}
+
 	user, err := model.GetUserById(id, false)
 	if err != nil || user == nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "用户不存在"})
@@ -387,7 +395,6 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 
-	// Calculate effective amount and payMoney based on product type
 	topUpAmount := normalizeWaffoPancakeTopUpAmount(req.Amount)
 	payMoney := getWaffoPancakePayMoney(req.Amount, group)
 	if req.ProductType == "invitation_code" {
@@ -548,23 +555,24 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 
-	// 邀请码购买：直接生成邀请码，不充值额度
 	topUp := model.GetTopUpByTradeNo(tradeNo)
 	if topUp != nil && topUp.ProductType == "invitation_code" {
 		if topUp.Status != common.TopUpStatusPending {
-			// Already processed (idempotent) — return success to avoid duplicate code generation
-			logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 邀请码订单已处理 trade_no=%s status=%s client_ip=%s", tradeNo, topUp.Status, c.ClientIP()))
 			c.String(http.StatusOK, "OK")
 			return
 		}
 		if genErr := model.GenerateInvitationCodesForUser(topUp.UserId, int(topUp.Amount)); genErr != nil {
-			common.SysError("failed to generate invitation codes for order " + topUp.TradeNo + ": " + genErr.Error())
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 生成邀请码失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), genErr.Error()))
+			c.String(http.StatusInternalServerError, "retry")
+			return
 		}
 		topUp.Status = common.TopUpStatusSuccess
 		if err := topUp.Update(); err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 更新邀请码订单状态失败 trade_no=%s error=%q", tradeNo, err.Error()))
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 更新订单状态失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+			c.String(http.StatusInternalServerError, "retry")
+			return
 		}
-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 邀请码购买成功 trade_no=%s count=%d client_ip=%s", tradeNo, topUp.Amount, c.ClientIP()))
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 邀请码购买成功 trade_no=%s user_id=%d count=%d event_id=%s order_id=%s client_ip=%s", tradeNo, topUp.UserId, topUp.Amount, event.ID, event.Data.OrderID, c.ClientIP()))
 		c.String(http.StatusOK, "OK")
 		return
 	}

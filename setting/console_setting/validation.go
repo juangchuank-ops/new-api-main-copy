@@ -1,13 +1,16 @@
 package console_setting
 
 import (
-	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 var (
@@ -22,12 +25,35 @@ var (
 	slugRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
+const (
+	maxAnnouncementLinkLength = 500
+	maxAnnouncementSortOrder  = math.MaxInt32
+	minAnnouncementSortOrder  = math.MinInt32
+)
+
+var validAnnouncementTypes = map[string]bool{
+	"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
+}
+
+type announcementOptions struct {
+	enabled      bool
+	sortOrder    int64
+	startDate    time.Time
+	endDate      time.Time
+	hasStartDate bool
+	hasEndDate   bool
+}
+
 func parseJSONArray(jsonStr string, typeName string) ([]map[string]interface{}, error) {
 	var list []map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &list); err != nil {
+	if err := common.UnmarshalJsonStr(jsonStr, &list); err != nil {
 		return nil, fmt.Errorf("%s格式错误：%s", typeName, err.Error())
 	}
 	return list, nil
+}
+
+func exceedsMaxCharacters(s string, max int) bool {
+	return len(utf16.Encode([]rune(s))) > max
 }
 
 func validateURL(urlStr string, index int, itemType string) error {
@@ -55,7 +81,7 @@ func getJSONList(jsonStr string) []map[string]interface{} {
 		return []map[string]interface{}{}
 	}
 	var list []map[string]interface{}
-	json.Unmarshal([]byte(jsonStr), &list)
+	_ = common.UnmarshalJsonStr(jsonStr, &list)
 	return list
 }
 
@@ -110,13 +136,13 @@ func validateApiInfo(apiInfoStr string) error {
 			return err
 		}
 
-		if len(urlStr) > 500 {
+		if exceedsMaxCharacters(urlStr, 500) {
 			return fmt.Errorf("第%d个API信息的URL长度不能超过500字符", i+1)
 		}
-		if len(route) > 100 {
+		if exceedsMaxCharacters(route, 100) {
 			return fmt.Errorf("第%d个API信息的线路描述长度不能超过100字符", i+1)
 		}
-		if len(description) > 200 {
+		if exceedsMaxCharacters(description, 200) {
 			return fmt.Errorf("第%d个API信息的说明长度不能超过200字符", i+1)
 		}
 
@@ -146,9 +172,6 @@ func validateAnnouncements(announcementsStr string) error {
 	if len(list) > 100 {
 		return fmt.Errorf("系统公告数量不能超过100个")
 	}
-	validTypes := map[string]bool{
-		"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
-	}
 	for i, ann := range list {
 		content, ok := ann["content"].(string)
 		if !ok || content == "" {
@@ -167,19 +190,91 @@ func validateAnnouncements(announcementsStr string) error {
 		}
 		if t, exists := ann["type"]; exists {
 			if typeStr, ok := t.(string); ok {
-				if !validTypes[typeStr] {
+				if !validAnnouncementTypes[typeStr] {
 					return fmt.Errorf("第%d个公告的类型值不合法", i+1)
 				}
 			}
 		}
-		if len(content) > 500 {
+		if exceedsMaxCharacters(content, 500) {
 			return fmt.Errorf("第%d个公告的内容长度不能超过500字符", i+1)
 		}
 		if extra, exists := ann["extra"]; exists {
-			if extraStr, ok := extra.(string); ok && len(extraStr) > 200 {
-				return fmt.Errorf("第%d个公告的说明长度不能超过200字符", i+1)
+			if extraStr, ok := extra.(string); ok && exceedsMaxCharacters(extraStr, 100) {
+				return fmt.Errorf("第%d个公告的说明长度不能超过100字符", i+1)
 			}
 		}
+
+		if err := validateAnnouncementOptions(ann, i+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAnnouncementOptions(item map[string]interface{}, index int) error {
+	if _, err := parseAnnouncementOptions(item); err != nil {
+		return fmt.Errorf("第%d个公告的%s", index, err)
+	}
+	return nil
+}
+
+func parseAnnouncementOptions(item map[string]interface{}) (announcementOptions, error) {
+	options := announcementOptions{enabled: true}
+
+	if enabled, exists := item["enabled"]; exists {
+		value, ok := enabled.(bool)
+		if !ok {
+			return announcementOptions{}, fmt.Errorf("启用状态必须是布尔值")
+		}
+		options.enabled = value
+	}
+
+	if sortOrder, exists := item["sortOrder"]; exists {
+		value, ok := parseAnnouncementSortOrder(sortOrder)
+		if !ok {
+			return announcementOptions{}, fmt.Errorf("排序值必须是%d到%d之间的整数", minAnnouncementSortOrder, maxAnnouncementSortOrder)
+		}
+		options.sortOrder = value
+	}
+
+	startDate, hasStartDate, err := parseAnnouncementDate(item, "startDate")
+	if err != nil {
+		return announcementOptions{}, fmt.Errorf("开始日期格式错误，必须是RFC3339时间")
+	}
+	options.startDate = startDate
+	options.hasStartDate = hasStartDate
+
+	endDate, hasEndDate, err := parseAnnouncementDate(item, "endDate")
+	if err != nil {
+		return announcementOptions{}, fmt.Errorf("结束日期格式错误，必须是RFC3339时间")
+	}
+	options.endDate = endDate
+	options.hasEndDate = hasEndDate
+	if hasStartDate && hasEndDate && startDate.After(endDate) {
+		return announcementOptions{}, fmt.Errorf("开始日期不能晚于结束日期")
+	}
+
+	if link, exists := item["link"]; exists {
+		linkStr, ok := link.(string)
+		if !ok || linkStr == "" {
+			return announcementOptions{}, fmt.Errorf("链接必须是有效的HTTP或HTTPS URL")
+		}
+		if len(linkStr) > maxAnnouncementLinkLength {
+			return announcementOptions{}, fmt.Errorf("链接长度不能超过%d字符", maxAnnouncementLinkLength)
+		}
+		if err := validateAnnouncementLink(linkStr); err != nil {
+			return announcementOptions{}, err
+		}
+	}
+
+	return options, nil
+}
+
+func validateAnnouncementLink(linkStr string) error {
+	parsed, err := url.Parse(linkStr)
+	if err != nil || parsed.Hostname() == "" ||
+		(!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+		return fmt.Errorf("链接必须是有效的HTTP或HTTPS URL")
 	}
 	return nil
 }
@@ -201,10 +296,10 @@ func validateFAQ(faqStr string) error {
 		if !ok || answer == "" {
 			return fmt.Errorf("第%d个FAQ缺少答案字段", i+1)
 		}
-		if len(question) > 200 {
+		if exceedsMaxCharacters(question, 200) {
 			return fmt.Errorf("第%d个FAQ的问题长度不能超过200字符", i+1)
 		}
-		if len(answer) > 1000 {
+		if exceedsMaxCharacters(answer, 1000) {
 			return fmt.Errorf("第%d个FAQ的答案长度不能超过1000字符", i+1)
 		}
 	}
@@ -222,12 +317,93 @@ func getPublishTime(item map[string]interface{}) time.Time {
 	return time.Time{}
 }
 
+func parseAnnouncementSortOrder(value interface{}) (int64, bool) {
+	sortOrder, ok := value.(float64)
+	if !ok || math.IsNaN(sortOrder) || math.IsInf(sortOrder, 0) || sortOrder != math.Trunc(sortOrder) {
+		return 0, false
+	}
+	if sortOrder < float64(minAnnouncementSortOrder) || sortOrder > float64(maxAnnouncementSortOrder) {
+		return 0, false
+	}
+	return int64(sortOrder), true
+}
+
+func parseAnnouncementDate(item map[string]interface{}, field string) (time.Time, bool, error) {
+	value, exists := item[field]
+	if !exists {
+		return time.Time{}, false, nil
+	}
+	dateString, ok := value.(string)
+	if !ok || dateString == "" {
+		return time.Time{}, true, fmt.Errorf("date must be an RFC3339 string")
+	}
+	date, err := time.Parse(time.RFC3339, dateString)
+	if err != nil {
+		return time.Time{}, true, err
+	}
+	return date, true, nil
+}
+
+func isAnnouncementVisible(item map[string]interface{}, now time.Time) bool {
+	options, err := parseAnnouncementOptions(item)
+	if err != nil || !options.enabled {
+		return false
+	}
+
+	content, ok := item["content"].(string)
+	if !ok || content == "" || len(content) > 500 {
+		return false
+	}
+
+	publishDate, ok := item["publishDate"].(string)
+	if !ok || publishDate == "" {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339, publishDate); err != nil {
+		return false
+	}
+
+	if announcementType, exists := item["type"]; exists {
+		typeString, ok := announcementType.(string)
+		if !ok || !validAnnouncementTypes[typeString] {
+			return false
+		}
+	}
+	if extra, exists := item["extra"]; exists {
+		extraString, ok := extra.(string)
+		if !ok || len(extraString) > 200 {
+			return false
+		}
+	}
+
+	if options.hasStartDate && now.Before(options.startDate) {
+		return false
+	}
+	if options.hasEndDate && now.After(options.endDate) {
+		return false
+	}
+	return true
+}
+
 func GetAnnouncements() []map[string]interface{} {
 	list := getJSONList(GetConsoleSetting().Announcements)
-	sort.SliceStable(list, func(i, j int) bool {
-		return getPublishTime(list[i]).After(getPublishTime(list[j]))
+	now := time.Now()
+	visibleList := make([]map[string]interface{}, 0, len(list))
+	for _, item := range list {
+		if isAnnouncementVisible(item, now) {
+			visibleList = append(visibleList, item)
+		}
+	}
+
+	sort.SliceStable(visibleList, func(i, j int) bool {
+		iSortOrder, _ := parseAnnouncementSortOrder(visibleList[i]["sortOrder"])
+		jSortOrder, _ := parseAnnouncementSortOrder(visibleList[j]["sortOrder"])
+		if iSortOrder != jSortOrder {
+			return iSortOrder > jSortOrder
+		}
+		return getPublishTime(visibleList[i]).After(getPublishTime(visibleList[j]))
 	})
-	return list
+	return visibleList
 }
 
 func GetFAQ() []map[string]interface{} {
@@ -272,16 +448,16 @@ func validateUptimeKumaGroups(groupsStr string) error {
 			return err
 		}
 
-		if len(categoryName) > 50 {
+		if exceedsMaxCharacters(categoryName, 50) {
 			return fmt.Errorf("第%d个分组的分类名称长度不能超过50字符", i+1)
 		}
-		if len(urlStr) > 500 {
+		if exceedsMaxCharacters(urlStr, 500) {
 			return fmt.Errorf("第%d个分组的URL长度不能超过500字符", i+1)
 		}
-		if len(slug) > 100 {
+		if exceedsMaxCharacters(slug, 100) {
 			return fmt.Errorf("第%d个分组的Slug长度不能超过100字符", i+1)
 		}
-		if len(description) > 200 {
+		if exceedsMaxCharacters(description, 200) {
 			return fmt.Errorf("第%d个分组的描述长度不能超过200字符", i+1)
 		}
 

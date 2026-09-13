@@ -1,0 +1,66 @@
+package controller
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The classic dashboard is still embedded and served alongside the default
+// one, so "classic" stays a valid value; only unknown values are rejected here.
+func TestUpdateOptionRejectsInvalidFrontendTheme(t *testing.T) {
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/option/",
+		strings.NewReader(`{"key":"theme.frontend","value":"sepia"}`),
+	)
+
+	UpdateOption(context)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.JSONEq(t, `{"success":false,"message":"无效的主题值，可选值：default（新版前端）、classic（经典前端）"}`, response.Body.String())
+}
+
+func TestGetStatusAdvertisesDefaultDashboard(t *testing.T) {
+	previousMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() { common.OptionMap = previousMap })
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+
+	GetStatus(context)
+
+	var payload struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+	assert.True(t, payload.Success)
+	assert.Equal(t, "default", payload.Data["theme"])
+	require.NotNil(t, payload.Data["default_theme"])
+}
+
+func TestUpdateOptionRejectsInvalidDefaultTheme(t *testing.T) {
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/option/",
+		strings.NewReader(`{"key":"`+setting.DefaultThemeOptionKey+`","value":"{\"mode\":\"sepia\"}"}`),
+	)
+
+	UpdateOption(context)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "invalid default theme mode")
+}

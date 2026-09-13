@@ -12,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -76,7 +75,7 @@ func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string, c *gin.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-Google] ExchangeToken client error: %s", err.Error()))
 		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Google"}, err.Error())
@@ -122,7 +121,7 @@ func (p *GoogleProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*O
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-Google] GetUserInfo client error: %s", err.Error()))
 		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "Google"}, err.Error())
@@ -199,4 +198,8 @@ func (p *GoogleProvider) SetProviderUserID(user *model.User, providerUserID stri
 
 func (p *GoogleProvider) GetProviderPrefix() string {
 	return "google_"
+}
+
+func (p *GoogleProvider) ProviderUserIDColumn() string {
+	return "google_id"
 }

@@ -123,85 +123,9 @@ func Query(params QueryParams) (QueryResult, error) {
 }
 
 func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
-	if hours <= 0 {
-		hours = 24
-	}
-	if hours > 24*30 {
-		hours = 24 * 30
-	}
-	endTs := time.Now().Unix()
-	startTs := endTs - int64(hours)*3600
-	allowedGroups := allowedGroupSet(groups)
-
-	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
-	if err != nil {
-		return SummaryAllResult{}, err
-	}
-
-	totals := map[string]counters{}
-	modelBuckets := map[string]map[int64]counters{}
-	for _, row := range rows {
-		value := counters{
-			requestCount:   row.RequestCount,
-			successCount:   row.SuccessCount,
-			totalLatencyMs: row.TotalLatencyMs,
-			outputTokens:   row.OutputTokens,
-			generationMs:   row.GenerationMs,
-		}
-		mergeModelTotals(totals, row.ModelName, value)
-		mergeModelBucket(modelBuckets, row.ModelName, row.BucketTs, value)
-	}
-
-	hotBuckets.Range(func(key, value any) bool {
-		k := key.(bucketKey)
-		if k.bucketTs < startTs || k.bucketTs > endTs {
-			return true
-		}
-		if allowedGroups != nil {
-			if _, ok := allowedGroups[k.group]; !ok {
-				return true
-			}
-		}
-		snap := value.(*atomicBucket).snapshot()
-		if snap.requestCount == 0 {
-			return true
-		}
-		mergeModelTotals(totals, k.model, snap)
-		mergeModelBucket(modelBuckets, k.model, k.bucketTs, snap)
-		return true
-	})
-
-	models := make([]ModelSummary, 0, len(totals))
-	for name, total := range totals {
-		if total.requestCount == 0 {
-			continue
-		}
-		avgLatency := total.totalLatencyMs / total.requestCount
-		successRate := float64(total.successCount) / float64(total.requestCount) * 100
-		avgTps := 0.0
-		if total.generationMs > 0 {
-			avgTps = float64(total.outputTokens) / (float64(total.generationMs) / 1000.0)
-		}
-		models = append(models, ModelSummary{
-			ModelName:          name,
-			AvgLatencyMs:       avgLatency,
-			SuccessRate:        math.Round(successRate*100) / 100,
-			AvgTps:             math.Round(avgTps*100) / 100,
-			RecentSuccessRates: recentSuccessRates(modelBuckets[name], 3),
-			RequestCount:       total.requestCount,
-		})
-	}
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].RequestCount > models[j].RequestCount
-	})
-
-	return SummaryAllResult{Models: models}, nil
+	return querySummaryAll(hours, groups, 24*30, 3)
 }
 
-// QueryAvailabilitySummary computes model availability metrics (success rate,
-// latency, request count, recent success rate trend) over a given time window.
-// Unlike QuerySummaryAll it queries totals and recent buckets separately,
-// allowing longer time ranges (up to 365 days) without excessive bucket rows.
 func QueryAvailabilitySummary(hours int, groups []string) (SummaryAllResult, error) {
 	const recentLimit = 12
 	if hours <= 0 {
@@ -266,6 +190,58 @@ func QueryAvailabilitySummary(hours int, groups []string) (SummaryAllResult, err
 	return SummaryAllResult{Models: buildModelSummaries(totals, modelBuckets, recentLimit)}, nil
 }
 
+func querySummaryAll(hours int, groups []string, maxHours int, recentLimit int) (SummaryAllResult, error) {
+	if hours <= 0 {
+		hours = 24
+	}
+	if hours > maxHours {
+		hours = maxHours
+	}
+	endTs := time.Now().Unix()
+	startTs := endTs - int64(hours)*3600
+	allowedGroups := allowedGroupSet(groups)
+
+	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
+	if err != nil {
+		return SummaryAllResult{}, err
+	}
+
+	totals := map[string]counters{}
+	modelBuckets := map[string]map[int64]counters{}
+	for _, row := range rows {
+		value := counters{
+			requestCount:   row.RequestCount,
+			successCount:   row.SuccessCount,
+			totalLatencyMs: row.TotalLatencyMs,
+			outputTokens:   row.OutputTokens,
+			generationMs:   row.GenerationMs,
+		}
+		mergeModelTotals(totals, row.ModelName, value)
+		mergeModelBucket(modelBuckets, row.ModelName, row.BucketTs, value)
+	}
+
+	hotBuckets.Range(func(key, value any) bool {
+		k := key.(bucketKey)
+		if k.bucketTs < startTs || k.bucketTs > endTs {
+			return true
+		}
+		if allowedGroups != nil {
+			if _, ok := allowedGroups[k.group]; !ok {
+				return true
+			}
+		}
+		snap := value.(*atomicBucket).snapshot()
+		if snap.requestCount == 0 {
+			return true
+		}
+		mergeModelTotals(totals, k.model, snap)
+		mergeModelBucket(modelBuckets, k.model, k.bucketTs, snap)
+		return true
+	})
+
+	return SummaryAllResult{Models: buildModelSummaries(totals, modelBuckets, recentLimit)}, nil
+}
+
 func buildModelSummaries(totals map[string]counters, modelBuckets map[string]map[int64]counters, recentLimit int) []ModelSummary {
 	models := make([]ModelSummary, 0, len(totals))
 	for name, total := range totals {
@@ -279,12 +255,13 @@ func buildModelSummaries(totals map[string]counters, modelBuckets map[string]map
 			avgTps = float64(total.outputTokens) / (float64(total.generationMs) / 1000.0)
 		}
 		models = append(models, ModelSummary{
-			ModelName:          name,
-			AvgLatencyMs:       avgLatency,
-			SuccessRate:        math.Round(successRate*100) / 100,
-			AvgTps:             math.Round(avgTps*100) / 100,
-			RecentSuccessRates: recentSuccessRates(modelBuckets[name], recentLimit),
-			RequestCount:       total.requestCount,
+			ModelName:           name,
+			AvgLatencyMs:        avgLatency,
+			SuccessRate:         math.Round(successRate*100) / 100,
+			AvgTps:              math.Round(avgTps*100) / 100,
+			RecentSuccessRates:  recentSuccessRates(modelBuckets[name], recentLimit),
+			RecentSuccessSeries: recentSuccessSeries(modelBuckets[name]),
+			RequestCount:        total.requestCount,
 		})
 	}
 	sort.Slice(models, func(i, j int) bool {
@@ -328,7 +305,7 @@ func mergeModelBucket(modelBuckets map[string]map[int64]counters, modelName stri
 
 func recentSuccessRates(buckets map[int64]counters, limit int) []float64 {
 	if len(buckets) == 0 || limit <= 0 {
-		return nil
+		return []float64{}
 	}
 	timestamps := make([]int64, 0, len(buckets))
 	for ts := range buckets {
@@ -345,6 +322,40 @@ func recentSuccessRates(buckets map[int64]counters, limit int) []float64 {
 		rates = append(rates, math.Round(successRate(buckets[ts])*100)/100)
 	}
 	return rates
+}
+
+func recentSuccessSeries(buckets map[int64]counters) []SuccessRatePoint {
+	if len(buckets) == 0 {
+		return nil
+	}
+	hourly := map[int64]counters{}
+	for ts, value := range buckets {
+		hourTs := ts - ts%3600
+		merged := hourly[hourTs]
+		merged.requestCount += value.requestCount
+		merged.successCount += value.successCount
+		hourly[hourTs] = merged
+	}
+	timestamps := make([]int64, 0, len(hourly))
+	for hourTs, value := range hourly {
+		if value.requestCount > 0 {
+			timestamps = append(timestamps, hourTs)
+		}
+	}
+	if len(timestamps) == 0 {
+		return nil
+	}
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] < timestamps[j]
+	})
+	points := make([]SuccessRatePoint, 0, len(timestamps))
+	for _, hourTs := range timestamps {
+		points = append(points, SuccessRatePoint{
+			Ts:          hourTs,
+			SuccessRate: math.Round(successRate(hourly[hourTs])*100) / 100,
+		})
+	}
+	return points
 }
 
 func allowedGroupSet(groups []string) map[string]struct{} {

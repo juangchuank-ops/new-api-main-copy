@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,70 +16,56 @@ func usePricingOptionDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&Option{}))
 	previousDB := DB
-	previousOptions := common.OptionMap
 	DB = db
-	common.OptionMap = map[string]string{}
-	t.Cleanup(func() { DB, common.OptionMap = previousDB, previousOptions })
+	t.Cleanup(func() { DB = previousDB })
 	return db
 }
 
 func TestSeedCanonicalPricingOptionsOnlyAddsMissingRows(t *testing.T) {
 	db := usePricingOptionDB(t)
-
-	// Pre-insert a user-configured ModelRatio that must NOT be overwritten
-	userValue := `{"custom-model":2.5}`
-	require.NoError(t, db.Create(&Option{Key: "ModelRatio", Value: userValue}).Error)
-
 	require.NoError(t, SeedCanonicalPricingOptions())
-
-	// ModelRatio must retain the user value
-	var stored Option
-	require.NoError(t, db.First(&stored, "key = ?", "ModelRatio").Error)
-	require.Equal(t, userValue, stored.Value, "existing ModelRatio must not be overwritten by seed")
-
-	// All canonical keys must exist
+	defaults := CanonicalPricingOptionDefaults()
 	for _, key := range PricingOptionKeys {
-		var opt Option
-		require.NoError(t, db.First(&opt, "key = ?", key).Error, "canonical key %q must exist after seed", key)
+		var seeded Option
+		require.NoError(t, db.First(&seeded, "key = ?", key).Error)
+		require.JSONEq(t, defaults[key], seeded.Value, key)
 	}
-}
-
-func TestSeedCanonicalPricingOptionsIsIdempotent(t *testing.T) {
-	db := usePricingOptionDB(t)
-	require.NoError(t, SeedCanonicalPricingOptions())
-	require.NoError(t, SeedCanonicalPricingOptions())
-
 	var count int64
 	require.NoError(t, db.Model(&Option{}).Where("key IN ?", PricingOptionKeys).Count(&count).Error)
-	require.Equal(t, int64(len(PricingOptionKeys)), count, "seed must not create duplicates")
-}
+	require.EqualValues(t, len(PricingOptionKeys), count)
 
-func TestRefreshPricingOptionMapsFromDatabasePublishesAllKeys(t *testing.T) {
-	usePricingOptionDB(t)
+	custom := `{"custom":0}`
+	require.NoError(t, db.Model(&Option{}).Where("key = ?", "ModelPrice").Update("value", custom).Error)
+	require.NoError(t, db.Delete(&Option{}, "key = ?", "AudioRatio").Error)
 	require.NoError(t, SeedCanonicalPricingOptions())
+	var price Option
+	require.NoError(t, db.First(&price, "key = ?", "ModelPrice").Error)
+	require.Equal(t, custom, price.Value)
+	var audio Option
+	require.NoError(t, db.First(&audio, "key = ?", "AudioRatio").Error)
+	require.JSONEq(t, defaults["AudioRatio"], audio.Value)
 
-	values, err := RefreshPricingOptionMapsFromDatabase()
+	before, err := AllOption()
 	require.NoError(t, err)
-	require.Len(t, values, len(PricingOptionKeys))
-	for _, key := range PricingOptionKeys {
-		_, ok := values[key]
-		require.True(t, ok, "key %q must be in refreshed values", key)
-		// OptionMap must also be updated
-		_, ok = common.OptionMap[key]
-		require.True(t, ok, "key %q must be in OptionMap after refresh", key)
-	}
+	require.NoError(t, SeedCanonicalPricingOptions())
+	after, err := AllOption()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
 }
 
-func TestRefreshPricingOptionMapsFailsOnMissingCanonicalRow(t *testing.T) {
+func TestGenericPricingWritesAreRejected(t *testing.T) {
 	usePricingOptionDB(t)
-	// Don't seed — all canonical rows are missing
-	_, err := RefreshPricingOptionMapsFromDatabase()
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrPricingOptionIntegrity)
+	require.ErrorIs(t, UpdateOption("ModelPrice", `{}`), ErrPricingOptionRequiresPatch)
+	require.ErrorIs(t, UpdateOptionsBulk(map[string]string{"ModelRatio": `{}`}), ErrPricingOptionRequiresPatch)
 }
 
-func TestIsPricingOptionKey(t *testing.T) {
-	require.True(t, IsPricingOptionKey("ModelRatio"))
-	require.True(t, IsPricingOptionKey("billing_setting.billing_mode"))
-	require.False(t, IsPricingOptionKey("NonExistentKey"))
+func TestApplyPricingOptionMapsRequiresAllRows(t *testing.T) {
+	previous := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() { common.OptionMap = previous })
+	require.ErrorIs(t, ApplyPricingOptionMaps(map[string]string{}), ErrPricingOptionIntegrity)
+}
+
+func TestPricingIntegrityErrorIsStable(t *testing.T) {
+	require.True(t, errors.Is(ErrPricingOptionIntegrity, ErrPricingOptionIntegrity))
 }

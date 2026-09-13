@@ -7,16 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -24,10 +25,12 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
@@ -36,20 +39,56 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context          *gin.Context
+	localErr         error
+	newAPIError      *types.NewAPIError
+	responsePreview  string
+	previewTruncated bool
+	diagnostics      *channelTestDiagnostics
 }
+
+type channelTestOptions struct {
+	testType        string
+	message         string
+	useChannelStyle bool
+	capturePreview  bool
+	// skipConsumeLog suppresses the consume-log write used by the channel test
+	// flow. The queue warmer reuses the test call path to send a minimal
+	// warm-up request upstream, but warming is not a billable user action and
+	// must not pollute consume logs.
+	skipConsumeLog bool
+	// maxTokens, when non-nil, caps the warm-up request's max_tokens so a queue
+	// warmer does not generate a large (and expensive) upstream response.
+	maxTokens *uint
+	// instructions, when non-empty, is injected into the Responses request's
+	// `instructions` field (system prompt). The queue warmer sets this from the
+	// channel's SystemPrompt setting so warm-up calls look like a real Codex
+	// request (Codex feature prompt in instructions); otherwise queue-holding
+	// callers reject them. The warm-up message itself stays the user `input`.
+	instructions string
+}
+
+const channelTestResponsePreviewMaxBytes = 8 << 10
+
+var (
+	channelTestPreviewSensitiveValuePattern = regexp.MustCompile(`(?i)\b(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|signature)\b\s*[:=]\s*(?:bearer\s+)?[^\s,;&}\"']+`)
+	channelTestPreviewBearerPattern         = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]+={0,2}`)
+	channelTestPreviewSensitiveJSONPattern  = regexp.MustCompile(`(?i)((?:"|')?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|bearer|token|secret|password|credential|signature)(?:"|')?\s*:\s*)"(?:bearer\s+)?(?:\\.|[^"\\])*"`)
+	channelTestPreviewSensitiveQueryPattern = regexp.MustCompile(`(?i)([?&;](?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|bearer|token|secret|password|credential|signature)=)([^&#\s,;\}"'()\]]*)`)
+)
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
+	if strings.EqualFold(normalized, "auto") {
+		normalized = ""
+	}
 	if normalized != "" {
 		return normalized
 	}
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
-	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+	if channel != nil && (channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeCodexCompatibility) {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalized
@@ -72,9 +111,39 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, testMessage string) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+	setting := operation_setting.GetMonitorSetting()
+	return testChannelWithOptions(ctx, channel, testUserID, testModel, endpointType, isStream, channelTestOptions{
+		message:         setting.ChannelTestMessage,
+		useChannelStyle: setting.ChannelTestUseChannelStyle,
+	})
+}
+
+func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, options channelTestOptions) (outcome testResult) {
+	started := time.Now()
+	var diagnostics *channelTestDiagnostics
+	if options.testType != "" {
+		diagnostics = &channelTestDiagnostics{Status: "failed", Reason: "request_failed", TestType: options.testType, RequestedStream: isStream, EndpointType: endpointType}
+		defer func() {
+			diagnostics.DurationMS = time.Since(started).Milliseconds()
+			outcome.diagnostics = diagnostics
+			if outcome.localErr != nil || outcome.newAPIError != nil {
+				if diagnostics.Status == "passed" || diagnostics.Status == "degraded" {
+					diagnostics.Reason = "request_failed"
+				}
+				diagnostics.Status = "failed"
+			}
+		}()
+	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if channel == nil {
+		return testResult{localErr: errors.New("channel is nil")}
+	}
+	message, err := resolveChannelTestMessage(options.message)
+	if err != nil {
+		return testResult{localErr: err}
 	}
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
@@ -85,6 +154,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		constant.ChannelTypeJimeng,
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeVidu,
+		constant.ChannelTypeTaskPlugin,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)
@@ -93,6 +163,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	w := httptest.NewRecorder()
+	if diagnostics != nil && options.capturePreview {
+		defer func() {
+			outcome.responsePreview = sanitizeChannelTestResponsePreview(w.Body.Bytes())
+		}()
+	}
 	c, _ := gin.CreateTestContext(w)
 
 	testModel = strings.TrimSpace(testModel)
@@ -110,7 +185,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
+	if diagnostics != nil {
+		endpointType, err = resolveChannelProbeEndpoint(channel, testModel, endpointType)
+		if err != nil {
+			diagnostics.Reason = "invalid_endpoint"
+			return testResult{localErr: err}
+		}
+		diagnostics.EndpointType = endpointType
+		if channelProbeNotApplicable(endpointType, options.testType, isStream) {
+			diagnostics.Status, diagnostics.Reason = "skipped", "not_applicable"
+			return testResult{}
+		}
+	} else {
+		endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
+	}
 
 	requestPath := "/v1/chat/completions"
 
@@ -152,6 +240,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	if strings.HasPrefix(requestPath, "/v1/responses/compact") {
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
+	}
+	requestPath = strings.ReplaceAll(requestPath, "{model}", url.PathEscape(testModel))
+	if endpointType == string(constant.EndpointTypeGemini) && isStream {
+		requestPath = strings.ReplaceAll(requestPath, ":generateContent", ":streamGenerateContent") + "?alt=sse"
 	}
 
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
@@ -232,7 +324,15 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	request := buildTestRequest(testModel, endpointType, channel, isStream, testMessage)
+	request := buildTestRequestWithMessage(testModel, endpointType, channel, isStream, message, options.instructions)
+	if diagnostics != nil {
+		if err := configureChannelProbeRequest(request, options.testType, isStream, options.message); err != nil {
+			return testResult{localErr: err}
+		}
+	}
+	if options.maxTokens != nil {
+		applyTestRequestMaxTokens(request, *options.maxTokens)
+	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -245,6 +345,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	info.IsChannelTest = true
+	info.DisableChannelTestClientProfile = !options.useChannelStyle
 	info.InitChannelMeta(c)
 
 	err = attachTestBillingRequestInput(info, request)
@@ -264,6 +365,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewError(err, types.ErrorCodeChannelModelMappedError),
 		}
 	}
+	if err := helper.ApplyReasoningModelSuffix(c, info, request); err != nil {
+		return testResult{
+			context:     c,
+			localErr:    err,
+			newAPIError: types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry()),
+		}
+	}
 
 	testModel = info.UpstreamModelName
 	// 更新请求中的模型名称
@@ -271,11 +379,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	apiType, _ := common.ChannelType2APIType(channel.Type)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
-		apiType != constant.APITypeOpenAI &&
-		apiType != constant.APITypeCodex {
+		!common.SupportsResponsesCompact(channel.Type, apiType) {
 		return testResult{
 			context:     c,
-			localErr:    fmt.Errorf("responses compaction test only supports openai/codex channels, got api type %d", apiType),
+			localErr:    fmt.Errorf("responses compaction test is not supported for api type %d", apiType),
 			newAPIError: types.NewError(fmt.Errorf("unsupported api type: %d", apiType), types.ErrorCodeInvalidApiType),
 		}
 	}
@@ -372,13 +479,18 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	default:
 		// Chat/Completion 等其他请求类型
-		if generalReq, ok := request.(*dto.GeneralOpenAIRequest); ok {
-			convertedRequest, err = adaptor.ConvertOpenAIRequest(c, info, generalReq)
-		} else {
+		switch req := request.(type) {
+		case *dto.ClaudeRequest:
+			convertedRequest, err = adaptor.ConvertClaudeRequest(c, info, req)
+		case *dto.GeminiChatRequest:
+			convertedRequest, err = adaptor.ConvertGeminiRequest(c, info, req)
+		case *dto.GeneralOpenAIRequest:
+			convertedRequest, err = adaptor.ConvertOpenAIRequest(c, info, req)
+		default:
 			return testResult{
 				context:     c,
-				localErr:    errors.New("invalid general request type"),
-				newAPIError: types.NewError(errors.New("invalid general request type"), types.ErrorCodeConvertRequestFailed),
+				localErr:    errors.New("invalid chat request type"),
+				newAPIError: types.NewError(errors.New("invalid chat request type"), types.ErrorCodeConvertRequestFailed),
 			}
 		}
 	}
@@ -408,6 +520,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//	}
 	//}
 
+	probeTemplate := jsonData
 	if len(info.ParamOverride) > 0 {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
@@ -425,6 +538,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			}
 		}
 	}
+	if diagnostics != nil && len(info.ParamOverride) > 0 {
+		jsonData, err = enforceChannelProbeLimits(jsonData, probeTemplate, channelProbeUpstreamEndpoint(convertedRequest), options.testType)
+		if err != nil {
+			return testResult{context: c, localErr: err, newAPIError: types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid)}
+		}
+	}
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
@@ -437,9 +556,21 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	var httpResp *http.Response
+	var upstreamCapture *channelProbeUpstreamCapture
 	if resp != nil {
 		httpResp = resp.(*http.Response)
+		if diagnostics != nil {
+			diagnostics.UpstreamStream = common.GetPointer(strings.Contains(strings.ToLower(httpResp.Header.Get("Content-Type")), "text/event-stream"))
+			diagnostics.EndpointPath = info.RequestURLPath
+			if httpResp.Body != nil {
+				upstreamCapture = &channelProbeUpstreamCapture{ReadCloser: httpResp.Body, started: started}
+				httpResp.Body = upstreamCapture
+			}
+		}
 		if httpResp.StatusCode != http.StatusOK {
+			if diagnostics != nil {
+				diagnostics.Reason = "upstream_error"
+			}
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
@@ -459,6 +590,33 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
+	if diagnostics != nil {
+		if upstreamCapture != nil {
+			diagnostics.FirstResponseMS = upstreamCapture.firstByteMS
+			raw := bytes.TrimSpace(upstreamCapture.body.Bytes())
+			if gjson.ValidBytes(raw) {
+				diagnostics.UpstreamStream = common.GetPointer(false)
+			} else if bytes.HasPrefix(raw, []byte("data:")) || bytes.HasPrefix(raw, []byte("event:")) || bytes.HasPrefix(raw, []byte(":")) {
+				diagnostics.UpstreamStream = common.GetPointer(true)
+			}
+		}
+		validateChannelProbeResponse(w.Body.Bytes(), diagnostics, info.StreamStatus)
+		if upstreamEndpoint := channelProbeUpstreamEndpoint(convertedRequest); upstreamCapture != nil && upstreamEndpoint != "" {
+			// Compact uses a Responses request upstream but has a different result.
+			if endpointType == string(constant.EndpointTypeOpenAIResponseCompact) {
+				upstreamEndpoint = endpointType
+			}
+			upstreamDiagnostic := &channelTestDiagnostics{
+				EndpointType: upstreamEndpoint, TestType: options.testType,
+				RequestedStream: diagnostics.UpstreamStream != nil && *diagnostics.UpstreamStream,
+			}
+			validateChannelProbeResponse(upstreamCapture.body.Bytes(), upstreamDiagnostic, nil)
+			if upstreamDiagnostic.Status == "failed" && diagnostics.Reason != "stream_timeout" {
+				diagnostics.Status, diagnostics.Reason = "failed", upstreamDiagnostic.Reason
+				diagnostics.Detail = upstreamDiagnostic.Detail
+			}
+		}
+	}
 	if respErr != nil {
 		return testResult{
 			context:     c,
@@ -474,20 +632,21 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
-	result := w.Result()
-	respBody, err := readTestResponseBody(result.Body, isStream)
-	if err != nil {
-		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+	var respBody []byte
+	var responseTruncated bool
+	if diagnostics == nil {
+		respBody, responseTruncated, err = readTestResponseBody(w.Result().Body, isStream)
+		if err != nil {
+			return testResult{
+				context: c, localErr: err,
+				newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			}
 		}
-	}
-	if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
-		return testResult{
-			context:     c,
-			localErr:    bodyErr,
-			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+		if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
+			return testResult{
+				context: c, localErr: bodyErr,
+				newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			}
 		}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
@@ -497,25 +656,38 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
-		ChannelId:        channel.Id,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		ModelName:        info.OriginModelName,
-		TokenName:        "模型测试",
-		Quota:            quota,
-		Content:          "模型测试",
-		UseTimeSeconds:   int(consumedTime),
-		IsStream:         info.IsStream,
-		Group:            info.UsingGroup,
-		Other:            other,
-	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
-	return testResult{
+	if !options.skipConsumeLog {
+		model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
+			ChannelId:        channel.Id,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			ModelName:        info.OriginModelName,
+			TokenName:        "模型测试",
+			Quota:            quota,
+			Content:          "模型测试",
+			UseTimeSeconds:   int(consumedTime),
+			IsStream:         info.IsStream,
+			Group:            info.UsingGroup,
+			Other:            other,
+		})
+	}
+	common.SysLog(fmt.Sprintf("testing channel #%d completed", channel.Id))
+	resultData := testResult{
 		context:     c,
 		localErr:    nil,
 		newAPIError: nil,
 	}
+	if options.capturePreview && diagnostics == nil {
+		previewBody := respBody
+		previewTruncated := responseTruncated
+		if len(previewBody) > channelTestResponsePreviewMaxBytes {
+			previewBody = previewBody[:channelTestResponsePreviewMaxBytes]
+			previewTruncated = true
+		}
+		resultData.responsePreview = sanitizeChannelTestResponsePreview(previewBody)
+		resultData.previewTruncated = previewTruncated
+	}
+	return resultData
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
@@ -531,7 +703,7 @@ func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Requ
 	return nil
 }
 
-func settleTestQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
+func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
 	if usage != nil && info != nil && info.TieredBillingSnapshot != nil {
 		isClaudeUsageSemantic := usage.UsageSemantic == "anthropic" || info.GetFinalRequestRelayFormat() == types.RelayFormatClaude
 		usedVars := billingexpr.UsedVars(info.TieredBillingSnapshot.ExprString)
@@ -542,18 +714,19 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usa
 
 	quota := 0
 	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
+		completionQuota := common.QuotaRound(float64(usage.CompletionTokens) * priceData.CompletionRatio)
+		quota = common.QuotaRound(float64(usage.PromptTokens) + float64(completionQuota))
+		quota = common.QuotaRound(float64(quota) * priceData.ModelRatio)
 		if priceData.ModelRatio != 0 && quota <= 0 {
 			quota = 1
 		}
 		return quota, nil
 	}
 
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	return common.QuotaFromFloat(priceData.ModelPrice * common.QuotaPerUnit), nil
 }
 
-func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
+func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) *model.LogOther {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
 	if tieredResult != nil {
@@ -589,13 +762,125 @@ func coerceTestUsage(usageAny any, isStream bool, estimatePromptTokens int) (*dt
 	}
 }
 
-func readTestResponseBody(body io.ReadCloser, isStream bool) ([]byte, error) {
+func readTestResponseBody(body io.ReadCloser, isStream bool) ([]byte, bool, error) {
 	defer func() { _ = body.Close() }()
-	const maxStreamLogBytes = 8 << 10
-	if isStream {
-		return io.ReadAll(io.LimitReader(body, maxStreamLogBytes))
+	if !isStream {
+		response, err := io.ReadAll(body)
+		return response, false, err
 	}
-	return io.ReadAll(body)
+	limit := int64(channelTestResponsePreviewMaxBytes)
+	response, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(response)) > limit {
+		return response[:limit], true, nil
+	}
+	return response, false, nil
+}
+
+func resolveChannelTestMessage(override string) (string, error) {
+	message, err := operation_setting.NormalizeChannelTestMessage(override)
+	if err != nil {
+		return "", err
+	}
+	if message != "" {
+		return message, nil
+	}
+	setting := operation_setting.GetMonitorSetting()
+	message, err = operation_setting.NormalizeChannelTestMessage(setting.ChannelTestMessage)
+	if err != nil || message == "" {
+		return operation_setting.DefaultChannelTestMessage, nil
+	}
+	return message, nil
+}
+
+func sanitizeChannelTestResponsePreview(response []byte) string {
+	preview := strings.TrimSpace(string(response))
+	if preview == "" {
+		return ""
+	}
+	if strings.HasPrefix(preview, "data:") || strings.HasPrefix(preview, "event:") || strings.HasPrefix(preview, ":") {
+		var sanitized strings.Builder
+		var data []string
+		for _, line := range strings.Split(strings.ReplaceAll(preview, "\r\n", "\n")+"\n\n", "\n") {
+			if value, ok := strings.CutPrefix(line, "data:"); ok {
+				data = append(data, strings.TrimPrefix(value, " "))
+			} else if strings.TrimSpace(line) == "" {
+				if len(data) > 0 {
+					sanitized.WriteString("data: ")
+					sanitized.WriteString(sanitizeChannelTestResponsePreview([]byte(strings.Join(data, "\n"))))
+					sanitized.WriteByte('\n')
+					data = nil
+				}
+				sanitized.WriteByte('\n')
+			} else {
+				sanitized.WriteString(line)
+				sanitized.WriteByte('\n')
+			}
+		}
+		preview = strings.TrimSpace(sanitized.String())
+	}
+
+	var responseValue any
+	if err := common.Unmarshal([]byte(preview), &responseValue); err == nil {
+		responseValue = redactChannelTestPreviewValue(responseValue)
+		if sanitized, marshalErr := common.Marshal(responseValue); marshalErr == nil {
+			preview = string(sanitized)
+		}
+	}
+	preview = channelTestPreviewSensitiveQueryPattern.ReplaceAllString(preview, `${1}[REDACTED]`)
+	preview = channelTestPreviewSensitiveJSONPattern.ReplaceAllString(preview, `${1}"[REDACTED]"`)
+	preview = channelTestPreviewSensitiveValuePattern.ReplaceAllString(preview, "[REDACTED]")
+	preview = channelTestPreviewBearerPattern.ReplaceAllString(preview, "Bearer [REDACTED]")
+	return preview
+}
+
+func redactChannelTestPreviewValue(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			if isSensitiveChannelTestPreviewKey(key) {
+				item[key] = "[REDACTED]"
+				continue
+			}
+			item[key] = redactChannelTestPreviewValue(child)
+		}
+		return item
+	case []any:
+		for index, child := range item {
+			item[index] = redactChannelTestPreviewValue(child)
+		}
+		return item
+	case string:
+		var nested any
+		if err := common.Unmarshal([]byte(item), &nested); err == nil {
+			nested = redactChannelTestPreviewValue(nested)
+			if sanitized, marshalErr := common.Marshal(nested); marshalErr == nil {
+				return string(sanitized)
+			}
+		}
+	}
+	return value
+}
+
+func isSensitiveChannelTestPreviewKey(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.TrimSpace(key)))
+	if normalized == "key" || normalized == "headers" || normalized == "request" || normalized == "requestbody" ||
+		normalized == "input" || normalized == "prompt" || normalized == "instructions" || normalized == "messages" || normalized == "metadata" {
+		return true
+	}
+	for _, sensitive := range []string{"authorization", "apikey", "secret", "password", "credential", "signature", "cookie"} {
+		if strings.Contains(normalized, sensitive) {
+			return true
+		}
+	}
+	for _, sensitiveToken := range []string{"token", "accesstoken", "refreshtoken", "idtoken", "authtoken", "bearertoken", "sessiontoken", "apitoken", "bearer"} {
+		if normalized == sensitiveToken {
+			return true
+		}
+	}
+	return false
 }
 
 func detectErrorFromTestResponseBody(respBody []byte) error {
@@ -607,7 +892,7 @@ func detectErrorFromTestResponseBody(respBody []byte) error {
 		return fmt.Errorf("upstream error: %s", message)
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
@@ -633,7 +918,7 @@ func validateStreamTestResponseBody(respBody []byte) error {
 		return errors.New("stream response body is empty")
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -660,7 +945,7 @@ func validateTestResponseBody(respBody []byte, isStream bool) error {
 }
 
 func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
-	return channel != nil && channel.Type == constant.ChannelTypeCodex
+	return channel != nil && (channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeCodexCompatibility)
 }
 
 func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
@@ -692,17 +977,49 @@ func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	return message
 }
 
-func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool, testMessage string) dto.Request {
-	// 自定义测试文字：空则回退默认值；对话类端点用 "hi"，向量端点用 "hello world"
-	testMessage = strings.TrimSpace(testMessage)
-	if testMessage == "" {
-		testMessage = "hi"
+func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool) dto.Request {
+	return buildTestRequestWithMessage(model, endpointType, channel, isStream, operation_setting.DefaultChannelTestMessage, "")
+}
+
+func buildTestRequestWithMessage(model string, endpointType string, channel *model.Channel, isStream bool, message string, instructions string) dto.Request {
+	message, err := resolveChannelTestMessage(message)
+	if err != nil {
+		message = operation_setting.DefaultChannelTestMessage
 	}
-	messageJSON, err := common.Marshal(testMessage)
-	if err != nil || len(messageJSON) < 2 {
-		messageJSON = []byte(`"hi"`)
+	// Build the Responses-API user input as Codex CLI does: a message whose
+	// content is an array of {type:"input_text"} parts. String content also
+	// parses fine on the OpenAI side, but queue-holding Codex-shaped upstreams
+	// may shape-check the item structure, so stay aligned with the CLI format.
+	contentBytes, err := common.Marshal([]map[string]string{{
+		"type": "input_text",
+		"text": message,
+	}})
+	if err != nil {
+		contentBytes = []byte(`[{"type":"input_text","text":"hi"}]`)
 	}
-	testResponsesInput := json.RawMessage(`[{"role":"user","content":` + string(messageJSON) + `}]`)
+	testResponsesInputBytes, err := common.Marshal([]dto.Input{{
+		Type:    "message",
+		Role:    "user",
+		Content: json.RawMessage(contentBytes),
+	}})
+	if err != nil {
+		testResponsesInputBytes = []byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]`)
+	}
+	testResponsesInput := json.RawMessage(testResponsesInputBytes)
+
+	// When a system prompt is provided (queue warmer passes the channel's
+	// SystemPrompt setting), it must land in the `instructions` field, not the
+	// user `input`. Queue-holding upstreams require a Codex-shaped request, and
+	// the instructions field is what carries the Codex feature prompt. The
+	// warm-up message stays the user input so the request stays valid.
+	var testInstructions json.RawMessage
+	if trimmed := strings.TrimSpace(instructions); trimmed != "" {
+		if b, err := common.Marshal(trimmed); err == nil {
+			testInstructions = b
+		} else {
+			testInstructions = json.RawMessage(`""`)
+		}
+	}
 
 	// 根据端点类型构建不同的测试请求
 	if endpointType != "" {
@@ -711,7 +1028,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 			// 返回 EmbeddingRequest
 			return &dto.EmbeddingRequest{
 				Model: model,
-				Input: []any{testMessage},
+				Input: []any{"hello world"},
 			}
 		case constant.EndpointTypeImageGeneration:
 			// 返回 ImageRequest
@@ -732,32 +1049,43 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		case constant.EndpointTypeOpenAIResponse:
 			// 返回 OpenAIResponsesRequest
 			return &dto.OpenAIResponsesRequest{
-				Model:  model,
-				Input:  testResponsesInput,
-				Stream: lo.ToPtr(isStream),
+				Model:        model,
+				Input:        testResponsesInput,
+				Instructions: testInstructions,
+				Stream:       lo.ToPtr(isStream),
 			}
 		case constant.EndpointTypeOpenAIResponseCompact:
 			// 返回 OpenAIResponsesCompactionRequest
 			return &dto.OpenAIResponsesCompactionRequest{
-				Model: model,
-				Input: testResponsesInput,
+				Model:        model,
+				Input:        testResponsesInput,
+				Instructions: testInstructions,
 			}
-		case constant.EndpointTypeAnthropic, constant.EndpointTypeGemini, constant.EndpointTypeOpenAI:
-			// 返回 GeneralOpenAIRequest
-			maxTokens := uint(16)
-			if constant.EndpointType(endpointType) == constant.EndpointTypeGemini {
-				maxTokens = 3000
+		case constant.EndpointTypeAnthropic:
+			return &dto.ClaudeRequest{
+				Model:     model,
+				Stream:    lo.ToPtr(isStream),
+				MaxTokens: lo.ToPtr(uint(16)),
+				Messages:  []dto.ClaudeMessage{{Role: "user", Content: message}},
 			}
+		case constant.EndpointTypeGemini:
+			return &dto.GeminiChatRequest{
+				Contents: []dto.GeminiChatContent{{Role: "user", Parts: []dto.GeminiPart{{Text: message}}}},
+				GenerationConfig: dto.GeminiChatGenerationConfig{
+					MaxOutputTokens: lo.ToPtr(uint(3000)),
+				},
+			}
+		case constant.EndpointTypeOpenAI:
 			req := &dto.GeneralOpenAIRequest{
 				Model:  model,
 				Stream: lo.ToPtr(isStream),
 				Messages: []dto.Message{
 					{
 						Role:    "user",
-						Content: testMessage,
+						Content: message,
 					},
 				},
-				MaxTokens: lo.ToPtr(maxTokens),
+				MaxTokens: lo.ToPtr(uint(16)),
 			}
 			if isStream {
 				req.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
@@ -779,28 +1107,31 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 	// 先判断是否为 Embedding 模型
 	if strings.Contains(strings.ToLower(model), "embedding") ||
 		strings.HasPrefix(model, "m3e") ||
-		strings.Contains(model, "bge-") {
+		strings.Contains(model, "bge-") ||
+		(channel != nil && channel.Type == constant.ChannelTypeMokaAI) {
 		// 返回 EmbeddingRequest
 		return &dto.EmbeddingRequest{
 			Model: model,
-			Input: []any{testMessage},
+			Input: []any{"hello world"},
 		}
 	}
 
 	// Responses compaction models (must use /v1/responses/compact)
 	if strings.HasSuffix(model, ratio_setting.CompactModelSuffix) {
 		return &dto.OpenAIResponsesCompactionRequest{
-			Model: model,
-			Input: testResponsesInput,
+			Model:        model,
+			Input:        testResponsesInput,
+			Instructions: testInstructions,
 		}
 	}
 
 	// Responses-only models (e.g. codex series)
 	if strings.Contains(strings.ToLower(model), "codex") {
 		return &dto.OpenAIResponsesRequest{
-			Model:  model,
-			Input:  testResponsesInput,
-			Stream: lo.ToPtr(isStream),
+			Model:        model,
+			Input:        testResponsesInput,
+			Instructions: testInstructions,
+			Stream:       lo.ToPtr(isStream),
 		}
 	}
 
@@ -811,7 +1142,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		Messages: []dto.Message{
 			{
 				Role:    "user",
-				Content: testMessage,
+				Content: message,
 			},
 		},
 	}
@@ -819,22 +1150,59 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		testRequest.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
 	}
 
-	if dto.IsOpenAIReasoningOModel(model) {
-		testRequest.MaxCompletionTokens = lo.ToPtr(uint(16))
-	} else if strings.Contains(model, "thinking") {
-		if !strings.Contains(model, "claude") {
-			testRequest.MaxTokens = lo.ToPtr(uint(50))
-		}
-	} else if strings.Contains(model, "gemini") {
-		testRequest.MaxTokens = lo.ToPtr(uint(3000))
-	} else {
-		testRequest.MaxTokens = lo.ToPtr(uint(16))
-	}
-
+	applyChannelTestModelBudget(testRequest, model)
 	return testRequest
 }
 
 func TestChannel(c *gin.Context) {
+	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	testChannelRequest(c, c.Query("model"), c.Query("endpoint_type"), isStream, "", "")
+}
+
+type channelTestRequest struct {
+	Model        string `json:"model"`
+	EndpointType string `json:"endpoint_type"`
+	Stream       *bool  `json:"stream"`
+	Message      string `json:"message"`
+	TestType     string `json:"test_type,omitempty"`
+}
+
+func TestChannelDetailed(c *gin.Context) {
+	var request channelTestRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid channel test request",
+		})
+		return
+	}
+	if _, err := operation_setting.NormalizeChannelTestMessage(request.Message); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if request.TestType != "" && request.TestType != "basic" && request.TestType != "tool_call" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid channel test type"})
+		return
+	}
+	if strings.TrimSpace(request.Model) == "" {
+		request.Model = c.Query("model")
+	}
+	if strings.TrimSpace(request.EndpointType) == "" {
+		request.EndpointType = c.Query("endpoint_type")
+	}
+	if request.Stream == nil {
+		if isStream, err := strconv.ParseBool(c.Query("stream")); err == nil {
+			request.Stream = &isStream
+		}
+	}
+	isStream := request.Stream != nil && *request.Stream
+	testChannelRequest(c, request.Model, request.EndpointType, isStream, request.Message, request.TestType)
+}
+
+func testChannelRequest(c *gin.Context, testModel string, endpointType string, isStream bool, message string, testType string) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)
@@ -853,14 +1221,6 @@ func TestChannel(c *gin.Context) {
 	//		go func() { _ = channel.SaveChannelInfo() }()
 	//	}
 	//}()
-	testModel := c.Query("model")
-	endpointType := c.Query("endpoint_type")
-	isStream, _ := strconv.ParseBool(c.Query("stream"))
-	// 自定义测试文字：限长 500 字符，超出部分截断，避免误填大段文本放大测试消耗
-	testMessage := []rune(strings.TrimSpace(c.Query("message")))
-	if len(testMessage) > 500 {
-		testMessage = testMessage[:500]
-	}
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -871,7 +1231,35 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, string(testMessage))
+	setting := operation_setting.GetMonitorSetting()
+	result := testChannelWithOptions(requestCtx, channel, testUserID, testModel, endpointType, isStream, channelTestOptions{
+		testType:        testType,
+		message:         message,
+		useChannelStyle: setting.ChannelTestUseChannelStyle,
+		capturePreview:  setting.ChannelTestShowResponsePreview,
+	})
+	if result.diagnostics != nil {
+		diagnostics := result.diagnostics
+		response := gin.H{
+			"success": diagnostics.Status == "passed" || diagnostics.Status == "degraded",
+			"message": "", "time": float64(diagnostics.DurationMS) / 1000, "diagnostics": diagnostics,
+		}
+		if result.localErr != nil {
+			response["message"] = sanitizeChannelTestResponsePreview([]byte(result.localErr.Error()))
+		}
+		if result.newAPIError != nil {
+			response["error_code"] = result.newAPIError.GetErrorCode()
+		}
+		if diagnostics.Status != "skipped" {
+			go channel.UpdateResponseTime(diagnostics.DurationMS)
+		}
+		if setting.ChannelTestShowResponsePreview {
+			response["response_preview"] = result.responsePreview
+			response["response_preview_truncated"] = result.previewTruncated
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	}
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -897,11 +1285,16 @@ func TestChannel(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"success": true,
 		"message": "",
 		"time":    consumedTime,
-	})
+	}
+	if setting.ChannelTestShowResponsePreview {
+		response["response_preview"] = result.responsePreview
+		response["response_preview_truncated"] = result.previewTruncated
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // channelTestSummary records the outcome of one channel test cycle so the
@@ -914,90 +1307,171 @@ type channelTestSummary struct {
 	Enabled   int `json:"enabled"`
 }
 
-// performChannelTests runs the channel test loop synchronously, honoring ctx
-// cancellation so a system-task runner that loses its lease stops promptly. When
-// report is non-nil it is called after each channel with (processed, total) so
-// the system task can surface progress.
-func performChannelTests(ctx context.Context, channels []*model.Channel, testUserID int, allowDisable bool, report func(processed, total int)) channelTestSummary {
+func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, testUserID int, allowDisable bool, disableThreshold int64, options channelTestOptions) channelTestSummary {
 	summary := channelTestSummary{}
-	var disableThreshold = int64(common.ChannelDisableThreshold * 1000)
-	if disableThreshold == 0 {
-		disableThreshold = 10000000 // a impossible value
+	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
+	tik := time.Now()
+	result := testChannelWithOptions(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), options)
+	milliseconds := time.Since(tik).Milliseconds()
+	if ctx.Err() != nil {
+		return summary
 	}
 
+	summary.Tested++
+
+	shouldBanChannel := false
+	newAPIError := result.newAPIError
+	if newAPIError != nil {
+		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
+	}
+
+	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+		if milliseconds > disableThreshold {
+			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
+			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
+			shouldBanChannel = true
+		}
+	}
+
+	if newAPIError == nil {
+		summary.Succeeded++
+	} else {
+		summary.Failed++
+	}
+
+	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, nil)
+		summary.Disabled++
+	}
+
+	if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
+		service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+		summary.Enabled++
+	}
+
+	channel.UpdateResponseTime(milliseconds)
+	return summary
+}
+
+// runChannelTestWorkers executes independent channel tests with bounded
+// concurrency. Results and progress are reduced by the caller goroutine, so
+// summary counts and the progress reporter remain serialized.
+func runChannelTestWorkers(
+	ctx context.Context,
+	channels []*model.Channel,
+	concurrency int,
+	run func(context.Context, *model.Channel) channelTestSummary,
+	report func(processed, total int),
+) channelTestSummary {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	total := len(channels)
-	for index, channel := range channels {
-		if ctx != nil && ctx.Err() != nil {
-			break
-		}
-		if report != nil {
-			report(index, total) // channels completed before this one
-		}
-		if channel.Status == common.ChannelStatusManuallyDisabled {
-			continue
-		}
-		isChannelEnabled := channel.Status == common.ChannelStatusEnabled
-		tik := time.Now()
-		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), "")
-		tok := time.Now()
-		milliseconds := tok.Sub(tik).Milliseconds()
-		if ctx != nil && ctx.Err() != nil {
-			break
-		}
+	if report != nil {
+		report(0, total)
+	}
+	if total == 0 {
+		return channelTestSummary{}
+	}
 
-		summary.Tested++
+	workerCount := min(operation_setting.NormalizeChannelTestConcurrency(concurrency), total)
+	jobs := make(chan *model.Channel)
+	results := make(chan channelTestSummary)
 
-		shouldBanChannel := false
-		newAPIError := result.newAPIError
-		// request error disables the channel
-		if newAPIError != nil {
-			shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
-		}
-
-		// 当错误检查通过，才检查响应时间
-		if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
-			if milliseconds > disableThreshold {
-				err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-				newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
-				shouldBanChannel = true
-			}
-		}
-
-		if newAPIError == nil {
-			summary.Succeeded++
-		} else {
-			summary.Failed++
-		}
-
-		// disable channel
-		if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-			processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-			summary.Disabled++
-		}
-
-		// enable channel
-		if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-			service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-			summary.Enabled++
-		}
-
-		channel.UpdateResponseTime(milliseconds)
-		if common.RequestInterval > 0 {
-			if ctx == nil {
-				time.Sleep(common.RequestInterval)
-			} else {
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
 				select {
 				case <-ctx.Done():
-					return summary
-				case <-time.After(common.RequestInterval):
+					return
+				case channel, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if ctx.Err() != nil {
+						return
+					}
+
+					result := channelTestSummary{}
+					if channel != nil && channel.Status != common.ChannelStatusManuallyDisabled {
+						result = run(ctx, channel)
+					}
+
+					results <- result
+
+					if common.RequestInterval > 0 {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(common.RequestInterval):
+						}
+					}
 				}
 			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, channel := range channels {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- channel:
+			}
+		}
+	}()
+
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	summary := channelTestSummary{}
+	processed := 0
+	for result := range results {
+		summary.Tested += result.Tested
+		summary.Succeeded += result.Succeeded
+		summary.Failed += result.Failed
+		summary.Disabled += result.Disabled
+		summary.Enabled += result.Enabled
+		processed++
+		if report != nil && ctx.Err() == nil {
+			report(processed, total)
 		}
 	}
-	if report != nil && (ctx == nil || ctx.Err() == nil) {
-		report(total, total) // mark complete only when the full set was tested
-	}
 	return summary
+}
+
+// performChannelTests runs channel health checks with the configured bounded
+// concurrency and honors cancellation when a system-task runner loses its
+// lease.
+func performChannelTests(ctx context.Context, channels []*model.Channel, testUserID int, allowDisable bool, concurrency int, report func(processed, total int)) channelTestSummary {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	disableThreshold := int64(common.ChannelDisableThreshold * 1000)
+	if disableThreshold == 0 {
+		disableThreshold = 10000000 // an impossible value
+	}
+	// Read and normalize shared request defaults before starting workers.
+	monitor := operation_setting.GetMonitorSetting()
+	options := channelTestOptions{
+		message:         monitor.ChannelTestMessage,
+		useChannelStyle: monitor.ChannelTestUseChannelStyle,
+	}
+	return runChannelTestWorkers(
+		ctx,
+		channels,
+		concurrency,
+		func(ctx context.Context, channel *model.Channel) channelTestSummary {
+			return testChannelForHealthCheck(ctx, channel, testUserID, allowDisable, disableThreshold, options)
+		},
+		report,
+	)
 }
 
 // runChannelTestTask runs one synchronous channel test cycle for the system task
@@ -1022,7 +1496,8 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 	}
 	selected := selectChannelsForAutomaticTest(channels, mode)
 	allowDisable := mode != operation_setting.ChannelTestModePassiveRecovery
-	summary := performChannelTests(ctx, selected, testUserID, allowDisable, report)
+	concurrency := operation_setting.GetMonitorSetting().ChannelTestConcurrency
+	summary := performChannelTests(ctx, selected, testUserID, allowDisable, concurrency, report)
 	if notify && (ctx == nil || ctx.Err() == nil) {
 		service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
 	}
@@ -1033,6 +1508,9 @@ func selectChannelsForAutomaticTest(channels []*model.Channel, mode string) []*m
 	selected := make([]*model.Channel, 0, len(channels))
 	for _, channel := range channels {
 		if channel.Status == common.ChannelStatusManuallyDisabled {
+			continue
+		}
+		if mode == operation_setting.ChannelTestModeAutoBanOnly && !channel.GetAutoBan() {
 			continue
 		}
 		if mode == operation_setting.ChannelTestModePassiveRecovery && channel.Status != common.ChannelStatusAutoDisabled {
@@ -1075,4 +1553,116 @@ func TestAllChannels(c *gin.Context) {
 			"status":  task.Status,
 		},
 	})
+}
+
+// QueueWarmupResult is the outcome of a single queue warm-up call. It carries
+// enough signal for the warmer's failure classifier without exposing internal
+// test plumbing.
+type QueueWarmupResult struct {
+	StatusCode int    // upstream HTTP status code (0 when the request never reached upstream)
+	IsTimeout  bool   // true when the call was canceled by its deadline
+	Err        error  // non-nil on request/conversion/parse failure
+	Message    string // trimmed upstream error message, if any
+}
+
+// applyTestRequestMaxTokens caps the max output tokens of a warm-up request so
+// a queue warmer does not generate an expensive upstream response. It supports
+// the request shapes the test builder can produce.
+func applyTestRequestMaxTokens(request dto.Request, maxTokens uint) {
+	if maxTokens == 0 {
+		return
+	}
+	switch r := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if r.MaxTokens == nil || *r.MaxTokens > maxTokens {
+			r.MaxTokens = &maxTokens
+		}
+	case *dto.OpenAIResponsesRequest:
+		if r.MaxOutputTokens == nil || *r.MaxOutputTokens > maxTokens {
+			r.MaxOutputTokens = &maxTokens
+		}
+	case *dto.ClaudeRequest:
+		if r.MaxTokens == nil || *r.MaxTokens > maxTokens {
+			r.MaxTokens = &maxTokens
+		}
+	case *dto.GeminiChatRequest:
+		if r.GenerationConfig.MaxOutputTokens == nil || *r.GenerationConfig.MaxOutputTokens > maxTokens {
+			r.GenerationConfig.MaxOutputTokens = &maxTokens
+		}
+	}
+}
+
+// sanitizeWarmupMessage strips sensitive tokens from an upstream error message
+// before it is surfaced through the queue status API. It reuses the channel
+// test preview redaction patterns so keys and bearer tokens never leak.
+func sanitizeWarmupMessage(msg string) string {
+	if msg == "" {
+		return msg
+	}
+	var responseValue any
+	if err := common.Unmarshal([]byte(msg), &responseValue); err == nil {
+		responseValue = redactChannelTestPreviewValue(responseValue)
+		if sanitized, marshalErr := common.Marshal(responseValue); marshalErr == nil {
+			msg = string(sanitized)
+		}
+	}
+	msg = channelTestPreviewSensitiveQueryPattern.ReplaceAllString(msg, `${1}[REDACTED]`)
+	msg = channelTestPreviewSensitiveJSONPattern.ReplaceAllString(msg, `${1}"[REDACTED]"`)
+	msg = channelTestPreviewSensitiveValuePattern.ReplaceAllString(msg, "[REDACTED]")
+	msg = channelTestPreviewBearerPattern.ReplaceAllString(msg, "Bearer [REDACTED]")
+	return strings.TrimSpace(msg)
+}
+
+// shouldUseCodexCompatibilityProfileForQueueWarmup enables the existing
+// channel-test profile only for the Codex compatibility channel. Legacy Codex
+// and all other channel types keep the queue warmer's previous behavior.
+func shouldUseCodexCompatibilityProfileForQueueWarmup(channel *model.Channel) bool {
+	return channel != nil && channel.Type == constant.ChannelTypeCodexCompatibility
+}
+
+// PerformChannelQueueWarmup sends a single minimal warm-up request to a channel
+// for the given model, reusing the channel-test call path. It skips consume
+// logging, response-time updates, and auto-ban evaluation: warming is an
+// internal keep-alive action, not a user billable event, and warm-up failures
+// are classified by the caller (the queue warmer) rather than triggering
+// channel auto-disable. The caller owns the context deadline.
+func PerformChannelQueueWarmup(ctx context.Context, channel *model.Channel, model string, endpointType string, message string, maxTokens *uint, isStream bool) QueueWarmupResult {
+	testUserID, err := resolveChannelTestUserID(nil)
+	if err != nil {
+		return QueueWarmupResult{Err: err}
+	}
+	options := channelTestOptions{
+		message:         message,
+		useChannelStyle: shouldUseCodexCompatibilityProfileForQueueWarmup(channel),
+		capturePreview:  false,
+		skipConsumeLog:  true,
+		maxTokens:       maxTokens,
+		// Warm-up calls reuse the channel's SystemPrompt as the upstream
+		// instructions so queue-holding requests carry the same Codex feature
+		// prompt as the in-dashboard channel test — one configuration entry.
+		instructions: channel.GetSetting().SystemPrompt,
+	}
+	result := testChannelWithOptions(ctx, channel, testUserID, model, endpointType, isStream, options)
+	statusCode := 0
+	msg := ""
+	if result.context != nil && result.context.Writer != nil {
+		statusCode = result.context.Writer.Status()
+	}
+	if result.newAPIError != nil {
+		statusCode = result.newAPIError.StatusCode
+		msg = sanitizeWarmupMessage(result.newAPIError.Error())
+	}
+	if result.localErr != nil && msg == "" {
+		msg = sanitizeWarmupMessage(result.localErr.Error())
+	}
+	isTimeout := false
+	if ctx.Err() != nil {
+		isTimeout = errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled)
+	}
+	return QueueWarmupResult{
+		StatusCode: statusCode,
+		IsTimeout:  isTimeout,
+		Err:        result.localErr,
+		Message:    msg,
+	}
 }

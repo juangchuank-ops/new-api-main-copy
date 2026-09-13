@@ -3,13 +3,22 @@ package service
 import (
 	"fmt"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+var channelAffinityStatsTestSequence atomic.Uint64
+
+func uniqueChannelAffinityStatsIdentity(t *testing.T) (string, string) {
+	t.Helper()
+	sequence := channelAffinityStatsTestSequence.Add(1)
+	return fmt.Sprintf("%s_rule_%d", t.Name(), sequence), fmt.Sprintf("%s_fp_%d", t.Name(), sequence)
+}
 
 func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string) *gin.Context {
 	rec := httptest.NewRecorder()
@@ -25,9 +34,8 @@ func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string)
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_ClaudeMode(t *testing.T) {
-	ruleName := fmt.Sprintf("rule_%s", t.Name())
+	ruleName, keyFP := uniqueChannelAffinityStatsIdentity(t)
 	usingGroup := "default"
-	keyFP := fmt.Sprintf("fp_%s", t.Name())
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	usage := &dto.Usage{
@@ -52,9 +60,8 @@ func TestObserveChannelAffinityUsageCacheByRelayFormat_ClaudeMode(t *testing.T) 
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_MixedMode(t *testing.T) {
-	ruleName := fmt.Sprintf("rule_%s", t.Name())
+	ruleName, keyFP := uniqueChannelAffinityStatsIdentity(t)
 	usingGroup := "default"
-	keyFP := fmt.Sprintf("fp_%s", t.Name())
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	openAIUsage := &dto.Usage{
@@ -82,9 +89,8 @@ func TestObserveChannelAffinityUsageCacheByRelayFormat_MixedMode(t *testing.T) {
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_UnsupportedModeKeepsEmpty(t *testing.T) {
-	ruleName := fmt.Sprintf("rule_%s", t.Name())
+	ruleName, keyFP := uniqueChannelAffinityStatsIdentity(t)
 	usingGroup := "default"
-	keyFP := fmt.Sprintf("fp_%s", t.Name())
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	usage := &dto.Usage{

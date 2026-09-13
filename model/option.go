@@ -1,11 +1,16 @@
 package model
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -25,6 +30,20 @@ func AllOption() ([]*Option, error) {
 	var err error
 	err = DB.Find(&options).Error
 	return options, err
+}
+
+// RegistrationCodeRequired reads the persisted switch so a newly enabled gate
+// takes effect on every application node before its next option-sync cycle.
+func RegistrationCodeRequired() (bool, error) {
+	option := Option{}
+	err := DB.Select("value").Where(&Option{Key: "RegistrationCodeEnabled"}).First(&option).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return option.Value == "true", nil
 }
 
 func InitOptionMap() {
@@ -47,14 +66,19 @@ func InitOptionMap() {
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["InvitationCodeEnabled"] = strconv.FormatBool(common.InvitationCodeEnabled)
 	common.OptionMap["InvitationCodePrice"] = strconv.FormatFloat(common.InvitationCodePrice, 'f', -1, 64)
+	common.OptionMap["RegistrationCodeEnabled"] = strconv.FormatBool(common.IsRegistrationCodeEnabled())
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
-	common.OptionMap["request_debug.raw_enabled"] = strconv.FormatBool(common.IsRequestDebugRawEnabled())
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
+	common.OptionMap["TaskPluginEnabled"] = strconv.FormatBool(constant.TaskPluginEnabled)
+	jsplugin.DefaultRegistry.SetEnabled(constant.TaskPluginEnabled)
+	common.OptionMap[setting.TaskPluginMarketplaceSourcesKey] = setting.TaskPluginMarketplaceSources2JsonString()
+	common.OptionMap[setting.TaskPluginDisabledFactoryKeysKey] = "[]"
+	jsplugin.DefaultRegistry.SetDisabledFactoryKeys(nil)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	common.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(common.EmailDomainRestrictionEnabled)
@@ -76,6 +100,7 @@ func InitOptionMap() {
 	common.OptionMap["SystemName"] = common.SystemName
 	common.OptionMap["Logo"] = common.Logo
 	common.OptionMap["ServerAddress"] = ""
+	common.OptionMap["TaskPublicAddress"] = system_setting.TaskPublicAddress
 	common.OptionMap["WorkerUrl"] = system_setting.WorkerUrl
 	common.OptionMap["WorkerValidKey"] = system_setting.WorkerValidKey
 	common.OptionMap["WorkerAllowHttpImageRequestEnabled"] = strconv.FormatBool(system_setting.WorkerAllowHttpImageRequestEnabled)
@@ -123,6 +148,7 @@ func InitOptionMap() {
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
 	common.OptionMap["DefaultUseAutoGroup"] = strconv.FormatBool(setting.DefaultUseAutoGroup)
+	common.OptionMap["MaxTokenAutoGroups"] = strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	common.OptionMap["PayMethods"] = operation_setting.PayMethods2JsonString()
 	common.OptionMap["GitHubClientId"] = ""
 	common.OptionMap["GitHubClientSecret"] = ""
@@ -142,6 +168,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRequestRateLimitDurationMinutes"] = strconv.Itoa(setting.ModelRequestRateLimitDurationMinutes)
 	common.OptionMap["ModelRequestRateLimitSuccessCount"] = strconv.Itoa(setting.ModelRequestRateLimitSuccessCount)
 	common.OptionMap["ModelRequestRateLimitGroup"] = setting.ModelRequestRateLimitGroup2JSONString()
+	common.OptionMap[setting.UserRequestRateLimitDefaultOptionKey] = strconv.Itoa(setting.UserRequestRateLimitDefault)
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
@@ -170,6 +197,7 @@ func InitOptionMap() {
 	common.OptionMap["DemoSiteEnabled"] = strconv.FormatBool(operation_setting.DemoSiteEnabled)
 	common.OptionMap["SelfUseModeEnabled"] = strconv.FormatBool(operation_setting.SelfUseModeEnabled)
 	common.OptionMap["ModelRequestRateLimitEnabled"] = strconv.FormatBool(setting.ModelRequestRateLimitEnabled)
+	common.OptionMap[setting.UserRequestRateLimitEnabledOptionKey] = strconv.FormatBool(setting.UserRequestRateLimitEnabled)
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
@@ -180,20 +208,19 @@ func InitOptionMap() {
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 	common.OptionMap["LoginProxyURL"] = ""
 	_, _ = setting.SetLoginProxyURL("")
-	common.OptionMap[setting.DefaultThemeOptionKey] = setting.DefaultThemeSettingsJSONString()
-
-	// AutoBan config (additive, ported from new-api-reference)
-	common.OptionMap["AutoBanConfig"] = setting.AutoBanConfig2JsonString()
-	common.OptionMap["RelayUserAgentBlacklistEnabled"] = strconv.FormatBool(false)
+	common.OptionMap["RelayUserAgentBlacklistEnabled"] = strconv.FormatBool(common.RelayUserAgentBlacklistEnabled)
 	common.OptionMap["RelayUserAgentBlacklist"] = ""
-	common.OptionMap["RelayUserAgentBlacklistAction"] = "403"
-	_, _ = common.SetRelayUserAgentBlacklistConfig(false, "", "403")
+	common.OptionMap["RelayUserAgentBlacklistAction"] = common.RelayUserAgentBlacklistAction403
+	_, _ = common.SetRelayUserAgentBlacklistConfig(common.RelayUserAgentBlacklistEnabled, "", common.OptionMap["RelayUserAgentBlacklistAction"])
+	common.OptionMap[setting.UpstreamInterceptionOptionKey] = setting.DefaultUpstreamInterceptionConfigJSON()
+	_, _ = setting.SetUpstreamInterceptionConfig(common.OptionMap[setting.UpstreamInterceptionOptionKey])
+	common.OptionMap[setting.DefaultThemeOptionKey] = setting.DefaultThemeSettingsJSONString()
+	common.OptionMap["AutoBanConfig"] = setting.AutoBanConfig2JsonString()
+	common.OptionMap["request_debug.raw_enabled"] = strconv.FormatBool(common.IsRequestDebugRawEnabled())
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
-	for k, v := range modelConfigs {
-		common.OptionMap[k] = v
-	}
+	maps.Copy(common.OptionMap, modelConfigs)
 
 	common.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
@@ -217,13 +244,100 @@ func SyncOptions(frequency int) {
 	}
 }
 
+func validateOptionValue(key string, value string) error {
+	if strings.HasPrefix(key, "checkin_setting.") {
+		return operation_setting.ValidateCheckinSettingOption(key, value)
+	}
+	if key == "AutoBanConfig" {
+		_, err := setting.ValidateAndNormalizeAutoBanConfigJSON(value)
+		return err
+	}
+	if key == "LoginProxyURL" {
+		_, err := setting.NormalizeLoginProxyURL(value)
+		return err
+	}
+	if key == "RelayUserAgentBlacklist" {
+		_, err := common.NormalizeRelayUserAgentBlacklist(value)
+		return err
+	}
+	if key == setting.UpstreamInterceptionOptionKey {
+		_, err := setting.ValidateAndNormalizeUpstreamInterceptionConfigJSON(value)
+		return err
+	}
+	if key == setting.DefaultThemeOptionKey {
+		_, err := setting.ValidateAndNormalizeDefaultThemeJSON(value)
+		return err
+	}
+	if key == operation_setting.ToolPriceOptionKey {
+		return operation_setting.ValidateToolPricesJSON(value)
+	}
+	if key == operation_setting.ChannelTestConcurrencyOptionKey {
+		return operation_setting.ValidateChannelTestConcurrency(value)
+	}
+	if key == "MaxTokenAutoGroups" {
+		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	return nil
+}
+
+func normalizeOptionValue(key string, value string) (string, error) {
+	if key == setting.UserRequestRateLimitDefaultOptionKey {
+		value = strings.TrimSpace(value)
+		return value, setting.ValidateUserRequestRateLimitDefault(value)
+	}
+	if key == operation_setting.ChannelTestMessageOptionKey {
+		normalized, err := operation_setting.NormalizeChannelTestMessage(value)
+		if err != nil {
+			return "", err
+		}
+		if normalized == "" {
+			return operation_setting.DefaultChannelTestMessage, nil
+		}
+		return normalized, nil
+	}
+	if key == operation_setting.ChannelTestUseChannelStyleOptionKey || key == operation_setting.ChannelTestShowResponsePreviewOptionKey {
+		parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return "", fmt.Errorf("invalid channel test boolean setting %q: %w", key, err)
+		}
+		return strconv.FormatBool(parsed), nil
+	}
+	if key == "request_debug.raw_enabled" {
+		parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+		// This safety switch is fail-closed: absent or malformed persisted values
+		// must never enable sensitive request diagnostics.
+		if err != nil {
+			return "false", nil
+		}
+		return strconv.FormatBool(parsed), nil
+	}
+	if key == "AutoBanConfig" {
+		return setting.ValidateAndNormalizeAutoBanConfigJSON(value)
+	}
+	if key == "LoginProxyURL" {
+		return setting.NormalizeLoginProxyURL(value)
+	}
+	if key == "RelayUserAgentBlacklist" {
+		return common.NormalizeRelayUserAgentBlacklist(value)
+	}
+	if key == setting.UpstreamInterceptionOptionKey {
+		return setting.ValidateAndNormalizeUpstreamInterceptionConfigJSON(value)
+	}
+	if key == setting.DefaultThemeOptionKey {
+		return setting.ValidateAndNormalizeDefaultThemeJSON(value)
+	}
+	return value, validateOptionValue(key, value)
+}
+
 func UpdateOption(key string, value string) error {
-	// Normalize/validate before persisting so the DB stores the canonical form.
-	normalizedValue, err := normalizeOptionValue(key, value)
+	if IsPricingOptionKey(key) {
+		return ErrPricingOptionRequiresPatch
+	}
+	var err error
+	value, err = normalizeOptionValue(key, value)
 	if err != nil {
 		return err
 	}
-	value = normalizedValue
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -248,16 +362,18 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
-	// Normalize/validate all values before they hit the DB so the persisted
-	// form is canonical. If any value fails validation the whole batch is
-	// rejected without touching the database.
+	for key := range values {
+		if IsPricingOptionKey(key) {
+			return ErrPricingOptionRequiresPatch
+		}
+	}
 	normalizedValues := make(map[string]string, len(values))
-	for k, v := range values {
-		normalized, err := normalizeOptionValue(k, v)
+	for key, value := range values {
+		normalizedValue, err := normalizeOptionValue(key, value)
 		if err != nil {
 			return err
 		}
-		normalizedValues[k] = normalized
+		normalizedValues[key] = normalizedValue
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range normalizedValues {
@@ -283,44 +399,22 @@ func UpdateOptionsBulk(values map[string]string) error {
 	return nil
 }
 
-// normalizeOptionValue validates and normalizes an option value before it is
-// published through updateOptionMap. For pricing option keys (which are JSON
-// maps managed by the pricing patch service) this is intentionally a no-op:
-// the service layer already validates scalar values and JSON structure.
-func normalizeOptionValue(key string, value string) (string, error) {
-	if key == "LoginProxyURL" {
-		return setting.NormalizeLoginProxyURL(value)
-	}
-	if key == setting.DefaultThemeOptionKey {
-		return setting.ValidateAndNormalizeDefaultThemeJSON(value)
-	}
-	return value, nil
-}
-
 func updateOptionMap(key string, value string) (err error) {
+	value, err = normalizeOptionValue(key, value)
+	if err != nil {
+		return err
+	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	common.OptionMap[key] = value
-
-	// Hot-update in-memory caches for additive setting modules that mirror
-	// new-api-reference. These are no-ops when the value is already canonical.
+	if key == "request_debug.raw_enabled" {
+		common.SetRequestDebugRawEnabled(value == "true")
+	}
 	if key == "LoginProxyURL" {
-		if _, err = setting.SetLoginProxyURL(value); err != nil {
+		_, err = setting.SetLoginProxyURL(value)
+		if err != nil {
 			return err
 		}
-		return nil
-	}
-	if key == setting.DefaultThemeOptionKey {
-		if err = setting.SetDefaultThemeSettings(value); err != nil {
-			return err
-		}
-		return nil
-	}
-	if key == "AutoBanConfig" {
-		if err = setting.UpdateAutoBanConfigByJSONString(value); err != nil {
-			return err
-		}
-		return nil
 	}
 	if key == "RelayUserAgentBlacklist" || key == "RelayUserAgentBlacklistEnabled" || key == "RelayUserAgentBlacklistAction" {
 		_, err = common.SetRelayUserAgentBlacklistConfig(
@@ -331,12 +425,23 @@ func updateOptionMap(key string, value string) (err error) {
 		if err != nil {
 			return err
 		}
-		return nil
+	}
+	if key == setting.UpstreamInterceptionOptionKey {
+		_, err = setting.SetUpstreamInterceptionConfig(value)
+		if err != nil {
+			return err
+		}
+	}
+	if key == setting.DefaultThemeOptionKey {
+		err = setting.SetDefaultThemeSettings(value)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
-	if handleConfigUpdate(key, value) {
-		return nil // 已由配置系统处理
+	if handled, configErr := handleConfigUpdate(key, value); handled {
+		return configErr // 已由配置系统处理
 	}
 
 	// 处理传统配置项...
@@ -376,6 +481,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.RegisterEnabled = boolValue
 		case "InvitationCodeEnabled":
 			common.InvitationCodeEnabled = boolValue
+		case "RegistrationCodeEnabled":
+			common.SetRegistrationCodeEnabled(boolValue)
 		case "EmailDomainRestrictionEnabled":
 			common.EmailDomainRestrictionEnabled = boolValue
 		case "EmailAliasRestrictionEnabled":
@@ -386,8 +493,6 @@ func updateOptionMap(key string, value string) (err error) {
 			common.AutomaticEnableChannelEnabled = boolValue
 		case "LogConsumeEnabled":
 			common.LogConsumeEnabled = boolValue
-		case "request_debug.raw_enabled":
-			common.SetRequestDebugRawEnabled(boolValue)
 		case "DisplayInCurrencyEnabled":
 			// 兼容旧字段：同步到新配置 general_setting.quota_display_type（运行时生效）
 			// true -> USD, false -> TOKENS
@@ -404,6 +509,9 @@ func updateOptionMap(key string, value string) (err error) {
 			common.DrawingEnabled = boolValue
 		case "TaskEnabled":
 			common.TaskEnabled = boolValue
+		case "TaskPluginEnabled":
+			constant.TaskPluginEnabled = boolValue
+			jsplugin.DefaultRegistry.SetEnabled(boolValue)
 		case "DataExportEnabled":
 			common.DataExportEnabled = boolValue
 		case "DefaultCollapseSidebar":
@@ -428,6 +536,8 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.CheckSensitiveOnPromptEnabled = boolValue
 		case "ModelRequestRateLimitEnabled":
 			setting.ModelRequestRateLimitEnabled = boolValue
+		case setting.UserRequestRateLimitEnabledOptionKey:
+			setting.UserRequestRateLimitEnabled = boolValue
 		case "StopOnSensitiveEnabled":
 			setting.StopOnSensitiveEnabled = boolValue
 		case "SMTPSSLEnabled":
@@ -444,11 +554,18 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.DefaultUseAutoGroup = boolValue
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
+		case "RelayUserAgentBlacklistEnabled":
+			common.RelayUserAgentBlacklistEnabled = boolValue
 		}
+	}
+	if key == setting.TaskPluginDisabledFactoryKeysKey {
+		jsplugin.DefaultRegistry.SetDisabledFactoryKeys(setting.ParseTaskPluginDisabledFactoryKeys(value))
 	}
 	switch key {
 	case "EmailDomainWhitelist":
 		common.EmailDomainWhitelist = strings.Split(value, ",")
+	case "AutoBanConfig":
+		err = setting.UpdateAutoBanConfigByJSONString(value)
 	case "SMTPServer":
 		common.SMTPServer = value
 	case "SMTPPort":
@@ -462,6 +579,8 @@ func updateOptionMap(key string, value string) (err error) {
 		common.SMTPToken = value
 	case "ServerAddress":
 		system_setting.ServerAddress = value
+	case "TaskPublicAddress":
+		system_setting.TaskPublicAddress = value
 	case "WorkerUrl":
 		system_setting.WorkerUrl = value
 	case "WorkerValidKey":
@@ -472,6 +591,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = setting.UpdateChatsByJsonString(value)
 	case "AutoGroups":
 		err = setting.UpdateAutoGroupsByJsonString(value)
+	case "MaxTokenAutoGroups":
+		err = setting.UpdateMaxTokenAutoGroups(value)
 	case "CustomCallbackAddress":
 		operation_setting.CustomCallbackAddress = value
 	case "EpayId":
@@ -598,6 +719,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.ModelRequestRateLimitSuccessCount, _ = strconv.Atoi(value)
 	case "ModelRequestRateLimitGroup":
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
+	case setting.UserRequestRateLimitDefaultOptionKey:
+		setting.UserRequestRateLimitDefault, _ = strconv.Atoi(value)
 	case "RetryTimes":
 		common.RetryTimes, _ = strconv.Atoi(value)
 	case "DataExportInterval":
@@ -658,11 +781,16 @@ func updateOptionMap(key string, value string) (err error) {
 	return err
 }
 
-// handleConfigUpdate 处理分层配置更新，返回是否已处理
-func handleConfigUpdate(key, value string) bool {
+// handleConfigUpdate 处理分层配置更新，返回是否已处理及配置更新错误
+func handleConfigUpdate(key, value string) (bool, error) {
+	if key == operation_setting.ToolPriceOptionKey {
+		operation_setting.LoadToolPricesFromJSONString(value)
+		return true, nil
+	}
+
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {
-		return false // 不是分层配置
+		return false, nil // 不是分层配置
 	}
 
 	configName := parts[0]
@@ -671,14 +799,16 @@ func handleConfigUpdate(key, value string) bool {
 	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
 	if cfg == nil {
-		return false // 未注册的配置
+		return false, nil // 未注册的配置
 	}
 
 	// 更新配置
 	configMap := map[string]string{
 		configKey: value,
 	}
-	config.UpdateConfigFromMap(cfg, configMap)
+	if err := config.UpdateConfigFromMap(cfg, configMap); err != nil {
+		return true, err
+	}
 
 	// 特定配置的后处理
 	if configName == "performance_setting" {
@@ -692,5 +822,5 @@ func handleConfigUpdate(key, value string) bool {
 		system_setting.UpdateAndSyncTheme()
 	}
 
-	return true // 已处理
+	return true, nil // 已处理
 }

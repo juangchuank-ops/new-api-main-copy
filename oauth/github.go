@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -52,8 +51,6 @@ func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string, c *gin.
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
 
-	logger.LogDebug(ctx, "[OAuth-GitHub] ExchangeToken: code=%s...", code[:min(len(code), 10)])
-
 	values := map[string]string{
 		"client_id":     common.GitHubClientId,
 		"client_secret": common.GitHubClientSecret,
@@ -71,10 +68,9 @@ func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string, c *gin.
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(20 * time.Second)
+	client, err := GetLoginHTTPClient(20 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-GitHub] ExchangeToken client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "GitHub"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -115,10 +111,9 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*O
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
 
-	client, err := service.GetLoginHTTPClient(20 * time.Second)
+	client, err := GetLoginHTTPClient(20 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-GitHub] GetUserInfo client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "GitHub"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -182,4 +177,9 @@ func (p *GitHubProvider) SetProviderUserID(user *model.User, providerUserID stri
 
 func (p *GitHubProvider) GetProviderPrefix() string {
 	return "github_"
+}
+
+// ProviderUserIDColumn returns the users-table column storing this provider's user ID.
+func (p *GitHubProvider) ProviderUserIDColumn() string {
+	return "github_id"
 }

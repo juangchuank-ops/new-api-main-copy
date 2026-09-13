@@ -33,7 +33,7 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	require.NoError(t, Init(db))
 	require.NoError(t, Init(db))
 
-	// root is a superuser role and permission_admin has no baseline grants, so only the
+	// root is a superuser role and is granted everything implicitly, so only the
 	// admin baseline is written as explicit policy rows.
 	var count int64
 	require.NoError(t, db.Model(&model.CasbinRule{}).Count(&count).Error)
@@ -41,10 +41,9 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 
 	var roles []model.AuthzRole
 	require.NoError(t, db.Order("sort asc").Find(&roles).Error)
-	require.Len(t, roles, 3)
+	require.Len(t, roles, 2)
 	assert.Equal(t, BuiltInRoleRoot, roles[0].Key)
-	assert.Equal(t, BuiltInRolePermissionAdmin, roles[1].Key)
-	assert.Equal(t, BuiltInRoleAdmin, roles[2].Key)
+	assert.Equal(t, BuiltInRoleAdmin, roles[1].Key)
 
 	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelRead))
@@ -106,6 +105,10 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionSensitiveWrite: true,
 			ActionSecretView:     false,
 		},
+		ResourceAudit: {ActionRead: false},
+		ResourceTaskPlugin: {
+			ActionBind: false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -133,6 +136,10 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionWrite:          true,
 			ActionSensitiveWrite: false,
 			ActionSecretView:     false,
+		},
+		ResourceAudit: {ActionRead: false},
+		ResourceTaskPlugin: {
+			ActionBind: false,
 		},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
@@ -227,4 +234,40 @@ func TestCapabilitiesUseCatalogShape(t *testing.T) {
 	assert.True(t, capabilities[ResourceChannel][ActionWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSensitiveWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSecretView])
+	assert.False(t, capabilities[ResourceTaskPlugin][ActionBind])
+}
+
+func TestTaskPluginBindIsRootOnlyUntilGranted(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	var bindAction *ActionDefinition
+	for _, resource := range Catalog() {
+		if resource.Resource != ResourceTaskPlugin {
+			continue
+		}
+		assert.Equal(t, "Task Plugin", resource.LabelKey)
+		for i := range resource.Actions {
+			if resource.Actions[i].Action == ActionBind {
+				bindAction = &resource.Actions[i]
+			}
+		}
+	}
+	require.NotNil(t, bindAction)
+	assert.Equal(t, "Bind task plugins", bindAction.LabelKey)
+	assert.Equal(t, "List registered task plugins and bind them when creating or editing task plugin channels.", bindAction.DescriptionKey)
+	assert.Empty(t, bindAction.DefaultRoles)
+
+	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+	assert.True(t, Can(1, common.RoleRootUser, TaskPluginBind))
+
+	enforcer := currentEnforcer()
+	require.NotNil(t, enforcer)
+	_, err := enforcer.AddPolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
+	require.NoError(t, err)
+	assert.True(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+
+	_, err = enforcer.RemovePolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
+	require.NoError(t, err)
+	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
 }

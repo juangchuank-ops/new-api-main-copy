@@ -20,6 +20,10 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Button, Form } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  isFloatingWindowSupported,
+  openFloatingChannelEditor,
+} from '../../floating-window';
 
 const ChannelsFilters = ({
   setEditingChannel,
@@ -52,6 +56,24 @@ const ChannelsFilters = ({
           }}
         >
           {t('添加渠道')}
+        </Button>
+
+        <Button
+          size='small'
+          theme='borderless'
+          className='w-full md:w-auto'
+          onClick={() => {
+            if (!isFloatingWindowSupported()) {
+              setEditingChannel({
+                id: undefined,
+              });
+              setShowEdit(true);
+              return;
+            }
+            openFloatingChannelEditor({ mode: 'create' });
+          }}
+        >
+          {t('在新窗口打开')}
         </Button>
 
         <Button

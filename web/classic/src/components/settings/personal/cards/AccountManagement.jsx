@@ -54,6 +54,7 @@ import {
   getOAuthProviderIcon,
 } from '../../../../helpers';
 import TwoFASetting from '../components/TwoFASetting';
+import LoginSessionsCard from '../components/LoginSessionsCard';
 
 const AccountManagement = ({
   t,
@@ -192,7 +193,7 @@ const AccountManagement = ({
 
   // Handle bind custom OAuth
   const handleBindCustomOAuth = (provider) => {
-    onCustomOAuthClicked(provider);
+    onCustomOAuthClicked(provider, { intent: 'bind' });
   };
 
   // Check if custom OAuth provider is bound
@@ -398,7 +399,9 @@ const AccountManagement = ({
                       theme='outline'
                       size='small'
                       onClick={() =>
-                        onGitHubOAuthClicked(status.github_client_id)
+                        onGitHubOAuthClicked(status.github_client_id, {
+                          intent: 'bind',
+                        })
                       }
                       disabled={
                         isBound(userState.user?.github_id) ||
@@ -439,7 +442,9 @@ const AccountManagement = ({
                       theme='outline'
                       size='small'
                       onClick={() =>
-                        onDiscordOAuthClicked(status.discord_client_id)
+                        onDiscordOAuthClicked(status.discord_client_id, {
+                          intent: 'bind',
+                        })
                       }
                       disabled={
                         isBound(userState.user?.discord_id) ||
@@ -480,7 +485,9 @@ const AccountManagement = ({
                       theme='outline'
                       size='small'
                       onClick={() =>
-                        onGoogleOAuthClicked(status.google_client_id)
+                        onGoogleOAuthClicked(status.google_client_id, {
+                          intent: 'bind',
+                        })
                       }
                       disabled={
                         isBound(userState.user?.google_id) ||
@@ -524,6 +531,8 @@ const AccountManagement = ({
                         onOIDCClicked(
                           status.oidc_authorization_endpoint,
                           status.oidc_client_id,
+                          false,
+                          { intent: 'bind' },
                         )
                       }
                       disabled={
@@ -639,7 +648,9 @@ const AccountManagement = ({
                       theme='outline'
                       size='small'
                       onClick={() =>
-                        onLinuxDOOAuthClicked(status.linuxdo_client_id)
+                        onLinuxDOOAuthClicked(status.linuxdo_client_id, {
+                          intent: 'bind',
+                        })
                       }
                       disabled={
                         isBound(userState.user?.linux_do_id) ||
@@ -866,6 +877,9 @@ const AccountManagement = ({
 
                 {/* 两步验证设置 */}
                 <TwoFASetting t={t} />
+
+                {/* 登录会话 */}
+                <LoginSessionsCard t={t} />
 
                 {/* 危险区域 */}
                 <Card className='!rounded-xl w-full'>

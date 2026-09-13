@@ -17,6 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+// 任务插件渠道：绑定需要 task_plugin.bind 权限（后端 authz.TaskPluginBind），
+// 前端据此在渠道类型下拉里做门控，普通管理员默认不可选。
+export const CHANNEL_TYPE_TASK_PLUGIN = 65;
+
 export const CHANNEL_OPTIONS = [
   { value: 1, color: 'green', label: 'OpenAI' },
   {
@@ -189,11 +193,54 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'ChatGPT Subscription (Codex)',
   },
+  {
+    value: 58,
+    color: 'violet',
+    label: 'Advanced Custom',
+  },
+  {
+    value: 59,
+    color: 'light-blue',
+    label: 'Sub2API',
+  },
+  {
+    value: 60,
+    color: 'purple',
+    label: 'New API',
+  },
+  {
+    value: 61,
+    color: 'blue',
+    label: 'Codex',
+  },
+  {
+    value: 62,
+    color: 'indigo',
+    label: 'Claude Code',
+  },
+  {
+    value: 63,
+    color: 'teal',
+    label: 'CodeBuddy',
+  },
+  {
+    value: 64,
+    color: 'grey',
+    label: 'Vercel AI Gateway',
+  },
+  {
+    value: CHANNEL_TYPE_TASK_PLUGIN,
+    color: 'blue',
+    label: 'Task Plugin',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.
+// Keep in sync with web/default and the relay adaptors that expose a model
+// listing endpoint (57–64 are the compatibility/gateway channels).
 export const MODEL_FETCHABLE_CHANNEL_TYPES = new Set([
-  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
+  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 57, 58,
+  59, 60, 61, 62, 63, 64,
 ]);
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

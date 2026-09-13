@@ -81,21 +81,25 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeSub2API
 	case constant.ChannelTypeNewAPI:
 		apiType = constant.APITypeNewAPI
+	case constant.ChannelTypeVercel:
+		apiType = constant.APITypeVercel
 	case constant.ChannelTypeCodexCompatibility, constant.ChannelTypeCodeBuddy:
 		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeClaudeCode:
 		apiType = constant.APITypeAnthropic
 	}
 	if apiType == -1 {
+		// Task plugin channels are served by the task relay and must never
+		// fall back to the OpenAI adaptor.
+		if channelType == constant.ChannelTypeTaskPlugin {
+			return -1, false
+		}
 		return constant.APITypeOpenAI, false
 	}
 	return apiType, true
 }
 
-// IsResponsesCompactAPIType reports whether the given apiType supports the
-// /v1/responses/compact relay mode (OpenAI Responses with compaction).
-// Mirrors new-api-reference/common/api_type.go.
-func IsResponsesCompactAPIType(apiType int) bool {
+func SupportsResponsesCompact(channelType, apiType int) bool {
 	switch apiType {
 	case constant.APITypeOpenAI,
 		constant.APITypeCodex,

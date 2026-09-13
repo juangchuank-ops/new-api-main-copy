@@ -12,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -42,7 +41,7 @@ type oidcUser struct {
 }
 
 func (p *OIDCProvider) GetName() string {
-	return "OIDC"
+	return system_setting.GetOIDCSettings().GetEffectiveDisplayName()
 }
 
 func (p *OIDCProvider) IsEnabled() bool {
@@ -53,8 +52,6 @@ func (p *OIDCProvider) ExchangeToken(ctx context.Context, code string, c *gin.Co
 	if code == "" {
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
-
-	logger.LogDebug(ctx, "[OAuth-OIDC] ExchangeToken: code=%s...", code[:min(len(code), 10)])
 
 	settings := system_setting.GetOIDCSettings()
 	redirectUri := fmt.Sprintf("%s/oauth/oidc", system_setting.ServerAddress)
@@ -74,10 +71,9 @@ func (p *OIDCProvider) ExchangeToken(ctx context.Context, code string, c *gin.Co
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-OIDC] ExchangeToken client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "OIDC"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -123,10 +119,9 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAu
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	client, err := service.GetLoginHTTPClient(5 * time.Second)
+	client, err := GetLoginHTTPClient(5 * time.Second)
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("[OAuth-OIDC] GetUserInfo client error: %s", err.Error()))
-		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "OIDC"}, err.Error())
+		return nil, err
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -180,4 +175,9 @@ func (p *OIDCProvider) SetProviderUserID(user *model.User, providerUserID string
 
 func (p *OIDCProvider) GetProviderPrefix() string {
 	return "oidc_"
+}
+
+// ProviderUserIDColumn returns the users-table column storing this provider's user ID.
+func (p *OIDCProvider) ProviderUserIDColumn() string {
+	return "oidc_id"
 }

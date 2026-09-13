@@ -8,11 +8,15 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,12 +24,34 @@ import (
 type Adaptor struct {
 }
 
-func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
-	//TODO implement me
-	return nil, errors.New("not implemented")
+func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
+	if request == nil {
+		return nil, errors.New("request is nil")
+	}
+	result, err := service.ConvertRequest(c, info, types.RelayFormatClaude, request)
+	if err != nil {
+		return nil, err
+	}
+	return result.Value, nil
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if request.MaxTokens != nil && *request.MaxTokens == 0 {
+		request.MaxTokens = nil
+	}
+	if err := relayconvert.ApplyClaudeThinkingModel(request, info); err != nil {
+		return nil, err
+	}
+	if request.MaxTokens == nil {
+		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
+		request.MaxTokens = &defaultMaxTokens
+	}
+	// ApplyClaudeThinkingModel no longer rewrites request.Model. Do not write
+	// a still-suffixed name back over the entry-normalized UpstreamModelName
+	// (AWS/Vertex look up getAwsModelID / claudeModelMap from that field).
+	if info.UpstreamModelName == "" {
+		info.UpstreamModelName = request.Model
+	}
 	return request, nil
 }
 
@@ -43,10 +69,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	requestURL := fmt.Sprintf("%s/v1/messages", info.ChannelBaseUrl)
-	if strings.Split(info.RequestURLPath, "?")[0] == "/v1/messages/count_tokens" {
-		requestURL += "/count_tokens"
+	if info.RelayMode == relayconstant.RelayModeCountTokens {
+		// count_tokens 是标准端点，不带 beta query。
+		return fmt.Sprintf("%s/v1/messages/count_tokens", info.ChannelBaseUrl), nil
 	}
+	requestURL := fmt.Sprintf("%s/v1/messages", info.ChannelBaseUrl)
 	if !shouldAppendClaudeBetaQuery(info) {
 		return requestURL, nil
 	}
@@ -71,6 +98,10 @@ func shouldAppendClaudeBetaQuery(info *relaycommon.RelayInfo) bool {
 	if info.ChannelOtherSettings.ClaudeBetaQuery {
 		return true
 	}
+	// Claude Code 兼容渠道模拟真实客户端，推理请求默认走 /v1/messages?beta=true。
+	if info.ChannelType == constant.ChannelTypeClaudeCode {
+		return true
+	}
 	return false
 }
 
@@ -91,6 +122,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		anthropicVersion = "2023-06-01"
 	}
 	req.Set("anthropic-version", anthropicVersion)
+	// Claude Code 兼容渠道：透传客户端携带的 x-stainless-* 标识头（与真实客户端一致）。
+	// 兼容身份头（ApplyClaudeCodeCompatibilityHeaders）不再删除它们。
+	if info != nil && info.ChannelType == constant.ChannelTypeClaudeCode {
+		for name, values := range c.Request.Header {
+			if strings.HasPrefix(strings.ToLower(name), "x-stainless-") {
+				for _, v := range values {
+					req.Add(name, v)
+				}
+			}
+		}
+	}
 	CommonClaudeHeadersOperation(c, req, info)
 	return nil
 }
@@ -99,7 +141,11 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	return RequestOpenAI2ClaudeMessage(c, *request)
+	result, err := service.ConvertRequest(c, info, types.RelayFormatClaude, request)
+	if err != nil {
+		return nil, err
+	}
+	return result.Value, nil
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -112,8 +158,15 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	result, err := service.ConvertRequest(c, info, types.RelayFormatClaude, &request)
+	if err != nil {
+		return nil, err
+	}
+	claudeRequest, ok := result.Value.(*dto.ClaudeRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected Anthropic Messages request, got %T", result.Value)
+	}
+	return claudeRequest, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -122,6 +175,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	info.FinalRequestRelayFormat = types.RelayFormatClaude
+	if info.RelayFormat == types.RelayFormatOpenAIResponses && info.IsStream {
+		return ClaudeResponsesStreamHandler(c, resp, info)
+	}
 	if info.IsStream {
 		return ClaudeStreamHandler(c, resp, info)
 	} else {

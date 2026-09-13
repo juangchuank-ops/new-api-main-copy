@@ -15,22 +15,23 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
+	"github.com/QuantumNous/new-api/relay/channel/openrouter"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	//"github.com/QuantumNous/new-api/relay/channel/minimax"
-	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	"github.com/QuantumNous/new-api/relay/channel/xinference"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/common_handler"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	kitreasoning "github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
@@ -42,10 +43,13 @@ type Adaptor struct {
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
-	// 使用 service.GeminiToOpenAIRequest 转换请求格式
-	openaiRequest, err := service.GeminiToOpenAIRequest(request, info)
+	result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 	if err != nil {
 		return nil, err
+	}
+	openaiRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
 	}
 	return a.ConvertOpenAIRequest(c, info, openaiRequest)
 }
@@ -61,9 +65,13 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	//		println(fmt.Sprintf("failed to save request body to file: %v", err))
 	//	}
 	//}
-	aiRequest, err := service.ClaudeToOpenAIRequest(*request, info)
+	result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 	if err != nil {
 		return nil, err
+	}
+	aiRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
 	}
 	//if common.DebugEnabled {
 	//	println(fmt.Sprintf("convert claude to openai request result: %s", common.GetJsonString(aiRequest)))
@@ -96,13 +104,21 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	// CodeBuddy 上游只暴露 OpenAI chat/completions 协议：Responses 与
+	// ResponsesCompact（长上下文压缩）请求都必须折叠到 /v1/chat/completions，
+	// 否则会打到上游不存在的路径（如 /v1/responses/compact）并被拒绝。
+	if info.ChannelType == constant.ChannelTypeCodeBuddy &&
+		(info.RelayMode == relayconstant.RelayModeResponses ||
+			info.RelayMode == relayconstant.RelayModeResponsesCompact) {
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, "/v1/chat/completions", info.ChannelType), nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
-		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
-			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
+		if after, ok := strings.CutPrefix(info.ChannelBaseUrl, "https://"); ok {
+			baseUrl := after
 			baseUrl = "wss://" + baseUrl
 			info.ChannelBaseUrl = baseUrl
-		} else if strings.HasPrefix(info.ChannelBaseUrl, "http://") {
-			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "http://")
+		} else if after, ok := strings.CutPrefix(info.ChannelBaseUrl, "http://"); ok {
+			baseUrl := after
 			baseUrl = "ws://" + baseUrl
 			info.ChannelBaseUrl = baseUrl
 		}
@@ -157,6 +173,45 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			requestURL = fmt.Sprintf("/openai/realtime?deployment=%s&api-version=%s", model_, apiVersion)
 		}
 		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ChannelType), nil
+	case constant.ChannelTypeCodexCompatibility:
+		baseURL := strings.TrimRight(info.ChannelBaseUrl, "/")
+		// Codex 兼容渠道的 base URL 存在多种形态，按端点语义逐级解析：
+		//   - base 已含完整 compact 端点路径（如 /codex/responses/compact）→ 透传
+		//   - base 已含完整 responses 端点路径（/v1/responses、/codex/responses、
+		//     /backend-api/codex/responses）→ 透传，compact 时追加 /compact
+		//   - base 以 /codex 结尾（旧形态）→ 补 /responses
+		//   - base 以 /backend-api 结尾（chatgpt.com 订阅形态）→ 补 /codex/responses
+		//   - 其他（纯 host 或 /v1）→ 拼标准 OpenAI Responses 端点 /v1/responses
+		switch {
+		case strings.HasSuffix(baseURL, "/responses/compact"):
+			return baseURL, nil
+		case strings.HasSuffix(baseURL, "/codex/responses"),
+			strings.HasSuffix(baseURL, "/backend-api/codex/responses"),
+			strings.HasSuffix(baseURL, "/v1/responses"):
+			if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+				return baseURL + "/compact", nil
+			}
+			return baseURL, nil
+		case strings.HasSuffix(baseURL, "/codex"):
+			if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+				return baseURL + "/responses/compact", nil
+			}
+			return baseURL + "/responses", nil
+		case strings.HasSuffix(baseURL, "/backend-api"):
+			if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+				return baseURL + "/codex/responses/compact", nil
+			}
+			return baseURL + "/codex/responses", nil
+		default:
+			path := "/v1/responses"
+			if strings.HasSuffix(baseURL, "/v1") {
+				path = "/responses"
+			}
+			if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+				path += "/compact"
+			}
+			return baseURL + path, nil
+		}
 	//case constant.ChannelTypeMiniMax:
 	//	return minimax.GetRequestURL(info)
 	case constant.ChannelTypeCustom:
@@ -164,9 +219,6 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
-		if info.ChannelOtherSettings.FullRequestURL && info.ChannelBaseUrl != "" {
-			return info.ChannelBaseUrl, nil
-		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -197,19 +249,26 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		}
 	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
+		// OpenAI 已下线 Realtime Beta API,GA 模型收到 beta 标识会以 beta_api_shape_disabled 拒绝;
+		// 仅对遗留 preview 模型保留 beta 标识
+		legacyRealtimeBeta := strings.Contains(info.UpstreamModelName, "-realtime-preview")
 		swp := c.Request.Header.Get("Sec-WebSocket-Protocol")
 		if swp != "" {
 			items := []string{
 				"realtime",
 				"openai-insecure-api-key." + info.ApiKey,
-				"openai-beta.realtime-v1",
+			}
+			if legacyRealtimeBeta {
+				items = append(items, "openai-beta.realtime-v1")
 			}
 			header.Set("Sec-WebSocket-Protocol", strings.Join(items, ","))
 			//req.Header.Set("Sec-WebSocket-Key", c.Request.Header.Get("Sec-WebSocket-Key"))
 			//req.Header.Set("Sec-Websocket-Extensions", c.Request.Header.Get("Sec-Websocket-Extensions"))
 			//req.Header.Set("Sec-Websocket-Version", c.Request.Header.Get("Sec-Websocket-Version"))
 		} else {
-			header.Set("openai-beta", "realtime=v1")
+			if legacyRealtimeBeta {
+				header.Set("openai-beta", "realtime=v1")
+			}
 			if !hasAuthOverride {
 				header.Set("Authorization", "Bearer "+info.ApiKey)
 			}
@@ -217,6 +276,41 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	} else {
 		if !hasAuthOverride {
 			header.Set("Authorization", "Bearer "+info.ApiKey)
+		}
+	}
+	if info.ShouldUseChannelTestStyle() {
+		if info.ChannelType == constant.ChannelTypeCodeBuddy {
+			conversationID := channel.ResolveCodeBuddyConversationID(c.Request.Header, info.Request)
+			channel.ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, *header, info.ApiKey, info.IsStream, conversationID, info.ChannelOtherSettings.ClientIdentity)
+		} else {
+			channel.ApplyCompatibilityHeadersWithClientIdentity(info.ChannelType, *header, info.ApiKey, info.IsStream, "", info.ChannelOtherSettings.ClientIdentity)
+		}
+	}
+	if info.ShouldUseCodexCompatibilityTestProfile() {
+		channel.ApplyCodexCompatibilityTestHeaders(*header, info.EnsureCodexCompatibilityTestIdentity())
+		if isCodexResponsesLiteModel(codexCompatibilityProfileModel(info)) {
+			header.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+		} else {
+			deleteHeaderCaseInsensitive(*header, "X-OpenAI-Internal-Codex-Responses-Lite")
+		}
+	}
+	// Codex 兼容渠道：透传客户端携带的 Codex 会话类 header（多轮续接 / 粘性路由 / 安装标识等），
+	// 与真实 Codex CLI 行为对齐。仅复制客户端显式携带的值，不覆盖已由兼容身份设置的固定头。
+	if info.ChannelType == constant.ChannelTypeCodexCompatibility && !info.IsChannelTest {
+		for _, name := range []string{
+			"session-id",
+			"thread-id",
+			"x-codex-turn-state",
+			"x-codex-beta-features",
+			"x-codex-installation-id",
+			"x-codex-turn-metadata",
+			"x-codex-parent-thread-id",
+			"x-codex-window-id",
+			"x-openai-subagent",
+		} {
+			if v := c.Request.Header.Get(name); v != "" && header.Get(name) == "" {
+				header.Set(name, v)
+			}
 		}
 	}
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
@@ -234,126 +328,187 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure &&
+	if info.ChannelType != constant.ChannelTypeOpenAI &&
+		info.ChannelType != constant.ChannelTypeAzure &&
 		info.ChannelType != constant.ChannelTypeCodeBuddy {
 		request.StreamOptions = nil
 	}
 	if info.ChannelType == constant.ChannelTypeCodeBuddy && info.ShouldUseChannelTestStyle() {
 		channel.ApplyCodeBuddyRequestProfile(request)
 	}
+	// Nested reasoning is an OpenRouter-compatible input dialect and needs
+	// projection even without a protocol conversion hop. Native top-level
+	// reasoning_effort stays untouched unless a modifier or conversion applies.
+	// OpenRouter retains its own dialect normalization below.
+	preserveSuffix := model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) || model_setting.ShouldPreserveThinkingSuffix(info.UpstreamModelName)
+	upstreamEffort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.UpstreamModelName)
+	originEffort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.OriginModelName)
+	renderReasoning := len(request.Reasoning) > 0 || len(info.RequestConversionChain) > 1 || request.ReasoningConversion != nil || info.ReasoningState() != nil ||
+		!preserveSuffix && (upstreamEffort != "" || originEffort != "")
+	if info.ChannelType != constant.ChannelTypeOpenRouter && !renderReasoning {
+		info.SetReasoningEffort(request.ReasoningEffort)
+	}
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
+		initialIntent, err := kitreasoning.FromOpenAIChat(request)
+		if err != nil {
+			return nil, kitreasoning.AsClientError(err)
+		}
+		if request.THINKING != nil && strings.HasPrefix(info.UpstreamModelName, "anthropic") {
+			var thinking dto.Thinking
+			if err := common.Unmarshal(request.THINKING, &thinking); err != nil {
+				return nil, fmt.Errorf("error Unmarshal thinking: %w", err)
+			}
+			legacyIntent, err := kitreasoning.FromClaude(&dto.ClaudeRequest{Thinking: &thinking})
+			if err != nil {
+				return nil, kitreasoning.AsClientError(err)
+			}
+			initialIntent, err = kitreasoning.MergeExplicit(initialIntent, legacyIntent, request.Model)
+			if err != nil {
+				return nil, kitreasoning.AsClientError(err)
+			}
+			request.THINKING = nil
+		}
 		if len(request.Usage) == 0 {
 			request.Usage = json.RawMessage(`{"include":true}`)
 		}
-		// 适配 OpenRouter 的 thinking 后缀
-		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) &&
-			strings.HasSuffix(info.UpstreamModelName, "-thinking") {
-			info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-thinking")
-			request.Model = info.UpstreamModelName
-			if len(request.Reasoning) == 0 {
-				reasoning := map[string]any{
-					"enabled": true,
-				}
-				if request.ReasoningEffort != "" && request.ReasoningEffort != "none" {
-					reasoning["effort"] = request.ReasoningEffort
-				}
-				marshal, err := common.Marshal(reasoning)
-				if err != nil {
-					return nil, fmt.Errorf("error marshalling reasoning: %w", err)
-				}
-				request.Reasoning = marshal
+		// 合并 effort 尾巴产生的意图
+		mergeEffortSuffix := func(modelName string) error {
+			rawEffort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(modelName)
+			if rawEffort == "" {
+				return nil
 			}
-			// 清空多余的ReasoningEffort
-			request.ReasoningEffort = ""
-		} else {
-			if len(request.Reasoning) == 0 {
-				// 适配 OpenAI 的 ReasoningEffort 格式
-				if request.ReasoningEffort != "" {
-					reasoning := map[string]any{
-						"enabled": true,
-					}
-					if request.ReasoningEffort != "none" {
-						reasoning["effort"] = request.ReasoningEffort
-						marshal, err := common.Marshal(reasoning)
-						if err != nil {
-							return nil, fmt.Errorf("error marshalling reasoning: %w", err)
-						}
-						request.Reasoning = marshal
-					}
-				}
+			effort, err := kitreasoning.ParseEffort(rawEffort)
+			if err != nil {
+				return err
 			}
-			request.ReasoningEffort = ""
+			mode := kitreasoning.ModeEnabled
+			if effort == kitreasoning.EffortNone {
+				mode = kitreasoning.ModeDisabled
+			}
+			initialIntent, err = kitreasoning.MergeExplicitAndSuffix(initialIntent, kitreasoning.Intent{Mode: mode, Effort: effort, Source: kitreasoning.SourceSuffix}, modelName)
+			return err
 		}
-
-		// https://docs.anthropic.com/en/api/openai-sdk#extended-thinking-support
-		// 没有做排除3.5Haiku等，要出问题再加吧，最佳兼容性（不是
-		if request.THINKING != nil && strings.HasPrefix(info.UpstreamModelName, "anthropic") {
-			var thinking dto.Thinking // Claude标准Thinking格式
-			if err := json.Unmarshal(request.THINKING, &thinking); err != nil {
-				return nil, fmt.Errorf("error Unmarshal thinking: %w", err)
+		if !preserveSuffix {
+			if err := mergeEffortSuffix(info.UpstreamModelName); err != nil {
+				return nil, kitreasoning.AsClientError(err)
 			}
-
-			// 只有当 thinking.Type 是 "enabled" 时才处理
-			if thinking.Type == "enabled" {
-				// 检查 BudgetTokens 是否为 nil
-				if thinking.BudgetTokens == nil {
-					return nil, fmt.Errorf("BudgetTokens is nil when thinking is enabled")
-				}
-
-				reasoning := openrouter.RequestReasoning{
-					Enabled:   true,
-					MaxTokens: *thinking.BudgetTokens,
-				}
-
-				marshal, err := common.Marshal(reasoning)
-				if err != nil {
-					return nil, fmt.Errorf("error marshalling reasoning: %w", err)
-				}
-
-				request.Reasoning = marshal
+			if _, baseModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.UpstreamModelName); baseModel != info.UpstreamModelName {
+				info.UpstreamModelName = baseModel
+				request.Model = baseModel
 			}
-
-			// 清空 THINKING
-			request.THINKING = nil
+			if info.OriginModelName != info.UpstreamModelName {
+				if err := mergeEffortSuffix(info.OriginModelName); err != nil {
+					return nil, kitreasoning.AsClientError(err)
+				}
+			}
 		}
+		if !initialIntent.IsEmpty() {
+			reasoningConfig := make(map[string]any)
+			if len(request.Reasoning) > 0 {
+				if err := common.Unmarshal(request.Reasoning, &reasoningConfig); err != nil {
+					return nil, fmt.Errorf("error unmarshalling reasoning: %w", err)
+				}
+				if reasoningConfig == nil {
+					reasoningConfig = make(map[string]any)
+				}
+			}
+			disabled := initialIntent.Mode == kitreasoning.ModeDisabled || initialIntent.Effort == kitreasoning.EffortNone
+			if initialIntent.HasStrength() {
+				reasoningConfig["enabled"] = !disabled
+				if disabled {
+					delete(reasoningConfig, "effort")
+					delete(reasoningConfig, "max_tokens")
+				}
+			}
+			if !disabled && initialIntent.BudgetTokens != nil {
+				reasoningConfig["max_tokens"] = *initialIntent.BudgetTokens
+				delete(reasoningConfig, "effort")
+			} else if !disabled && initialIntent.Effort != "" && initialIntent.Effort != kitreasoning.EffortNone {
+				reasoningConfig["effort"] = string(initialIntent.Effort)
+				delete(reasoningConfig, "max_tokens")
+			}
+			if initialIntent.IncludeThoughts != nil {
+				reasoningConfig["exclude"] = !*initialIntent.IncludeThoughts
+			}
+			marshal, err := common.Marshal(reasoningConfig)
+			if err != nil {
+				return nil, fmt.Errorf("error marshalling reasoning: %w", err)
+			}
+			request.Reasoning = marshal
+		}
+		request.ReasoningEffort = ""
+		effectiveEffort := kitreasoning.EffectiveEffort(initialIntent)
+		if initialIntent.BudgetTokens != nil {
+			effectiveEffort = kitreasoning.EffortFromBudget(*initialIntent.BudgetTokens)
+		}
+		info.SetReasoningEffort(string(effectiveEffort))
 
 	}
-	isOModel := dto.IsOpenAIReasoningOModel(info.UpstreamModelName)
-	isGPT5Model := dto.IsOpenAIGPT5Model(info.UpstreamModelName)
-	if isOModel || isGPT5Model {
+	if info.ChannelType != constant.ChannelTypeOpenRouter && renderReasoning {
+		effort, baseModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.UpstreamModelName)
+		if preserveSuffix {
+			effort = ""
+		}
+		currentIntent, err := kitreasoning.FromOpenAIChat(request)
+		if err != nil {
+			return nil, kitreasoning.AsClientError(err)
+		}
+		mergeSuffix := func(modelName, rawEffort string) error {
+			if rawEffort == "" {
+				return nil
+			}
+			suffixEffort, err := kitreasoning.ParseEffort(rawEffort)
+			if err != nil {
+				return err
+			}
+			mode := kitreasoning.ModeEnabled
+			if suffixEffort == kitreasoning.EffortNone {
+				mode = kitreasoning.ModeDisabled
+			}
+			currentIntent, err = kitreasoning.MergeExplicitAndSuffix(currentIntent, kitreasoning.Intent{Mode: mode, Effort: suffixEffort, Source: kitreasoning.SourceSuffix}, modelName)
+			return err
+		}
+		if err := mergeSuffix(info.UpstreamModelName, effort); err != nil {
+			return nil, kitreasoning.AsClientError(err)
+		}
+		if !preserveSuffix && info.OriginModelName != info.UpstreamModelName {
+			originEffort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.OriginModelName)
+			if err := mergeSuffix(info.OriginModelName, originEffort); err != nil {
+				return nil, kitreasoning.AsClientError(err)
+			}
+		}
+		if effort != "" {
+			info.UpstreamModelName = baseModel
+			request.Model = baseModel
+		}
+		if canonicalEffort := kitreasoning.EffectiveEffort(currentIntent); canonicalEffort != "" {
+			request.ReasoningEffort = string(canonicalEffort)
+			info.SetReasoningEffort(string(canonicalEffort))
+		}
+		if info.ChannelType == constant.ChannelTypeOpenAI || info.ChannelType == constant.ChannelTypeAzure {
+			request.Reasoning = nil
+		}
+	}
+
+	capabilities := dto.GetOpenAIChatCapabilities(info.UpstreamModelName, info.ReasoningEffort)
+	if capabilities.UseMaxCompletionTokens {
 		if lo.FromPtrOr(request.MaxCompletionTokens, uint(0)) == 0 && lo.FromPtrOr(request.MaxTokens, uint(0)) != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = nil
 		}
-
-		if isOModel {
-			request.Temperature = nil
-		}
-
-		// gpt-5系列模型适配 归零不再支持的参数
-		if isGPT5Model {
-			request.Temperature = nil
-			request.TopP = nil
-			request.LogProbs = nil
-		}
-
-		// 转换模型推理力度后缀
-		effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.UpstreamModelName)
-		if effort != "" {
-			request.ReasoningEffort = effort
-			info.UpstreamModelName = originModel
-			request.Model = originModel
-		}
-
-		info.ReasoningEffort = request.ReasoningEffort
-
-		// o系列模型developer适配（o1-mini除外）
-		if !strings.HasPrefix(info.UpstreamModelName, "o1-mini") && !strings.HasPrefix(info.UpstreamModelName, "o1-preview") {
-			//修改第一个Message的内容，将system改为developer
-			if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
-				request.Messages[0].Role = "developer"
-			}
-		}
+	}
+	if !capabilities.SupportsTemperature {
+		request.Temperature = nil
+	}
+	if !capabilities.SupportsTopP {
+		request.TopP = nil
+	}
+	if !capabilities.SupportsLogProbs {
+		request.LogProbs = nil
+		request.TopLogProbs = nil
+	}
+	if capabilities.UseDeveloperRole && len(request.Messages) > 0 && request.Messages[0].Role == "system" {
+		request.Messages[0].Role = "developer"
 	}
 
 	return request, nil
@@ -459,7 +614,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 写入所有非文件字段
 		if mf != nil {
 			for key, values := range mf.Value {
-				if key == "model" {
+				if key == "model" || (info.IsPlayground && key == "group") {
 					continue
 				}
 				for _, value := range values {
@@ -597,18 +752,157 @@ func detectImageMimeType(filename string) string {
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
-	if effort != "" {
-		if request.Reasoning == nil {
-			request.Reasoning = &dto.Reasoning{
-				Effort: effort,
-			}
-		} else {
-			request.Reasoning.Effort = effort
-		}
-		request.Model = originModel
+	preserveSuffix := model_setting.ShouldPreserveThinkingSuffix(request.Model) || (info != nil && model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName))
+	if preserveSuffix {
+		effort = ""
 	}
-	if info != nil && request.Reasoning != nil && request.Reasoning.Effort != "" {
-		info.ReasoningEffort = request.Reasoning.Effort
+	originEffort := ""
+	if info != nil && !preserveSuffix {
+		originEffort, _ = reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.OriginModelName)
+	}
+	crossProtocol := info != nil && len(info.RequestConversionChain) > 1
+	if (info == nil || info.ChannelType != constant.ChannelTypeOpenRouter) && !crossProtocol && effort == "" && originEffort == "" && request.ReasoningConversion == nil && info.ReasoningState() == nil {
+		if info != nil {
+			rawEffort := ""
+			if request.Reasoning != nil {
+				rawEffort = request.Reasoning.Effort
+			}
+			info.SetReasoningEffort(rawEffort)
+		}
+	} else {
+		currentIntent, err := kitreasoning.FromOpenAIResponses(&request)
+		if err != nil {
+			return nil, kitreasoning.AsClientError(err)
+		}
+		mergeSuffix := func(modelName, rawEffort string) error {
+			if rawEffort == "" {
+				return nil
+			}
+			suffixEffort, err := kitreasoning.ParseEffort(rawEffort)
+			if err != nil {
+				return err
+			}
+			mode := kitreasoning.ModeEnabled
+			if suffixEffort == kitreasoning.EffortNone {
+				mode = kitreasoning.ModeDisabled
+			}
+			currentIntent, err = kitreasoning.MergeExplicitAndSuffix(currentIntent, kitreasoning.Intent{Mode: mode, Effort: suffixEffort, Source: kitreasoning.SourceSuffix}, modelName)
+			return err
+		}
+		if err := mergeSuffix(request.Model, effort); err != nil {
+			return nil, kitreasoning.AsClientError(err)
+		}
+		if !preserveSuffix && info != nil && info.OriginModelName != request.Model {
+			originEffort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.OriginModelName)
+			if err := mergeSuffix(info.OriginModelName, originEffort); err != nil {
+				return nil, kitreasoning.AsClientError(err)
+			}
+		}
+		if effort != "" {
+			request.Model = originModel
+			if info != nil {
+				info.UpstreamModelName = originModel
+			}
+		}
+		if canonicalEffort := kitreasoning.EffectiveEffort(currentIntent); canonicalEffort != "" {
+			if request.Reasoning == nil {
+				request.Reasoning = &dto.Reasoning{}
+			}
+			request.Reasoning.Effort = string(canonicalEffort)
+			if info != nil {
+				info.SetReasoningEffort(string(canonicalEffort))
+			}
+		}
+	}
+	if info != nil && info.ChannelType == constant.ChannelTypeCodeBuddy {
+		result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, &request)
+		if err != nil {
+			return nil, err
+		}
+		chatRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+		if !ok {
+			return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
+		}
+		if info.ShouldUseChannelTestStyle() {
+			channel.ApplyCodeBuddyRequestProfile(chatRequest)
+		}
+		stream := info.IsStream
+		chatRequest.Stream = &stream
+		if !stream {
+			chatRequest.StreamOptions = nil
+		}
+		return chatRequest, nil
+	}
+	if info != nil && info.ChannelMeta != nil && info.ChannelType == constant.ChannelTypeCodexCompatibility && info.ShouldUseChannelTestStyle() {
+		// Codex Responses requires store=false and expects an instructions field.
+		// 渠道级系统提示词注入，语义与 codex 订阅渠道（codex/adaptor.go）对齐：
+		// instructions 为空时注入 SystemPrompt；非空且开启 SystemPromptOverride 时拼接。
+		if info.ChannelSetting.SystemPrompt != "" {
+			systemPrompt := info.ChannelSetting.SystemPrompt
+			if !hasCodexJSONValue(request.Instructions) {
+				if b, err := common.Marshal(systemPrompt); err == nil {
+					request.Instructions = b
+				} else {
+					return nil, err
+				}
+			} else if info.ChannelSetting.SystemPromptOverride {
+				var existing string
+				if err := common.Unmarshal(request.Instructions, &existing); err == nil {
+					existing = strings.TrimSpace(existing)
+					if existing == "" {
+						if b, err := common.Marshal(systemPrompt); err == nil {
+							request.Instructions = b
+						} else {
+							return nil, err
+						}
+					} else {
+						if b, err := common.Marshal(systemPrompt + "\n" + existing); err == nil {
+							request.Instructions = b
+						} else {
+							return nil, err
+						}
+					}
+				} else {
+					if b, err := common.Marshal(systemPrompt); err == nil {
+						request.Instructions = b
+					} else {
+						return nil, err
+					}
+				}
+			}
+		}
+		// Compaction has a smaller, separately documented request shape. Keep
+		// the system-prompt behavior above, but do not add full Responses probe
+		// fields to a compact request.
+		if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+			return request, nil
+		}
+		request.Store = json.RawMessage("false")
+		request.MaxOutputTokens = nil
+		if len(request.Instructions) == 0 {
+			request.Instructions = json.RawMessage(`"You are a helpful assistant."`)
+		}
+		if len(request.Text) == 0 {
+			request.Text = json.RawMessage(`{"verbosity":"low"}`)
+		}
+		if len(request.Include) == 0 {
+			request.Include = json.RawMessage(`["reasoning.encrypted_content"]`)
+		}
+		if len(request.ToolChoice) == 0 {
+			request.ToolChoice = json.RawMessage(`"auto"`)
+		}
+		if len(request.ParallelToolCalls) == 0 {
+			if info.ShouldUseCodexCompatibilityTestProfile() {
+				request.ParallelToolCalls = json.RawMessage("false")
+			} else {
+				request.ParallelToolCalls = json.RawMessage("true")
+			}
+		}
+		if info.ShouldUseCodexCompatibilityTestProfile() {
+			if err := applyCodexCompatibilityTestResponsesShape(&request, info); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return request, nil
 }
@@ -626,6 +920,16 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	// CodeBuddy 上游以 chat/completions 响应，Responses 与 Compact 请求都要
+	// 转回 Responses 协议再返回下游。
+	if info.ChannelType == constant.ChannelTypeCodeBuddy &&
+		(info.RelayMode == relayconstant.RelayModeResponses ||
+			info.RelayMode == relayconstant.RelayModeResponsesCompact) {
+		if info.IsStream {
+			return OaiChatToResponsesStreamHandler(c, info, resp)
+		}
+		return OaiChatToResponsesHandler(c, info, resp)
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeRealtime:
 		err, usage = OpenaiRealtimeHandler(c, info)
