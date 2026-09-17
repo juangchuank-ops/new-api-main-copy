@@ -33,6 +33,7 @@ import { saveAffiliateCode } from '@/features/auth/lib/storage'
 import { GeneralError } from '@/features/errors/general-error'
 import { NotFoundError } from '@/features/errors/not-found-error'
 import { getSetupStatus } from '@/features/setup/api'
+import { bootstrapAuthentication } from '@/lib/auth-session'
 
 function RootComponent() {
   // Load system configuration (logo, system name, etc.) from backend
@@ -102,6 +103,16 @@ function setSetupDoneCache(value: boolean): void {
 // 内存中的标记：只有 setup 已完成才缓存，未完成则每次都检查
 let setupDoneCached = isSetupDoneFromCache()
 
+// 会话恢复只做一次。
+// beforeLoad 在每次导航（含 defaultPreload: 'intent' 的预加载）都会执行，
+// 用模块级标记把 bootstrap 限制成「每次整页加载一次」——整页刷新时模块会重新求值，
+// 所以刷新后仍会重新恢复会话，而站内跳转不会反复打刷新接口。
+let authBootstrapped = false
+
+// 刷新接口异常时的兜底：不能把整个应用永久卡在空白页。
+// 超时后按未登录继续渲染，用户最多是回到登录页重新登录一次。
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 5000
+
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
 }>()({
@@ -111,10 +122,28 @@ export const Route = createRootRouteWithContext<{
     const needsSetupCheck =
       !setupDoneCached && !pathname.startsWith('/setup')
 
-    // 用户信息已通过 auth-store 从 localStorage 恢复
-    // 如果 auth.user 存在，说明用户已登录（有缓存的用户数据）
-    // 如果 auth.user 为 null，说明用户未登录，直接让 _authenticated 路由处理重定向
-    // 不再调用 getSelf() API，避免不必要的网络请求和等待
+    // 先恢复登录态，再决定后续路由。
+    // 登录态只存在内存里（auth-store 没有 persist，access token 刻意不落盘），
+    // 整页刷新后内存是空的，必须拿 HttpOnly refresh cookie 去换一份新的 access token，
+    // 否则一按 F5 就会被 _authenticated 守卫当成未登录弹回登录页。
+    // 这一步必须在子路由的 beforeLoad 之前 await 完，_authenticated 才看得到恢复出来的用户。
+    if (!authBootstrapped) {
+      authBootstrapped = true
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          bootstrapAuthentication(),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, AUTH_BOOTSTRAP_TIMEOUT_MS)
+          }),
+        ])
+      } catch {
+        // 恢复失败不阻断路由：确实未登录时由 _authenticated 守卫重定向，
+        // 已过期时由 api.ts 的 401 拦截器兜底。
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+    }
 
     // 只检查 setup 状态（如果需要）
     if (needsSetupCheck) {
@@ -136,8 +165,8 @@ export const Route = createRootRouteWithContext<{
         setSetupDoneCache(true)
       }
     }
-    // 用户认证状态完全依赖 localStorage 缓存
-    // 如果用户有有效 session 但 localStorage 被清空，会被重定向到登录页重新登录
+    // 会话已在上方恢复完毕：auth.user 存在即视为已登录，
+    // 为 null 则交给 _authenticated 守卫重定向到登录页。
   },
   component: RootComponent,
   notFoundComponent: NotFoundError,
