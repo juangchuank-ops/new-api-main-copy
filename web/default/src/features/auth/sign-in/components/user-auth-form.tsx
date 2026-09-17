@@ -40,6 +40,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { login, wechatLoginByCode } from '@/features/auth/api'
+import { isAuthBundle } from '@/lib/auth-session'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
@@ -86,7 +87,7 @@ export function UserAuthForm({
     setTurnstileToken,
     validateTurnstile,
   } = useTurnstile()
-  const { handleLoginSuccess, redirectTo2FA } = useAuthRedirect()
+  const { handleLoginSuccess, handleLoginResult } = useAuthRedirect()
 
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
@@ -161,13 +162,13 @@ export function UserAuthForm({
       })
 
       if (res.success) {
-        if (res.data?.require_2fa) {
-          redirectTo2FA()
-          return
+        // The backend returns either a full AuthBundle (access_token +
+        // user + session) when no secondary verification is required, or a
+        // LoginChallenge when 2FA/passkey verification must follow.
+        await handleLoginResult(res.data, redirectTo)
+        if (isAuthBundle(res.data)) {
+          toast.success(t('Welcome back!'))
         }
-
-        await handleLoginSuccess(res.data as { id?: number } | null, redirectTo)
-        toast.success(t('Welcome back!'))
       }
     } catch {
       // Errors are handled by global interceptor
@@ -203,8 +204,10 @@ export function UserAuthForm({
     try {
       const res = await wechatLoginByCode(wechatCode)
       if (res?.success) {
-        await handleLoginSuccess(res.data as { id?: number } | null, redirectTo)
-        toast.success(t('Signed in via WeChat'))
+        await handleLoginResult(res.data, redirectTo)
+        if (isAuthBundle(res.data)) {
+          toast.success(t('Signed in via WeChat'))
+        }
         handleWeChatDialogChange(false)
       } else {
         toast.error(res?.message || loginFailedMessage)
@@ -266,11 +269,10 @@ export function UserAuthForm({
         throw new Error(t('Missing user data from Passkey login response'))
       }
 
-      await handleLoginSuccess(
-        finish.data as { id?: number } | null,
-        redirectTo
-      )
-      toast.success(t('Signed in with Passkey'))
+      await handleLoginResult(finish.data, redirectTo)
+      if (isAuthBundle(finish.data)) {
+        toast.success(t('Signed in with Passkey'))
+      }
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === 'NotAllowedError') {
         toast.info(t('Passkey login was cancelled or timed out'))

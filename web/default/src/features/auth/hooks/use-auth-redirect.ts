@@ -18,27 +18,27 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
-import { useAuthStore } from '@/stores/auth-store'
-import { getSelf } from '@/lib/api'
-import type { User } from '@/features/users/types'
+import { useCallback, useEffect, useRef } from 'react'
+
+import {
+  getSavedLanguage,
+  sanitizeAuthRedirect,
+} from '@/features/auth/lib/auth-redirect'
+import { applyAuthBundle, isAuthBundle } from '@/lib/auth-session'
+import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
+
 import { saveUserId } from '../lib/storage'
+import type { LoginChallenge } from '../secure-verification/types'
 
-function getSavedLanguage(user: User): string | undefined {
-  const userData = user as Record<string, unknown>
-  if (typeof userData.language === 'string') {
-    return userData.language
-  }
-
-  if (typeof userData.setting !== 'string') {
-    return undefined
-  }
-
-  try {
-    const setting = JSON.parse(userData.setting) as { language?: unknown }
-    return typeof setting.language === 'string' ? setting.language : undefined
-  } catch {
-    return undefined
-  }
+function isLoginChallenge(value: unknown): value is LoginChallenge {
+  if (!value || typeof value !== 'object') return false
+  const challenge = value as Partial<LoginChallenge>
+  return (
+    challenge.require_verification === true &&
+    typeof challenge.flow_token === 'string' &&
+    typeof challenge.expires_at === 'number' &&
+    Array.isArray(challenge.methods)
+  )
 }
 
 /**
@@ -46,73 +46,108 @@ function getSavedLanguage(user: User): string | undefined {
  */
 export function useAuthRedirect() {
   const navigate = useNavigate()
-  const { auth } = useAuthStore()
+  const sessionID = useAuthStore((state) => state.auth.session?.sid)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   /**
    * Handle successful login
-   * @param userData - Optional user data from login response
+   * @param bundle - The auth bundle (access_token + user + session) from the login response
    * @param redirectTo - Redirect path after login
    */
-  const handleLoginSuccess = async (
-    userData?: { id?: number } | null,
-    redirectTo?: string
-  ) => {
-    // Save user ID if available
-    if (userData?.id) {
-      saveUserId(userData.id)
-    }
-
-    // Fetch and set user data
-    try {
-      const self = await getSelf()
-      if (self?.success && self.data) {
-        const user = self.data as User
-        auth.setUser(user)
-
-        // Update user ID if not already set
-        if (user.id) {
-          saveUserId(user.id)
-        }
-
-        // Restore saved language preference
-        const savedLang = getSavedLanguage(user)
-        if (savedLang && savedLang !== i18n.language) {
-          i18n.changeLanguage(savedLang)
-        }
+  const handleLoginSuccess = useCallback(
+    async (bundle: AuthBundle, redirectTo?: string) => {
+      if (
+        !mounted.current ||
+        useAuthStore.getState().auth.session?.sid !== sessionID
+      ) {
+        return
       }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to fetch user data:', error)
-    }
 
-    // Navigate to target page
-    const targetPath = redirectTo || '/dashboard'
-    navigate({ to: targetPath, replace: true })
-  }
+      // Persist the bundle (access token + session) into the auth store.
+      // Subsequent API calls pick up the Bearer token from the request
+      // interceptor in lib/api.ts.
+      applyAuthBundle(bundle)
+
+      // Keep the legacy uid marker in localStorage (used for the
+      // New-Api-User header and affiliate attribution).
+      if (bundle.user?.id) {
+        saveUserId(bundle.user.id)
+      }
+
+      const savedLang = getSavedLanguage(bundle.user)
+      if (savedLang && savedLang !== i18n.language) {
+        await i18n.changeLanguage(savedLang)
+      }
+
+      const targetPath =
+        sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
+      await navigate({ to: targetPath, replace: true })
+    },
+    [navigate, sessionID]
+  )
+
+  /**
+   * Handle a login result: either a full bundle or a verification challenge.
+   */
+  const handleLoginResult = useCallback(
+    async (result: unknown, redirectTo?: string): Promise<boolean> => {
+      if (
+        !mounted.current ||
+        useAuthStore.getState().auth.session?.sid !== sessionID
+      ) {
+        return false
+      }
+      if (isAuthBundle(result)) {
+        await handleLoginSuccess(result, redirectTo)
+        return true
+      }
+      if (!isLoginChallenge(result)) {
+        throw new Error('Login failed')
+      }
+      if (result.expires_at * 1000 <= Date.now()) {
+        throw new Error('Login flow expired. Please sign in again.')
+      }
+      useAuthStore.getState().auth.setPendingLoginVerification({
+        challenge: result,
+        redirectTo:
+          sanitizeAuthRedirect(redirectTo, window.location.origin) ?? undefined,
+      })
+      await navigate({ to: '/otp', replace: true })
+      return false
+    },
+    [handleLoginSuccess, navigate, sessionID]
+  )
 
   /**
    * Redirect to 2FA page
    */
-  const redirectTo2FA = () => {
+  const redirectTo2FA = useCallback(() => {
     navigate({ to: '/otp', replace: true })
-  }
+  }, [navigate])
 
   /**
    * Redirect to login page
    */
-  const redirectToLogin = () => {
-    navigate({ to: '/sign-in', replace: true })
-  }
+  const redirectToLogin = useCallback(() => {
+    void navigate({ to: '/sign-in', replace: true })
+  }, [navigate])
 
   /**
    * Redirect to register page
    */
-  const redirectToRegister = () => {
-    navigate({ to: '/sign-up', replace: true })
-  }
+  const redirectToRegister = useCallback(() => {
+    void navigate({ to: '/sign-up', replace: true })
+  }, [navigate])
 
   return {
     handleLoginSuccess,
+    handleLoginResult,
     redirectTo2FA,
     redirectToLogin,
     redirectToRegister,

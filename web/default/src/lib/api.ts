@@ -20,6 +20,7 @@ import axios, { type AxiosRequestConfig } from 'axios'
 import { t } from 'i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
+import { refreshAuthentication } from '@/lib/auth-session'
 
 declare module 'axios' {
   export interface AxiosRequestConfig {
@@ -97,10 +98,40 @@ api.interceptors.response.use(
     return response
   },
   (error) => {
-    const skip = error?.config?.skipErrorHandler
+    const config = error?.config as ApiRequestConfig | undefined
+    const skip = config?.skipErrorHandler
     const status = error?.response?.status
 
     if (status === 401) {
+      // The request interceptor of a logged-in session attaches a Bearer
+      // token; a 401 therefore means the access token expired (or was
+      // rotated server-side). Try one silent refresh + retry before
+      // declaring the session dead.
+      const attemptedRefresh = refreshOn401.get(config ?? {})
+      if (config && !attemptedRefresh && !config.url?.includes('/api/user/auth/')) {
+        refreshOn401.set(config, true)
+        return refreshAuthentication()
+          .then((outcome) => {
+            if (outcome.kind === 'authenticated') {
+              const token = useAuthStore.getState().auth.accessToken
+              if (token) {
+                config.headers = {
+                  ...config.headers,
+                  Authorization: `Bearer ${token}`,
+                }
+              }
+              return api.request(config)
+            }
+            throw error
+          })
+          .catch(() => {
+            throw error
+          })
+          .finally(() => {
+            refreshOn401.delete(config)
+          })
+      }
+
       try {
         useAuthStore.getState().auth.reset()
       } catch {
@@ -119,6 +150,10 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+// Tracks configs currently undergoing a 401 refresh-retry so a retried
+// request that 401s again does not loop.
+const refreshOn401 = new WeakMap<ApiRequestConfig, boolean>()
 
 // ============================================================================
 // Common Headers Utility
@@ -146,6 +181,12 @@ export function getCommonHeaders(): Record<string, string> {
     'Content-Type': 'application/json',
   }
 
+  // Bearer access token for dashboard session auth (see lib/auth-session.ts)
+  const accessToken = useAuthStore.getState().auth.accessToken
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+  }
+
   const uid = getUserId()
   if (uid) {
     headers['New-Api-User'] = uid
@@ -158,12 +199,16 @@ export function getCommonHeaders(): Record<string, string> {
 // Request Interceptor
 // ============================================================================
 
-// Attach user ID header for all requests
+// Attach Bearer access token and user ID header for all requests
 api.interceptors.request.use((config) => {
+  const accessToken = useAuthStore.getState().auth.accessToken
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`
+  }
   const uid = getUserId()
   if (uid) {
     // Custom header for user identification
-    ;(config.headers as Record<string, string>)['New-Api-User'] = uid
+    config.headers['New-Api-User'] = uid
   }
   return config
 })

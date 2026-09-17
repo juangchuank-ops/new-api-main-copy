@@ -44,3 +44,10 @@ export interface StartVerificationOptions {
   title?: string
   description?: string
 }
+
+export interface LoginChallenge {
+  require_verification: true
+  flow_token: string
+  expires_at: number
+  methods: { method: string; available: boolean; reason?: string }[]
+}
