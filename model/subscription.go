@@ -165,6 +165,10 @@ type SubscriptionPlan struct {
 	// Allow falling back to wallet balance after subscription quota is exhausted (empty = true)
 	AllowWalletOverflow *bool `json:"allow_wallet_overflow"`
 
+	// Allow paying this plan with the site's configured online payment providers
+	// (Stripe/Creem/Waffo/Epay). Empty = true.
+	AllowOnlinePay *bool `json:"allow_online_pay"`
+
 	StripePriceId         string `json:"stripe_price_id" gorm:"type:varchar(128);default:''"`
 	CreemProductId        string `json:"creem_product_id" gorm:"type:varchar(128);default:''"`
 	WaffoPancakeProductId string `json:"waffo_pancake_product_id" gorm:"type:varchar(128);default:''"`
@@ -207,6 +211,9 @@ func (p *SubscriptionPlan) NormalizeDefaults() {
 	}
 	if p.AllowWalletOverflow == nil {
 		p.AllowWalletOverflow = common.GetPointer(true)
+	}
+	if p.AllowOnlinePay == nil {
+		p.AllowOnlinePay = common.GetPointer(true)
 	}
 }
 
@@ -789,6 +796,9 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		if requiredQuota > 0 {
 			if err := tx.Model(&User{}).Where("id = ?", userId).
 				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
+				return err
+			}
+			if err := clampChargedQuota(tx, userId); err != nil {
 				return err
 			}
 		}

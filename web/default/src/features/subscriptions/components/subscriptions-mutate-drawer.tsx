@@ -563,6 +563,29 @@ export function SubscriptionsMutateDrawer({
 
                 <FormField
                   control={form.control}
+                  name='allow_online_pay'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <FormLabel className='!mt-0'>
+                        {t('Allow online payment')}
+                      </FormLabel>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'When disabled, this plan cannot be paid with the configured online payment methods',
+                        )}
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name='allow_wallet_overflow'
                   render={({ field }) => (
                     <FormItem className={sideDrawerSwitchItemClassName()}>

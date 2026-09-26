@@ -599,6 +599,7 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"telegram_id":         user.TelegramId,
 		"group":               user.Group,
 		"quota":               user.Quota,
+		"charged_quota":       user.ChargedQuota,
 		"used_quota":          user.UsedQuota,
 		"request_count":       user.RequestCount,
 		"requests_per_minute": user.RequestsPerMinute,

@@ -89,7 +89,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableWaffoPancake && !!plan.waffo_pancake_product_id
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
+  // 付款方式限制：在线支付区块整体受 allow_online_pay 控制
+  const allowOnlinePay = plan.allow_online_pay !== false
+  const hasOnlinePayment =
+    (hasStripe || hasCreem || hasWaffoPancake || hasEpay) && allowOnlinePay
+  const hasAnyPayment = hasOnlinePayment
   const selectedEpayMethodLabel =
     (props.epayMethods || []).find((m) => m.type === selectedEpayMethod)
       ?.name ||

@@ -5029,6 +5029,10 @@
     "Default channel concurrency": "Đồng thời kênh mặc định",
     "concurrent": "đồng thời",
     "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Dùng khi kênh chưa đặt đồng thời riêng. Phạm vi 0-1000000; 0 nghĩa là không giới hạn.",
-    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Mỗi kênh có thể ghi đè giá trị mặc định này trong hộp thoại chỉnh sửa. Các mô hình được cấu hình trong \"Cài đặt nâng cao - Đồng thời theo mô hình\" dùng giới hạn riêng và được đếm độc lập, không bị ràng buộc bởi giới hạn cấp kênh."
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Mỗi kênh có thể ghi đè giá trị mặc định này trong hộp thoại chỉnh sửa. Các mô hình được cấu hình trong \"Cài đặt nâng cao - Đồng thời theo mô hình\" dùng giới hạn riêng và được đếm độc lập, không bị ràng buộc bởi giới hạn cấp kênh.",
+    "Charged Balance": "Số dư nạp",
+    "Balance from top-ups": "Số dư từ nạp tiền",
+    "Allow online payment": "Cho phép thanh toán trực tuyến",
+    "When disabled, this plan cannot be paid with the configured online payment methods": "Khi tắt, gói này không thể thanh toán bằng các phương thức trực tuyến đang cấu hình"
   }
 }

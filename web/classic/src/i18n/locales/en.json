@@ -4783,6 +4783,20 @@
     "按模型并发中存在未选择模型的条目": "A per-model concurrency row has no model selected",
     "按模型并发中模型 {{model}} 重复": "Model {{model}} is duplicated in per-model concurrency",
     "模型 {{model}} 的并发必须是 1-1000000 之间的整数": "Concurrency for model {{model}} must be an integer between 1 and 1000000",
-    "模型 {{model}} 不在该渠道的模型列表中": "Model {{model}} is not in this channel's model list"
+    "模型 {{model}} 不在该渠道的模型列表中": "Model {{model}} is not in this channel's model list",
+    "付款方式限制": "Payment method restriction",
+    "控制该套餐允许使用的付款方式，至少保留一种，否则用户无法购买": "Control which payment methods are allowed for this plan. Keep at least one, otherwise users cannot purchase it.",
+    "允许余额支付": "Allow balance payment",
+    "关闭后用户不能使用余额兑换购买该套餐": "When disabled, users cannot purchase this plan by redeeming balance.",
+    "允许在线支付": "Allow online payment",
+    "关闭后该套餐不能使用站点当前配置的在线支付方式（Stripe/Creem/易支付等）": "When disabled, this plan cannot be paid with the site's configured online payment methods (Stripe/Creem/Epay, etc.).",
+    "所需额度": "Required quota",
+    "可用余额": "Available balance",
+    "余额不足，请先前往钱包充值": "Insufficient balance, please top up your wallet first.",
+    "余额支付": "Pay with balance",
+    "余额支付将优先消耗赠送余额，再消耗充值余额": "Balance payment consumes bonus balance first, then charged balance.",
+    "该套餐未开启任何可用付款方式，请联系管理员。": "This plan has no available payment methods. Please contact the administrator.",
+    "订阅购买成功": "Subscription purchased successfully",
+    "充值余额": "Charged balance"
   }
 }

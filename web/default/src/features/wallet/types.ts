@@ -256,6 +256,8 @@ export interface UserWalletData {
   username: string
   /** Current quota balance */
   quota: number
+  /** Balance originating from top-ups (subset of quota) */
+  charged_quota: number
   /** Total used quota */
   used_quota: number
   /** Total request count */

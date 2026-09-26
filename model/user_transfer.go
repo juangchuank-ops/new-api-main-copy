@@ -72,7 +72,7 @@ func TransferQuota(fromUserId int, toUserId int, toUsername string, quota int) (
 		if count != 2 {
 			return errors.New("收款用户不存在")
 		}
-		if err := tx.Select("id", "username", "quota").
+		if err := tx.Select("id", "username", "quota", "charged_quota").
 			Where("id = ?", fromUserId).First(&fromUser).Error; err != nil {
 			return err
 		}
@@ -84,7 +84,8 @@ func TransferQuota(fromUserId int, toUserId int, toUsername string, quota int) (
 			return errors.New("收款用户 ID 与用户名不匹配")
 		}
 
-		// quota >= ? 条件兜底，防止锁失效场景下扣成负数
+		// quota >= ? 条件兜底，防止锁失效场景下扣成负数；
+		// 同时按"先扣普通余额、再扣充值余额"收敛充值余额记账
 		result := tx.Model(&User{}).
 			Where("id = ? AND quota >= ?", fromUserId, total).
 			Update("quota", gorm.Expr("quota - ?", total))
@@ -93,6 +94,19 @@ func TransferQuota(fromUserId int, toUserId int, toUsername string, quota int) (
 		}
 		if result.RowsAffected != 1 {
 			return errors.New("余额不足")
+		}
+		chargedAfter := fromUser.ChargedQuota
+		if after := fromUser.Quota - total; after < chargedAfter {
+			chargedAfter = max(after, 0)
+		}
+		result = tx.Model(&User{}).
+			Where("id = ? AND charged_quota = ?", fromUserId, fromUser.ChargedQuota).
+			Update("charged_quota", chargedAfter)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("转账失败，请重试")
 		}
 		result = tx.Model(&User{}).
 			Where("id = ?", toUserId).

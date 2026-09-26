@@ -69,6 +69,9 @@ func RenameUser(userId int, newUsername string) (fee int, balance int, err error
 			Update("quota", gorm.Expr("quota - ?", RenameFeeQuota)).Error; err != nil {
 			return err
 		}
+		if err := clampChargedQuota(tx, userId); err != nil {
+			return err
+		}
 		return tx.Model(&User{}).
 			Where("id = ?", userId).
 			Update("username", newUsername).Error

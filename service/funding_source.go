@@ -55,13 +55,17 @@ func (w *WalletFunding) PreConsume(amount int) error {
 }
 
 func (w *WalletFunding) Settle(delta int) error {
-	if delta == 0 {
-		return nil
-	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+		if err := model.DecreaseUserQuota(w.userId, delta, false); err != nil {
+			return err
+		}
+	} else if delta < 0 {
+		if err := model.IncreaseUserQuota(w.userId, -delta, false); err != nil {
+			return err
+		}
 	}
-	return model.IncreaseUserQuota(w.userId, -delta, false)
+	// 净消费落定后修正充值余额记账（预扣阶段故意不收敛，避免把预扣当作消费）
+	return model.ClampUserChargedQuota(w.userId)
 }
 
 func (w *WalletFunding) Refund() error {

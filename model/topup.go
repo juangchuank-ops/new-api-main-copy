@@ -93,9 +93,11 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 		return err
 	}
 
-	updateFields := make(map[string]any, len(updates)+1)
+	updateFields := make(map[string]any, len(updates)+2)
 	maps.Copy(updateFields, updates)
 	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
+	// 充值到账同时计入充值余额账本（签到/游戏等赠送额度不会进入该字段）
+	updateFields["charged_quota"] = gorm.Expr("charged_quota + ?", creditedQuota)
 
 	result := tx.Model(&User{}).
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).

@@ -28,11 +28,12 @@ import {
   Divider,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import { Crown, CalendarClock, Package } from 'lucide-react';
+import { Crown, CalendarClock, Package, Wallet } from 'lucide-react';
 import { SiStripe } from 'react-icons/si';
 import { IconCreditCard } from '@douyinfe/semi-icons';
 import { renderQuota } from '../../../helpers';
 import { getCurrencyConfig } from '../../../helpers/render';
+import { displayAmountToQuota } from '../../../helpers/quota';
 import {
   formatSubscriptionDuration,
   formatSubscriptionResetPeriod,
@@ -52,10 +53,12 @@ const SubscriptionPurchaseModal = ({
   enableOnlineTopUp = false,
   enableStripeTopUp = false,
   enableCreemTopUp = false,
+  userQuota = 0,
   purchaseLimitInfo = null,
   onPayStripe,
   onPayCreem,
   onPayEpay,
+  onPayBalance,
 }) => {
   const plan = selectedPlan?.plan;
   const totalAmount = Number(plan?.total_amount || 0);
@@ -69,7 +72,13 @@ const SubscriptionPurchaseModal = ({
   const hasStripe = enableStripeTopUp && !!plan?.stripe_price_id;
   const hasCreem = enableCreemTopUp && !!plan?.creem_product_id;
   const hasEpay = enableOnlineTopUp && epayMethods.length > 0;
-  const hasAnyPayment = hasStripe || hasCreem || hasEpay;
+  // 付款方式限制：余额支付 / 在线支付（站点当前配置的支付网关）
+  const hasBalance = plan?.allow_balance_pay !== false;
+  const allowOnlinePay = plan?.allow_online_pay !== false;
+  const hasAnyOnlinePayment = (hasStripe || hasCreem || hasEpay) && allowOnlinePay;
+  const hasAnyPayment = hasBalance || hasAnyOnlinePayment;
+  const balanceCost = Math.max(0, displayAmountToQuota(price));
+  const insufficientBalance = Number(userQuota || 0) < balanceCost;
   const purchaseLimit = Number(purchaseLimitInfo?.limit || 0);
   const purchaseCount = Number(purchaseLimitInfo?.count || 0);
   const purchaseLimitReached =
@@ -181,12 +190,50 @@ const SubscriptionPurchaseModal = ({
 
           {hasAnyPayment ? (
             <div className='space-y-3'>
-              <Text size='small' type='tertiary'>
-                {t('选择支付方式')}：
-              </Text>
+              {!hasAnyOnlinePayment && (
+                <Text size='small' type='tertiary'>
+                  {t('选择支付方式')}：
+                </Text>
+              )}
+
+              {/* 余额支付 */}
+              {hasBalance && (
+                <div className='space-y-2 rounded-xl border p-3'>
+                  <div className='flex justify-between text-xs'>
+                    <Text type='tertiary'>{t('所需额度')}</Text>
+                    <Text>{renderQuota(balanceCost)}</Text>
+                  </div>
+                  <div className='flex justify-between text-xs'>
+                    <Text type='tertiary'>{t('可用余额')}</Text>
+                    <Text>{renderQuota(userQuota)}</Text>
+                  </div>
+                  {insufficientBalance && (
+                    <Banner
+                      type='warning'
+                      description={t('余额不足，请先前往钱包充值')}
+                      className='!rounded-lg'
+                      closeIcon={null}
+                    />
+                  )}
+                  <Button
+                    theme='light'
+                    type='primary'
+                    block
+                    icon={<Wallet size={14} />}
+                    onClick={onPayBalance}
+                    loading={paying}
+                    disabled={
+                      purchaseLimitReached ||
+                      (insufficientBalance && balanceCost > 0)
+                    }
+                  >
+                    {t('余额支付')}
+                  </Button>
+                </div>
+              )}
 
               {/* Stripe / Creem */}
-              {(hasStripe || hasCreem) && (
+              {(hasStripe || hasCreem) && allowOnlinePay && (
                 <div className='flex gap-2'>
                   {hasStripe && (
                     <Button
@@ -216,7 +263,7 @@ const SubscriptionPurchaseModal = ({
               )}
 
               {/* 易支付 */}
-              {hasEpay && (
+              {hasEpay && allowOnlinePay && (
                 <div className='flex gap-2'>
                   <Select
                     value={selectedEpayMethod}
@@ -241,11 +288,22 @@ const SubscriptionPurchaseModal = ({
                   </Button>
                 </div>
               )}
+
+              {balanceCost > 0 && (
+                <Text size='small' type='tertiary'>
+                  {t('余额支付将优先消耗赠送余额，再消耗充值余额')}
+                </Text>
+              )}
             </div>
           ) : (
             <Banner
               type='info'
-              description={t('管理员未开启在线支付功能，请联系管理员配置。')}
+              description={
+                plan?.allow_balance_pay === false ||
+                plan?.allow_online_pay === false
+                  ? t('该套餐未开启任何可用付款方式，请联系管理员。')
+                  : t('管理员未开启在线支付功能，请联系管理员配置。')
+              }
               className='!rounded-xl'
               closeIcon={null}
             />

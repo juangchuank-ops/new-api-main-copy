@@ -5029,6 +5029,10 @@
     "Default channel concurrency": "Параллелизм канала по умолчанию",
     "concurrent": "одновременно",
     "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Используется, если для канала не задан свой параллелизм. Диапазон 0–1000000; 0 — без ограничений.",
-    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Отдельный канал может переопределить это значение в окне редактирования. Модели, настроенные в «Дополнительные настройки — параллелизм по моделям», используют свой лимит и учитываются отдельно, не подчиняясь лимиту канала."
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Отдельный канал может переопределить это значение в окне редактирования. Модели, настроенные в «Дополнительные настройки — параллелизм по моделям», используют свой лимит и учитываются отдельно, не подчиняясь лимиту канала.",
+    "Charged Balance": "Пополненный баланс",
+    "Balance from top-ups": "Баланс с пополнений",
+    "Allow online payment": "Разрешить онлайн-оплату",
+    "When disabled, this plan cannot be paid with the configured online payment methods": "Если отключено, этот тариф нельзя оплатить настроенными онлайн-способами"
   }
 }

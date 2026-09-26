@@ -171,6 +171,9 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if req.Plan.AllowWalletOverflow == nil {
 		req.Plan.AllowWalletOverflow = common.GetPointer(true)
 	}
+	if req.Plan.AllowOnlinePay == nil {
+		req.Plan.AllowOnlinePay = common.GetPointer(true)
+	}
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
@@ -307,6 +310,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		}
 		if req.Plan.AllowWalletOverflow != nil {
 			updateMap["allow_wallet_overflow"] = *req.Plan.AllowWalletOverflow
+		}
+		if req.Plan.AllowOnlinePay != nil {
+			updateMap["allow_online_pay"] = *req.Plan.AllowOnlinePay
 		}
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err

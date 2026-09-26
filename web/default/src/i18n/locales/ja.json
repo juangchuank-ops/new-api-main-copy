@@ -5029,6 +5029,10 @@
     "Default channel concurrency": "既定のチャネル同時実行数",
     "concurrent": "同時実行",
     "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "チャネル固有の同時実行数が未設定の場合に使用します。範囲は 0〜1000000、0 は無制限です。",
-    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "チャネル編集ダイアログでこの既定値を上書きできます。「詳細設定 - モデル別の同時実行数」で個別に設定したモデルは独自の上限を使用して個別にカウントされ、チャネル単位の制限を受けません。"
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "チャネル編集ダイアログでこの既定値を上書きできます。「詳細設定 - モデル別の同時実行数」で個別に設定したモデルは独自の上限を使用して個別にカウントされ、チャネル単位の制限を受けません。",
+    "Charged Balance": "チャージ残高",
+    "Balance from top-ups": "チャージ分の残高",
+    "Allow online payment": "オンライン決済を許可",
+    "When disabled, this plan cannot be paid with the configured online payment methods": "無効にすると、このプランは設定されたオンライン決済を利用できません"
   }
 }

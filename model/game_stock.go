@@ -365,6 +365,9 @@ func tradeGameStock(userId int, stockId int, side string, shares int, enforceTra
 			if result.RowsAffected != 1 {
 				return errors.New("余额不足")
 			}
+			if err := clampChargedQuota(tx, userId); err != nil {
+				return err
+			}
 			result = tx.Model(&GameStockPosition{}).
 				Where("user_id = ? AND stock_id = ?", userId, stockId).
 				Updates(map[string]any{
@@ -492,6 +495,9 @@ func OpenFutures(userId int, side string, leverage int, marginQuota int, stockId
 		}
 		if result.RowsAffected != 1 {
 			return errors.New("余额不足")
+		}
+		if err := clampChargedQuota(tx, userId); err != nil {
+			return err
 		}
 		return tx.Create(position).Error
 	})

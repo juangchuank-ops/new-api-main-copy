@@ -4666,6 +4666,20 @@
     "按模型并发中存在未选择模型的条目": "Une ligne de concurrence par modèle n'a pas de modèle sélectionné",
     "按模型并发中模型 {{model}} 重复": "Le modèle {{model}} est présent plusieurs fois dans la concurrence par modèle",
     "模型 {{model}} 的并发必须是 1-1000000 之间的整数": "La concurrence du modèle {{model}} doit être un entier entre 1 et 1000000",
-    "模型 {{model}} 不在该渠道的模型列表中": "Le modèle {{model}} ne figure pas dans la liste des modèles de ce canal"
+    "模型 {{model}} 不在该渠道的模型列表中": "Le modèle {{model}} ne figure pas dans la liste des modèles de ce canal",
+    "付款方式限制": "Restriction des moyens de paiement",
+    "控制该套餐允许使用的付款方式，至少保留一种，否则用户无法购买": "Contrôlez les moyens de paiement autorisés pour ce forfait. Gardez-en au moins un, sinon les utilisateurs ne peuvent pas l'acheter.",
+    "允许余额支付": "Autoriser le paiement par solde",
+    "关闭后用户不能使用余额兑换购买该套餐": "Une fois désactivé, les utilisateurs ne peuvent plus acheter ce forfait avec leur solde.",
+    "允许在线支付": "Autoriser le paiement en ligne",
+    "关闭后该套餐不能使用站点当前配置的在线支付方式（Stripe/Creem/易支付等）": "Une fois désactivé, ce forfait ne peut pas être payé avec les moyens de paiement en ligne configurés du site (Stripe/Creem/Epay, etc.).",
+    "所需额度": "Quota requis",
+    "可用余额": "Solde disponible",
+    "余额不足，请先前往钱包充值": "Solde insuffisant, veuillez d'abord recharger votre portefeuille.",
+    "余额支付": "Payer avec le solde",
+    "余额支付将优先消耗赠送余额，再消耗充值余额": "Le paiement par solde consomme d'abord le solde offert, puis le solde rechargé.",
+    "该套餐未开启任何可用付款方式，请联系管理员。": "Ce forfait n'a aucun moyen de paiement disponible. Veuillez contacter l'administrateur.",
+    "订阅购买成功": "Abonnement acheté avec succès",
+    "充值余额": "Solde rechargé"
   }
 }

@@ -97,6 +97,7 @@ const RechargeCard = ({
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  reloadUserQuota,
   enableRedemption = true,
 }) => {
   const onlineFormApiRef = useRef(null);
@@ -145,11 +146,11 @@ const RechargeCard = ({
               </div>
 
               {/* 统计数据 */}
-              <div className='grid grid-cols-3 gap-6 mt-4'>
+              <div className='grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mt-4'>
                 {/* 当前余额 */}
                 <div className='text-center'>
                   <div
-                    className='text-base sm:text-2xl font-bold mb-2'
+                    className='text-base sm:text-2xl font-bold mb-2 truncate'
                     style={{ color: 'white' }}
                   >
                     {renderQuota(userState?.user?.quota)}
@@ -171,10 +172,35 @@ const RechargeCard = ({
                   </div>
                 </div>
 
+                {/* 充值余额 */}
+                <div className='text-center'>
+                  <div
+                    className='text-base sm:text-2xl font-bold mb-2 truncate'
+                    style={{ color: 'white' }}
+                  >
+                    {renderQuota(userState?.user?.charged_quota)}
+                  </div>
+                  <div className='flex items-center justify-center text-sm'>
+                    <Coins
+                      size={14}
+                      className='mr-1'
+                      style={{ color: 'rgba(255,255,255,0.8)' }}
+                    />
+                    <Text
+                      style={{
+                        color: 'rgba(255,255,255,0.8)',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {t('充值余额')}
+                    </Text>
+                  </div>
+                </div>
+
                 {/* 历史消耗 */}
                 <div className='text-center'>
                   <div
-                    className='text-base sm:text-2xl font-bold mb-2'
+                    className='text-base sm:text-2xl font-bold mb-2 truncate'
                     style={{ color: 'white' }}
                   >
                     {renderQuota(userState?.user?.used_quota)}
@@ -199,7 +225,7 @@ const RechargeCard = ({
                 {/* 请求次数 */}
                 <div className='text-center'>
                   <div
-                    className='text-base sm:text-2xl font-bold mb-2'
+                    className='text-base sm:text-2xl font-bold mb-2 truncate'
                     style={{ color: 'white' }}
                   >
                     {userState?.user?.request_count || 0}
@@ -690,6 +716,8 @@ const RechargeCard = ({
                 activeSubscriptions={activeSubscriptions}
                 allSubscriptions={allSubscriptions}
                 reloadSubscriptionSelf={reloadSubscriptionSelf}
+                userQuota={userState?.user?.quota || 0}
+                onBalancePaid={reloadUserQuota}
                 withCard={false}
               />
             </div>

@@ -5171,6 +5171,20 @@
     "按模型并发中存在未选择模型的条目": "Có dòng đồng thời theo mô hình chưa chọn mô hình",
     "按模型并发中模型 {{model}} 重复": "Mô hình {{model}} bị lặp trong đồng thời theo mô hình",
     "模型 {{model}} 的并发必须是 1-1000000 之间的整数": "Đồng thời của mô hình {{model}} phải là số nguyên từ 1 đến 1000000",
-    "模型 {{model}} 不在该渠道的模型列表中": "Mô hình {{model}} không có trong danh sách mô hình của kênh này"
+    "模型 {{model}} 不在该渠道的模型列表中": "Mô hình {{model}} không có trong danh sách mô hình của kênh này",
+    "付款方式限制": "Giới hạn phương thức thanh toán",
+    "控制该套餐允许使用的付款方式，至少保留一种，否则用户无法购买": "Kiểm soát các phương thức thanh toán được phép cho gói này. Giữ lại ít nhất một, nếu không người dùng sẽ không thể mua.",
+    "允许余额支付": "Cho phép thanh toán bằng số dư",
+    "关闭后用户不能使用余额兑换购买该套餐": "Khi tắt, người dùng không thể mua gói này bằng số dư.",
+    "允许在线支付": "Cho phép thanh toán trực tuyến",
+    "关闭后该套餐不能使用站点当前配置的在线支付方式（Stripe/Creem/易支付等）": "Khi tắt, gói này không thể thanh toán bằng các phương thức trực tuyến đang cấu hình trên trang (Stripe/Creem/Epay, v.v.).",
+    "所需额度": "Hạn mức cần thiết",
+    "可用余额": "Số dư khả dụng",
+    "余额不足，请先前往钱包充值": "Số dư không đủ, vui lòng nạp tiền vào ví trước.",
+    "余额支付": "Thanh toán bằng số dư",
+    "余额支付将优先消耗赠送余额，再消耗充值余额": "Thanh toán bằng số dư sẽ tiêu trước số dư tặng, sau đó đến số dư nạp.",
+    "该套餐未开启任何可用付款方式，请联系管理员。": "Gói này chưa bật phương thức thanh toán nào. Vui lòng liên hệ quản trị viên.",
+    "订阅购买成功": "Mua gói đăng ký thành công",
+    "充值余额": "Số dư nạp"
   }
 }

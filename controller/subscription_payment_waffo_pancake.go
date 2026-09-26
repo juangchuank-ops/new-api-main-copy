@@ -40,6 +40,10 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		common.ApiErrorMsg(c, "套餐未启用")
 		return
 	}
+	if plan.AllowOnlinePay != nil && !*plan.AllowOnlinePay {
+		common.ApiErrorMsg(c, "该套餐不允许使用在线支付")
+		return
+	}
 	if strings.TrimSpace(plan.WaffoPancakeProductId) == "" {
 		common.ApiErrorMsg(c, "该套餐未配置 WaffoPancakeProductId")
 		return

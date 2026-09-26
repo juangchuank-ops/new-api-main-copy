@@ -5029,6 +5029,10 @@
     "Default channel concurrency": "Concurrence par défaut du canal",
     "concurrent": "concurrents",
     "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Utilisé lorsqu'un canal n'a pas de concurrence propre. Plage 0-1000000 ; 0 signifie illimité.",
-    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Un canal peut remplacer cette valeur par défaut dans sa fenêtre d'édition ; les modèles configurés dans « Paramètres avancés - Concurrence par modèle » utilisent leur propre limite et sont comptés indépendamment, sans être soumis à la limite du canal."
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Un canal peut remplacer cette valeur par défaut dans sa fenêtre d'édition ; les modèles configurés dans « Paramètres avancés - Concurrence par modèle » utilisent leur propre limite et sont comptés indépendamment, sans être soumis à la limite du canal.",
+    "Charged Balance": "Solde rechargé",
+    "Balance from top-ups": "Solde issu des rechargements",
+    "Allow online payment": "Autoriser le paiement en ligne",
+    "When disabled, this plan cannot be paid with the configured online payment methods": "Une fois désactivé, ce forfait ne peut pas être payé avec les moyens de paiement en ligne configurés"
   }
 }

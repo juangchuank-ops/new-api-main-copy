@@ -38,7 +38,7 @@ import {
   IconCreditCard,
   IconSave,
 } from '@douyinfe/semi-icons';
-import { Clock, RefreshCw } from 'lucide-react';
+import { Clock, RefreshCw, ShieldCheck } from 'lucide-react';
 import { API, showError, showSuccess } from '../../../../helpers';
 import {
   quotaToDisplayAmount,
@@ -95,6 +95,8 @@ const AddEditSubscriptionModal = ({
     max_purchase_per_user: 0,
     total_amount: 0,
     upgrade_group: '',
+    allow_balance_pay: true,
+    allow_online_pay: true,
     stripe_price_id: '',
     creem_product_id: '',
   });
@@ -121,6 +123,8 @@ const AddEditSubscriptionModal = ({
         quotaToDisplayAmount(p.total_amount || 0).toFixed(2),
       ),
       upgrade_group: p.upgrade_group || '',
+      allow_balance_pay: p.allow_balance_pay !== false,
+      allow_online_pay: p.allow_online_pay !== false,
       stripe_price_id: p.stripe_price_id || '',
       creem_product_id: p.creem_product_id || '',
     };
@@ -497,6 +501,44 @@ const AddEditSubscriptionModal = ({
                           disabled
                         />
                       )}
+                    </Col>
+                  </Row>
+                </Card>
+
+                {/* 付款方式限制 */}
+                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
+                  <div className='flex items-center mb-2'>
+                    <Avatar size='small' color='cyan' className='mr-2 shadow-md'>
+                      <ShieldCheck size={16} />
+                    </Avatar>
+                    <div>
+                      <Text className='text-lg font-medium'>
+                        {t('付款方式限制')}
+                      </Text>
+                      <div className='text-xs text-gray-600'>
+                        {t('控制该套餐允许使用的付款方式，至少保留一种，否则用户无法购买')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Switch
+                        field='allow_balance_pay'
+                        label={t('允许余额支付')}
+                        size='large'
+                        extraText={t('关闭后用户不能使用余额兑换购买该套餐')}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Form.Switch
+                        field='allow_online_pay'
+                        label={t('允许在线支付')}
+                        size='large'
+                        extraText={t(
+                          '关闭后该套餐不能使用站点当前配置的在线支付方式（Stripe/Creem/易支付等）',
+                        )}
+                      />
                     </Col>
                   </Row>
                 </Card>

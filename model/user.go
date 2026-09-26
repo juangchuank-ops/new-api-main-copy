@@ -99,6 +99,9 @@ type User struct {
 	AccessToken          *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
 	AccessTokenCreatedAt *int64         `json:"-" gorm:"type:bigint;column:access_token_created_at"`
 	Quota                int            `json:"quota" gorm:"type:bigint;default:0"`
+	// ChargedQuota 记录当前余额中来源于充值（在线支付/兑换码）的剩余部分；
+	// 签到、游戏等赠送额度只累加到 Quota，不进入该字段。恒满足 ChargedQuota <= Quota。
+	ChargedQuota         int            `json:"charged_quota" gorm:"type:bigint;default:0;column:charged_quota"`
 	UsedQuota            int            `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"` // used quota
 	RequestCount         int            `json:"request_count" gorm:"type:int;default:0;"`                  // request number
 	RequestsPerMinute    *int           `json:"requests_per_minute" gorm:"type:int"`
@@ -575,7 +578,7 @@ func GetSelfUserById(id int) (*User, error) {
 	err := DB.Model(&User{}).Select([]string{
 		"id", "username", "display_name", "role", "status", "email",
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
-		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
+		"group", "quota", "charged_quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
 		"stripe_customer", "auth_version", "requests_per_minute",
 		"auto_ban_until", "auto_ban_rule", "auto_ban_record_id",
@@ -1481,7 +1484,23 @@ func decreaseUserQuota(id int, quota int) (err error) {
 	if err != nil {
 		return err
 	}
-	return err
+	return clampChargedQuota(DB, id)
+}
+
+// clampChargedQuota 把充值余额记账收敛到总余额（charged_quota 不会超过 quota）。
+// 消费扣减落定后调用一次，即等价于按"先扣普通余额、再扣充值余额"的顺序出账：
+// 只有普通余额被扣穿时，充值余额才会跟着减少。
+func clampChargedQuota(tx *gorm.DB, id int) error {
+	return tx.Exec(
+		"UPDATE users SET charged_quota = CASE WHEN charged_quota > quota THEN quota ELSE charged_quota END WHERE id = ?",
+		id,
+	).Error
+}
+
+// ClampUserChargedQuota 是 clampChargedQuota 的对外封装，供结算类逻辑在
+// 净消费落定后修正充值余额记账。
+func ClampUserChargedQuota(id int) error {
+	return clampChargedQuota(DB, id)
 }
 
 func DeltaUpdateUserQuota(id int, delta int) (err error) {
@@ -1563,6 +1582,13 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, r
 	).Error
 	if err != nil {
 		common.SysLog("failed to batch update user quota, used quota and request count: " + err.Error())
+		return
+	}
+	// 批量扣费落定后修正充值余额记账（等价于先扣普通余额、再扣充值余额）
+	if quota < 0 {
+		if err := clampChargedQuota(DB, id); err != nil {
+			common.SysLog("failed to clamp user charged quota: " + err.Error())
+		}
 	}
 }
 

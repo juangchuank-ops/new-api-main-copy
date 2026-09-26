@@ -60,7 +60,17 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		// An unchanged override is a successful operation, including on MySQL
 		// configurations that count only changed rows in RowsAffected.
 		if after != user.Quota {
-			result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
+			// 净扣减（subtract / override 下调）按"先扣普通余额、再扣充值余额"收敛充值余额记账
+			chargedAfter := user.ChargedQuota
+			if after < chargedAfter {
+				chargedAfter = max(after, 0)
+			}
+			result := tx.Model(&User{}).Where("id = ?", userID).Updates(
+				map[string]any{
+					"quota":         after,
+					"charged_quota": chargedAfter,
+				},
+			)
 			if result.Error != nil {
 				return result.Error
 			}
