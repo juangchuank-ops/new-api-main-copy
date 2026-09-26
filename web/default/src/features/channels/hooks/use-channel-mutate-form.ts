@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { createChannel, updateChannel } from '../api'
-import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { createChannel, updateChannel, updateChannelStatus } from '../api'
+import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
@@ -85,6 +85,27 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
         if (!response.success) {
           throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }
+
+        // Status is an operational field and must be changed through the
+        // dedicated endpoint, so apply it separately when the form toggled it.
+        const nextStatus = data.status
+        const statusChanged =
+          typeof nextStatus === 'number' &&
+          nextStatus !== props.currentRow.status &&
+          (nextStatus === CHANNEL_STATUS.ENABLED ||
+            nextStatus === CHANNEL_STATUS.MANUAL_DISABLED)
+        if (statusChanged) {
+          const statusResponse = await updateChannelStatus(
+            props.currentRow.id,
+            nextStatus
+          )
+          if (!statusResponse.success) {
+            throw new Error(
+              statusResponse.message || t(ERROR_MESSAGES.UPDATE_FAILED)
+            )
+          }
+        }
+
         return SUCCESS_MESSAGES.UPDATED
       }
 

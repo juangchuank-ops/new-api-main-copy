@@ -182,10 +182,10 @@ func RefreshUpstreamAccountBalance(ctx context.Context, account *model.UpstreamA
 		status := upstreamFailureStatus(err)
 		result := &UpstreamAccountOperationResult{Status: status, Message: err.Error(), HttpStatus: httpStatus, DurationMs: time.Since(started).Milliseconds()}
 		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
-			"balance_status":     status,
-			"last_error":         err.Error(),
-			"next_balance_time":  time.Now().Add(30 * time.Minute).Unix(),
-			"updated_time":       common.GetTimestamp(),
+			"balance_status":    status,
+			"last_error":        err.Error(),
+			"next_balance_time": time.Now().Add(30 * time.Minute).Unix(),
+			"updated_time":      common.GetTimestamp(),
 		}).Error
 		recordUpstreamOperation(account.Id, model.UpstreamLogTypeBalance, trigger, result)
 		return result, err
@@ -203,10 +203,10 @@ func RefreshUpstreamAccountBalance(ctx context.Context, account *model.UpstreamA
 	if err != nil {
 		result := &UpstreamAccountOperationResult{Status: model.UpstreamStatusFailed, Message: err.Error(), HttpStatus: httpStatus, DurationMs: time.Since(started).Milliseconds()}
 		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
-			"balance_status":     model.UpstreamStatusFailed,
-			"last_error":         err.Error(),
-			"next_balance_time":  time.Now().Add(30 * time.Minute).Unix(),
-			"updated_time":       common.GetTimestamp(),
+			"balance_status":    model.UpstreamStatusFailed,
+			"last_error":        err.Error(),
+			"next_balance_time": time.Now().Add(30 * time.Minute).Unix(),
+			"updated_time":      common.GetTimestamp(),
 		}).Error
 		recordUpstreamOperation(account.Id, model.UpstreamLogTypeBalance, trigger, result)
 		return result, err

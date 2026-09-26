@@ -1,5 +1,36 @@
 package hailuo
 
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+)
+
+// LooseString accepts both quoted and bare JSON scalars. The MiniMax file
+// endpoints disagree on whether opaque IDs are strings or numbers, and a
+// mismatched type made the whole payload fail to decode.
+type LooseString string
+
+func (s *LooseString) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*s = ""
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var value string
+		if err := common.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*s = LooseString(value)
+		return nil
+	}
+	*s = LooseString(trimmed)
+	return nil
+}
+
+func (s LooseString) String() string { return string(s) }
+
 type SubjectReference struct {
 	Type  string   `json:"type"`  // Subject type, currently only supports "character"
 	Image []string `json:"image"` // Array of subject reference images (currently only supports single image)
@@ -71,12 +102,12 @@ type RetrieveFileResponse struct {
 }
 
 type FileObject struct {
-	FileID      int64  `json:"file_id"`
-	Bytes       int64  `json:"bytes"`
-	CreatedAt   int64  `json:"created_at"`
-	Filename    string `json:"filename"`
-	Purpose     string `json:"purpose"`
-	DownloadURL string `json:"download_url"`
+	FileID      LooseString `json:"file_id"`
+	Bytes       int64       `json:"bytes"`
+	CreatedAt   int64       `json:"created_at"`
+	Filename    string      `json:"filename"`
+	Purpose     string      `json:"purpose"`
+	DownloadURL string      `json:"download_url"`
 }
 
 func GetModelConfig(model string) ModelConfig {

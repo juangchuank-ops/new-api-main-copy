@@ -258,13 +258,13 @@ func CompleteRegistration(c *gin.Context) {
 		createdUser.FinalizeOAuthUserCreation(inviterId)
 		importOAuthAvatar(c.Request.Context(), createdUser.Id, completedAvatarURL)
 		c.Set("login_method_override", "oauth:"+completedProvider)
-		setupLogin(&createdUser, c)
+		setupLogin(&createdUser, nil, c)
 		return
 	}
 	createdUser.FinishInsert(inviterId)
 	if completedMethod == pendingRegistrationWeChat {
 		c.Set("login_method_override", "wechat")
-		setupLogin(&createdUser, c)
+		setupLogin(&createdUser, nil, c)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})

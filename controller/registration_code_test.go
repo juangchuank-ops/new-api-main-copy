@@ -182,10 +182,10 @@ func TestOAuthRegistrationReturnsChallengeOnlyForNewAccounts(t *testing.T) {
 	setupRegistrationCompletionTest(t)
 	provider := &authFlowTestOAuthProvider{}
 
-	user, challenge, err := findOrCreateOAuthUser("auth-flow-test", provider, &oauth.OAuthUser{
+	user, _, challenge, err := findOrCreateOAuthUser(nil, "auth-flow-test", provider, &oauth.OAuthUser{
 		ProviderUserID: "new-provider-user",
 		Username:       "new-oauth-user",
-	}, "", "")
+	}, nil, "", "")
 	require.NoError(t, err)
 	assert.Nil(t, user)
 	require.NotNil(t, challenge)
@@ -199,9 +199,9 @@ func TestOAuthRegistrationReturnsChallengeOnlyForNewAccounts(t *testing.T) {
 	}
 	require.NoError(t, existing.InsertWithTx(model.DB, 0))
 	existingProvider := &existingOAuthTestProvider{user: existing, providerUserId: "existing-provider-user"}
-	user, challenge, err = findOrCreateOAuthUser("auth-flow-existing", existingProvider, &oauth.OAuthUser{
+	user, _, challenge, err = findOrCreateOAuthUser(nil, "auth-flow-existing", existingProvider, &oauth.OAuthUser{
 		ProviderUserID: "existing-provider-user",
-	}, "", "")
+	}, nil, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, user)
 	assert.Equal(t, existing.Id, user.Id)

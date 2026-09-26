@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
-	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 // AuditOther is the structured metadata stored with an audit event. Privileged
@@ -46,20 +44,6 @@ type AuditRequestInfo struct {
 // Retain their encoded values when reading so arbitrary nested integers do not
 // round-trip through float64 and lose precision before the API returns them.
 type AuditFields map[string]any
-
-func (AuditOther) GormDataType() string {
-	return "json"
-}
-
-func (AuditOther) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
-	switch db.Dialector.Name() {
-	case "sqlite":
-		return "TEXT"
-	case "clickhouse":
-		return "String"
-	}
-	return "JSON"
-}
 
 func (fields *AuditFields) UnmarshalJSON(data []byte) error {
 	var values map[string]json.RawMessage

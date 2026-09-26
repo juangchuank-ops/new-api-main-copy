@@ -5009,6 +5009,26 @@
     "Allow users to sign in with Google": "Autoriser les utilisateurs à se connecter avec Google",
     "Your Google OAuth Client ID": "Votre ID client Google OAuth",
     "Your Google OAuth Client Secret": "Votre secret client Google OAuth",
-    "Google": "Google"
+    "Google": "Google",
+    "Concurrency": "Concurrence",
+    "Follow global default": "Suivre la valeur globale par défaut",
+    "Per-model concurrency": "Concurrence par modèle",
+    "Leave it empty by default. A model configured here uses its own concurrency limit and is counted independently, no longer bound by the channel-level limit; other models share the channel-level limit.": "Laisser vide par défaut. Un modèle configuré ici utilise sa propre limite de concurrence et est compté indépendamment, sans être soumis à la limite du canal ; les autres modèles partagent la limite du canal.",
+    "No model configured yet": "Aucun modèle configuré pour le moment",
+    "Select or type a model name": "Sélectionner ou saisir un nom de modèle",
+    "Concurrency limit": "Limite de concurrence",
+    "Add model concurrency": "Ajouter une concurrence de modèle",
+    "Not set separately; follows the global default concurrency": "Non défini séparément ; suit la concurrence globale par défaut",
+    "This channel does not limit concurrency": "Ce canal ne limite pas la concurrence",
+    "Per-model concurrency has a row without a model": "Une ligne de concurrence par modèle n'a pas de modèle sélectionné",
+    "Per-model concurrency must be an integer between 1 and 1000000": "La concurrence par modèle doit être un entier entre 1 et 1000000",
+    "Per-model concurrency contains duplicate models": "La concurrence par modèle contient des modèles en double",
+    "Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.": "Limite les requêtes en cours pour ce canal. Laisser vide pour la valeur globale par défaut ; 0 signifie illimité. Les modèles ayant leur propre concurrence ne sont pas concernés.",
+    "Enable channel concurrency limit": "Activer la limite de concurrence du canal",
+    "Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.": "Limite les requêtes en cours par canal. Les requêtes au-delà de la limite sont rejetées avec un code 429, sans nouvel essai sur un autre canal.",
+    "Default channel concurrency": "Concurrence par défaut du canal",
+    "concurrent": "concurrents",
+    "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Utilisé lorsqu'un canal n'a pas de concurrence propre. Plage 0-1000000 ; 0 signifie illimité.",
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Un canal peut remplacer cette valeur par défaut dans sa fenêtre d'édition ; les modèles configurés dans « Paramètres avancés - Concurrence par modèle » utilisent leur propre limite et sont comptés indépendamment, sans être soumis à la limite du canal."
   }
 }

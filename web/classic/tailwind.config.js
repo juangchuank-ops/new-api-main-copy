@@ -142,6 +142,15 @@ export default {
         'semi-border-radius-large': 'var(--semi-border-radius-large)',
         'semi-border-radius-circle': 'var(--semi-border-radius-circle)',
         'semi-border-radius-full': 'var(--semi-border-radius-full)',
+        // 原生刻度改为变量：主题设置抽屉选中圆角档位后整体联动。
+        // fallback 与 Tailwind 原生刻度一致，未选档位（Auto）时观感不变。
+        sm: 'var(--tw-radius-sm, 2px)',
+        DEFAULT: 'var(--tw-radius-default, 4px)',
+        md: 'var(--tw-radius-md, 6px)',
+        lg: 'var(--tw-radius-lg, 8px)',
+        xl: 'var(--tw-radius-xl, 12px)',
+        '2xl': 'var(--tw-radius-2xl, 16px)',
+        '3xl': 'var(--tw-radius-3xl, 24px)',
       },
     },
   },

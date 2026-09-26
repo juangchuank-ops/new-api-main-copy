@@ -76,6 +76,8 @@ const createRateLimitSchema = (t: (key: string) => string) =>
       .refine(isValidJSON, {
         message: t('Invalid JSON format or values out of allowed range'),
       }),
+    ChannelConcurrencyEnabled: z.boolean(),
+    ChannelConcurrencyDefault: z.number().min(0).max(1000000),
   })
 
 type RateLimitFormValues = z.infer<ReturnType<typeof createRateLimitSchema>>
@@ -310,6 +312,70 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
               </FormItem>
             )}
           />
+
+          <div className='border-border/60 flex flex-col gap-4 border-t pt-4'>
+            <FormField
+              control={form.control}
+              name='ChannelConcurrencyEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Enable channel concurrency limit')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ChannelConcurrencyDefault'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Default channel concurrency')}</FormLabel>
+                  <FormControl>
+                    <div className='flex items-center gap-2'>
+                      <Input
+                        type='number'
+                        min={0}
+                        max={1000000}
+                        step={1}
+                        {...field}
+                        onChange={(e) =>
+                          field.onChange(parseInt(e.target.value) || 0)
+                        }
+                      />
+                      <span className='text-muted-foreground text-sm'>
+                        {t('concurrent')}
+                      </span>
+                    </div>
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'A single channel can override this default in its edit dialog. Models configured under "Advanced settings - Per-model concurrency" use their own limit and are counted independently, no longer bound by the channel-level limit.'
+              )}
+            </p>
+          </div>
         </SettingsForm>
       </Form>
     </SettingsSection>

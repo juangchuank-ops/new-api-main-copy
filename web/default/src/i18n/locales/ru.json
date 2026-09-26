@@ -5009,6 +5009,26 @@
     "Allow users to sign in with Google": "Разрешить пользователям входить через Google",
     "Your Google OAuth Client ID": "Ваш Client ID Google OAuth",
     "Your Google OAuth Client Secret": "Ваш Client Secret Google OAuth",
-    "Google": "Google"
+    "Google": "Google",
+    "Concurrency": "Параллелизм",
+    "Follow global default": "Использовать глобальное значение",
+    "Per-model concurrency": "Параллелизм по моделям",
+    "Leave it empty by default. A model configured here uses its own concurrency limit and is counted independently, no longer bound by the channel-level limit; other models share the channel-level limit.": "По умолчанию оставьте пустым. Модель, настроенная здесь, использует свой лимит параллелизма и учитывается отдельно, не подчиняясь лимиту канала; остальные модели используют лимит канала.",
+    "No model configured yet": "Ни одна модель пока не настроена отдельно",
+    "Select or type a model name": "Выберите или введите имя модели",
+    "Concurrency limit": "Лимит параллелизма",
+    "Add model concurrency": "Добавить параллелизм модели",
+    "Not set separately; follows the global default concurrency": "Не задано отдельно — используется глобальное значение",
+    "This channel does not limit concurrency": "Для этого канала нет ограничения параллелизма",
+    "Per-model concurrency has a row without a model": "В настройках параллелизма по моделям есть строка без модели",
+    "Per-model concurrency must be an integer between 1 and 1000000": "Параллелизм по моделям должен быть целым числом от 1 до 1000000",
+    "Per-model concurrency contains duplicate models": "В настройках параллелизма по моделям есть повторяющиеся модели",
+    "Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.": "Верхний предел одновременных запросов для этого канала. Пусто — глобальное значение по умолчанию; 0 — без ограничений. Модели со своим лимитом не затрагиваются.",
+    "Enable channel concurrency limit": "Включить ограничение параллелизма каналов",
+    "Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.": "Ограничивает число одновременных запросов на канал. Запросы сверх лимита отклоняются с кодом 429 без повторной попытки на другом канале.",
+    "Default channel concurrency": "Параллелизм канала по умолчанию",
+    "concurrent": "одновременно",
+    "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Используется, если для канала не задан свой параллелизм. Диапазон 0–1000000; 0 — без ограничений.",
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Отдельный канал может переопределить это значение в окне редактирования. Модели, настроенные в «Дополнительные настройки — параллелизм по моделям», используют свой лимит и учитываются отдельно, не подчиняясь лимиту канала."
   }
 }

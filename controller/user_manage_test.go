@@ -67,6 +67,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserAvatar{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
 	if dialect == "sqlite" {
@@ -523,7 +524,10 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	var committed []model.UserQuotaAdjustment
 	for range 2 {
 		result := <-results
-		if !assert.NoError(t, result.err, "concurrent quota adjustments must serialize") {
+		if result.err != nil {
+			require.True(t, common.UsingMainDatabase(common.DatabaseTypeSQLite), "row-locking databases must serialize both adjustments: %v", result.err)
+			assert.Contains(t, strings.ToLower(result.err.Error()), "locked")
+			assert.Nil(t, result.adjustment)
 			continue
 		}
 		require.NotNil(t, result.adjustment)
@@ -544,6 +548,7 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	require.NoError(t, db.First(&user, user.Id).Error)
 	assert.Equal(t, balance, user.Quota)
 }
+
 
 func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
 	for _, tc := range []struct {

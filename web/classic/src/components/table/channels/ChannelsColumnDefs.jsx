@@ -687,6 +687,38 @@ export const getChannelsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.CONCURRENCY,
+      title: t('并发'),
+      dataIndex: 'concurrency',
+      width: 90,
+      render: (text, record) => {
+        // 标签聚合行：子渠道并发取值不一致时记录为空串。
+        if (record.concurrency === '') {
+          return <span style={{ color: 'var(--semi-color-text-2)' }}>-</span>;
+        }
+        // 渠道级并发只约束未单独配置并发的模型。
+        if (record.concurrency === null || record.concurrency === undefined) {
+          return (
+            <Tooltip content={t('未单独设置，跟随全局默认并发')}>
+              <Tag color='grey' type='ghost' shape='circle'>
+                {t('默认')}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        if (record.concurrency === 0) {
+          return (
+            <Tooltip content={t('该渠道不限制并发')}>
+              <Tag color='white' type='ghost' shape='circle'>
+                {t('不限')}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        return <span>{record.concurrency}</span>;
+      },
+    },
+    {
       key: COLUMN_KEYS.OPERATE,
       title: '',
       dataIndex: 'operate',

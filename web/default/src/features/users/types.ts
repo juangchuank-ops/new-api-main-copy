@@ -56,6 +56,8 @@ export const userSchema = z.object({
   updated_at: z.number().optional(),
   last_login_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
+  auto_ban_rule: z.string().optional(),
+  auto_ban_until: z.number().optional(),
   remark: z.string().optional(),
 })
 export type User = z.infer<typeof userSchema>

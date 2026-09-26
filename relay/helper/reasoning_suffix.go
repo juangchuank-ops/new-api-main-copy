@@ -3,16 +3,13 @@ package helper
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
 )
@@ -36,9 +33,6 @@ func ApplyReasoningModelSuffix(c *gin.Context, info *relaycommon.RelayInfo, outb
 
 	opts := info.ConvOptions()
 	origin := info.GetOriginModelName()
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		origin = strings.TrimSuffix(origin, ratio_setting.CompactModelSuffix)
-	}
 	upstream := ""
 	if info.ChannelMeta != nil {
 		upstream = info.UpstreamModelName
@@ -65,10 +59,11 @@ func ApplyReasoningModelSuffix(c *gin.Context, info *relaycommon.RelayInfo, outb
 	}
 
 	if selected.hasThinking {
-		explicit, err := explicitIntentFromRequest(info.Request)
+		explicit, explicitDiagnostics, err := explicitIntentFromRequest(info.Request)
 		if err != nil {
 			return reasoning.AsClientError(err)
 		}
+		diagnostics = append(diagnostics, explicitDiagnostics...)
 		diagnostics = append(diagnostics, modifierRequestOverrideDiagnostics(explicit, selected.intent)...)
 		if selected.intent.IncludeThoughts == nil {
 			selected.intent.IncludeThoughts = explicit.IncludeThoughts
@@ -221,7 +216,7 @@ func parseHostModelSuffix(name string, opts *convmeta.Options) (string, reasonin
 	)
 }
 
-func explicitIntentFromRequest(req dto.Request) (reasoning.Intent, error) {
+func explicitIntentFromRequest(req dto.Request) (reasoning.Intent, []types.ConversionDiagnostic, error) {
 	switch r := req.(type) {
 	case *dto.ClaudeRequest:
 		return reasoning.FromClaude(r)
@@ -232,6 +227,6 @@ func explicitIntentFromRequest(req dto.Request) (reasoning.Intent, error) {
 	case *dto.OpenAIResponsesRequest:
 		return reasoning.FromOpenAIResponses(r)
 	default:
-		return reasoning.Intent{}, nil
+		return reasoning.Intent{}, nil, nil
 	}
 }

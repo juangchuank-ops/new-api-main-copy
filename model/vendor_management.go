@@ -151,9 +151,6 @@ func buildVendorOperationPreview(db *gorm.DB, operation VendorOperation) (*Vendo
 		for _, id := range ids {
 			vendor := byID[id]
 			if vendor == nil {
-				if operation.Action == "delete" && operation.ExpectedVersion == "" && len(ids) == 1 {
-					continue // Preserve idempotent single deletion for legacy callers.
-				}
 				return nil, fmt.Errorf("%w: source vendor does not exist", ErrVendorConflict)
 			}
 			if operation.Action == "merge" && id == operation.TargetVendorID {
@@ -237,6 +234,7 @@ func applyVendorOperation(operation VendorOperation) (*VendorOperationResult, er
 			for _, vendor := range preview.Sources {
 				result.DeletedVendors = append(result.DeletedVendors, vendor.Id)
 			}
+			// 软删除会保留数据行，active_name 的唯一索引必须先释放，否则同名供应商无法重建
 			if err := tx.Model(&Vendor{}).Where("id IN ?", result.DeletedVendors).Update("active_name", nil).Error; err != nil {
 				return err
 			}

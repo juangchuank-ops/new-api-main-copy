@@ -1,0 +1,144 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+/* ==================== 主题设置抽屉：外观个性化 ==================== */
+/* 由 body data 属性驱动（见 context/ThemeAppearance），仅覆盖非默认值 */
+
+/* ---- 字体（Auto 不写属性，保持现状：正文 Public Sans / 标题 Fraunces）---- */
+body[data-theme-font='sans'] {
+  font-family: var(--font-sans);
+}
+
+body[data-theme-font='serif'] {
+  font-family: var(--font-serif);
+}
+
+body[data-theme-font='sans'] h1,
+body[data-theme-font='sans'] h2,
+body[data-theme-font='sans'] h3,
+body[data-theme-font='sans'] h4,
+body[data-theme-font='sans'] h5,
+body[data-theme-font='sans'] h6,
+body[data-theme-font='sans'] .semi-typography-title,
+body[data-theme-font='sans'] .semi-card-header h3,
+body[data-theme-font='sans'] .semi-modal-header h3 {
+  font-family: var(--font-sans);
+}
+
+body[data-theme-font='serif'] h1,
+body[data-theme-font='serif'] h2,
+body[data-theme-font='serif'] h3,
+body[data-theme-font='serif'] h4,
+body[data-theme-font='serif'] h5,
+body[data-theme-font='serif'] h6,
+body[data-theme-font='serif'] .semi-typography-title,
+body[data-theme-font='serif'] .semi-card-header h3,
+body[data-theme-font='serif'] .semi-modal-header h3 {
+  font-family: var(--font-serif);
+}
+
+/* ---- 圆角（Auto 不写属性；选择后覆盖 Semi 与 tokens 的半径变量）---- */
+body[data-theme-radius='none'] {
+  --app-radius: 0px;
+}
+body[data-theme-radius='sm'] {
+  --app-radius: 5px;
+}
+body[data-theme-radius='md'] {
+  --app-radius: 8px;
+}
+body[data-theme-radius='lg'] {
+  --app-radius: 12px;
+}
+body[data-theme-radius='xl'] {
+  --app-radius: 16px;
+}
+
+body[data-theme-radius] {
+  --semi-border-radius-extra-small: calc(var(--app-radius) * 0.5);
+  --semi-border-radius-small: calc(var(--app-radius) * 0.75);
+  --semi-border-radius-medium: var(--app-radius);
+  --semi-border-radius-large: calc(var(--app-radius) * 1.5);
+  --radius-sm: calc(var(--app-radius) * 0.75);
+  --radius-md: var(--app-radius);
+  --radius-lg: calc(var(--app-radius) * 1.5);
+  --radius-xl: calc(var(--app-radius) * 1.75);
+  --radius-2xl: calc(var(--app-radius) * 2);
+}
+
+/* Tailwind 原生 rounded-* 刻度跟随档位（见 tailwind.config.js 的变量映射） */
+body[data-theme-radius='none'] {
+  --tw-radius-sm: 0px;
+  --tw-radius-default: 0px;
+  --tw-radius-md: 0px;
+  --tw-radius-lg: 0px;
+  --tw-radius-xl: 0px;
+  --tw-radius-2xl: 0px;
+  --tw-radius-3xl: 0px;
+}
+body[data-theme-radius='sm'] {
+  --tw-radius-sm: 4px;
+  --tw-radius-default: 5px;
+  --tw-radius-md: 5px;
+  --tw-radius-lg: 6px;
+  --tw-radius-xl: 8px;
+  --tw-radius-2xl: 10px;
+  --tw-radius-3xl: 14px;
+}
+body[data-theme-radius='md'] {
+  --tw-radius-sm: 6px;
+  --tw-radius-default: 7px;
+  --tw-radius-md: 8px;
+  --tw-radius-lg: 9px;
+  --tw-radius-xl: 11px;
+  --tw-radius-2xl: 13px;
+  --tw-radius-3xl: 18px;
+}
+body[data-theme-radius='lg'] {
+  --tw-radius-sm: 8px;
+  --tw-radius-default: 9px;
+  --tw-radius-md: 10px;
+  --tw-radius-lg: 12px;
+  --tw-radius-xl: 14px;
+  --tw-radius-2xl: 17px;
+  --tw-radius-3xl: 22px;
+}
+body[data-theme-radius='xl'] {
+  --tw-radius-sm: 10px;
+  --tw-radius-default: 11px;
+  --tw-radius-md: 12px;
+  --tw-radius-lg: 14px;
+  --tw-radius-xl: 17px;
+  --tw-radius-2xl: 20px;
+  --tw-radius-3xl: 26px;
+}
+
+/* ---- 内容宽度（仅控制台/定价这类固定布局页面）---- */
+body[data-content-width='centered'] .app-layout-fixed .semi-layout-content {
+  max-width: 1400px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ---- 侧边栏变体：floating（悬浮）时导航面板自身观感 ---- */
+body[data-sidebar-variant='floating'] .app-sider .semi-navigation {
+  height: 100%;
+  border-radius: inherit;
+}

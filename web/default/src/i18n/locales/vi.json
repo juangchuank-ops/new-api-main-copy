@@ -5009,6 +5009,26 @@
     "Allow users to sign in with Google": "Cho phép người dùng đăng nhập bằng Google",
     "Your Google OAuth Client ID": "Google OAuth Client ID của bạn",
     "Your Google OAuth Client Secret": "Google OAuth Client Secret của bạn",
-    "Google": "Google"
+    "Google": "Google",
+    "Concurrency": "Đồng thời",
+    "Follow global default": "Theo mặc định chung",
+    "Per-model concurrency": "Đồng thời theo mô hình",
+    "Leave it empty by default. A model configured here uses its own concurrency limit and is counted independently, no longer bound by the channel-level limit; other models share the channel-level limit.": "Mặc định để trống. Mô hình được cấu hình ở đây dùng giới hạn đồng thời riêng và được đếm độc lập, không bị ràng buộc bởi giới hạn cấp kênh; các mô hình khác dùng chung giới hạn cấp kênh.",
+    "No model configured yet": "Chưa cấu hình mô hình nào",
+    "Select or type a model name": "Chọn hoặc nhập tên mô hình",
+    "Concurrency limit": "Giới hạn đồng thời",
+    "Add model concurrency": "Thêm đồng thời mô hình",
+    "Not set separately; follows the global default concurrency": "Chưa đặt riêng; theo đồng thời mặc định chung",
+    "This channel does not limit concurrency": "Kênh này không giới hạn đồng thời",
+    "Per-model concurrency has a row without a model": "Có dòng đồng thời theo mô hình chưa chọn mô hình",
+    "Per-model concurrency must be an integer between 1 and 1000000": "Đồng thời theo mô hình phải là số nguyên từ 1 đến 1000000",
+    "Per-model concurrency contains duplicate models": "Đồng thời theo mô hình có mô hình bị lặp",
+    "Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.": "Giới hạn số yêu cầu đang xử lý đồng thời của kênh này. Để trống để dùng mặc định chung; 0 nghĩa là không giới hạn. Các mô hình đã đặt đồng thời riêng không bị ảnh hưởng.",
+    "Enable channel concurrency limit": "Bật giới hạn đồng thời kênh",
+    "Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.": "Giới hạn số yêu cầu đang xử lý đồng thời trên mỗi kênh. Yêu cầu vượt giới hạn bị từ chối với mã 429 và không thử lại trên kênh khác.",
+    "Default channel concurrency": "Đồng thời kênh mặc định",
+    "concurrent": "đồng thời",
+    "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Dùng khi kênh chưa đặt đồng thời riêng. Phạm vi 0-1000000; 0 nghĩa là không giới hạn.",
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "Mỗi kênh có thể ghi đè giá trị mặc định này trong hộp thoại chỉnh sửa. Các mô hình được cấu hình trong \"Cài đặt nâng cao - Đồng thời theo mô hình\" dùng giới hạn riêng và được đếm độc lập, không bị ràng buộc bởi giới hạn cấp kênh."
   }
 }

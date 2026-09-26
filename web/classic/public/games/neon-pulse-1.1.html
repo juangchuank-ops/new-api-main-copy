@@ -1,0 +1,2228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>NEON PULSE</title>
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#05070b;
+  --panel:#0b111a;
+  --line:#2a3442;
+  --text:#f4f7ff;
+  --muted:#929daf;
+  --mint:#54f6c2;
+  --cyan:#43d9ff;
+  --yellow:#ffcf5a;
+  --red:#ff5d73;
+  --blue:#71a7ff;
+}
+html,body{
+  margin:0;width:100%;height:100%;overflow:hidden;
+  background:var(--bg);color:var(--text);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif
+}
+button{font:inherit}
+canvas{
+  display:block;width:100%;height:100%;
+  cursor:crosshair;touch-action:none
+}
+.hud{
+  position:fixed;inset:0;padding:22px;
+  display:flex;justify-content:space-between;
+  align-items:flex-start;pointer-events:none
+}
+.brand{font-size:13px;font-weight:900;letter-spacing:3px}
+.stats{text-align:right;font-variant-numeric:tabular-nums}
+.score{font-size:30px;line-height:1;font-weight:900}
+.meta{margin-top:6px;color:var(--muted);font-size:12px;font-weight:700}
+.coin-value{color:var(--cyan)}
+.wave-track{
+  position:fixed;left:0;top:0;width:100%;height:4px;
+  background:#171d26;pointer-events:none
+}
+.wave-track i{
+  display:block;width:0;height:100%;background:var(--mint);
+  box-shadow:0 0 14px var(--mint)
+}
+.bottom-hud{
+  position:fixed;left:22px;right:22px;bottom:20px;
+  display:flex;justify-content:space-between;align-items:flex-end;
+  gap:20px;pointer-events:none
+}
+.status-bars{width:min(310px,68vw);display:grid;gap:8px}
+.bar-row{
+  display:grid;grid-template-columns:48px 1fr 55px;
+  align-items:center;gap:8px;color:var(--muted);
+  font-size:10px;font-weight:900;letter-spacing:1px
+}
+.bar{height:5px;background:#252d39;overflow:hidden}
+.bar i{display:block;width:100%;height:100%;transform-origin:left}
+.hp-bar i{background:var(--red);box-shadow:0 0 8px var(--red)}
+.dash-bar i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+.inventory{display:flex;flex-wrap:wrap;gap:6px;min-height:31px;margin-top:2px}
+.item-slot{
+  display:grid;grid-template-columns:24px auto;align-items:center;height:29px;
+  border:1px solid currentColor;background:rgba(5,7,11,.84);
+  color:var(--mint);font-size:10px;font-weight:900;font-variant-numeric:tabular-nums
+}
+.item-slot.revenge{color:var(--yellow)}
+.item-icon{display:grid;place-items:center;width:24px;height:100%;font-size:15px}
+.item-count{padding:0 7px;border-left:1px solid currentColor;white-space:nowrap}
+.item-slot.active{box-shadow:0 0 13px color-mix(in srgb,currentColor 45%,transparent)}
+.combat-readout{display:grid;justify-items:end;gap:8px}
+.combo{
+  color:var(--yellow);font-size:14px;font-weight:900;
+  text-align:right;font-variant-numeric:tabular-nums
+}
+.overlay{
+  position:fixed;inset:0;z-index:20;display:grid;place-items:center;
+  padding:20px;overflow:auto;background:rgba(2,4,8,.78);
+  backdrop-filter:blur(12px)
+}
+.hidden{display:none}
+#shopOverlay{
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .42s ease,visibility .42s
+}
+#shopOverlay .shop-panel{
+  opacity:0;transform:translateY(28px) scale(.975);
+  transition:opacity .45s ease,transform .55s cubic-bezier(.2,.85,.25,1)
+}
+#shopOverlay.active{opacity:1;visibility:visible;pointer-events:auto}
+#shopOverlay.active .shop-panel{opacity:1;transform:translateY(0) scale(1)}
+.salvage-status{
+  position:fixed;z-index:12;left:50%;top:18%;width:min(390px,88vw);
+  transform:translate(-50%,-8px);padding:13px 16px;
+  border-top:1px solid rgba(67,217,255,.75);
+  border-bottom:1px solid rgba(67,217,255,.24);
+  background:rgba(4,12,18,.78);text-align:center;pointer-events:none;
+  opacity:0;transition:opacity .25s ease,transform .25s ease
+}
+.salvage-status.active{opacity:1;transform:translate(-50%,0)}
+.salvage-label{color:var(--cyan);font-size:11px;font-weight:900;letter-spacing:2px}
+.salvage-time{margin-top:5px;font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
+.salvage-meter{height:2px;margin-top:10px;background:#24313b;overflow:hidden}
+.salvage-meter i{display:block;width:100%;height:100%;background:var(--cyan);transform-origin:left}
+.wave-transition{
+  position:fixed;inset:0;z-index:40;display:grid;place-items:center;
+  background:#05070b;opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .38s ease,visibility .38s
+}
+.wave-transition::before,.wave-transition::after{
+  content:"";position:absolute;left:0;width:100%;height:1px;
+  background:var(--mint);box-shadow:0 0 22px var(--mint)
+}
+.wave-transition::before{top:calc(50% - 55px)}
+.wave-transition::after{top:calc(50% + 55px)}
+.wave-transition.active{opacity:1;visibility:visible}
+.transition-copy{text-align:center;transform:scale(.94);transition:transform .5s cubic-bezier(.2,.85,.25,1)}
+.wave-transition.active .transition-copy{transform:scale(1)}
+.transition-kicker{color:var(--mint);font-size:10px;font-weight:900;letter-spacing:3px}
+.transition-wave{margin-top:7px;font-size:clamp(30px,6vw,52px);font-weight:900}
+.start-panel{width:min(520px,94vw);text-align:center}
+h1{
+  margin:0;font-size:clamp(48px,11vw,88px);
+  line-height:.84;letter-spacing:0
+}
+.subtitle{
+  margin:24px auto;max-width:410px;color:#aab2c2;
+  font-size:14px;line-height:1.8
+}
+.primary{
+  border:1px solid #657085;background:#f4f7ff;color:#080b10;
+  padding:13px 25px;font-size:13px;font-weight:900;
+  letter-spacing:1px;cursor:pointer
+}
+.primary:hover{border-color:var(--mint);background:var(--mint)}
+.primary:disabled{cursor:not-allowed;opacity:.38;background:#79808a}
+.mode-actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+.secondary{
+  border:1px solid #3c4858;background:#0b111a;color:var(--text);
+  padding:12px 18px;font-size:12px;font-weight:900;cursor:pointer
+}
+.secondary:hover{border-color:var(--cyan);color:var(--cyan)}
+.shop-panel{width:min(920px,96vw)}
+.shop-head{
+  display:flex;justify-content:space-between;align-items:flex-end;
+  gap:18px;margin-bottom:18px
+}
+.shop-title{margin:0;font-size:13px;line-height:1;font-weight:900;letter-spacing:3px;color:var(--mint)}
+.shop-summary{margin-top:12px}
+.report-title{font-size:clamp(28px,5vw,44px);line-height:1;font-weight:900}
+.report-title span{color:var(--mint)}
+.report-grid{display:flex;gap:22px;margin-top:14px}
+.report-stat{min-width:95px;padding-left:10px;border-left:2px solid #2c3744}
+.report-stat.accent{border-color:var(--cyan)}
+.report-label{color:var(--muted);font-size:9px;font-weight:900;letter-spacing:1px}
+.report-value{margin-top:3px;font-size:17px;font-weight:900;font-variant-numeric:tabular-nums}
+.report-stat.accent .report-value{color:var(--cyan);text-shadow:0 0 14px rgba(67,217,255,.4)}
+.shop-wallet{
+  color:var(--cyan);font-size:23px;font-weight:900;
+  white-space:nowrap;text-shadow:0 0 16px rgba(67,217,255,.45)
+}
+.contract-section{margin:0 0 16px;padding:14px;border:1px solid #303a49;background:#080d14}
+.contract-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.contract-title{color:var(--yellow);font-size:11px;font-weight:900;letter-spacing:2px}
+.contract-hint{color:var(--muted);font-size:10px}
+.contracts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.contract-card{
+  min-height:105px;padding:12px;border:1px solid #343e4c;background:#0d131c;
+  color:var(--text);text-align:left;cursor:pointer;transition:.15s
+}
+.contract-card:hover{border-color:var(--yellow);transform:translateY(-2px)}
+.contract-card.selected{border-color:var(--yellow);background:#1a170d;box-shadow:inset 3px 0 var(--yellow)}
+.contract-name{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:900}
+.contract-name b{color:var(--yellow);font-size:17px}
+.contract-objective{margin-top:8px;color:var(--muted);font-size:10px;line-height:1.45}
+.contract-reward{margin-top:7px;color:var(--cyan);font-size:11px;font-weight:900}
+.contract-hud{
+  position:fixed;z-index:8;left:22px;top:92px;width:min(285px,70vw);
+  padding:10px 12px;border-left:2px solid var(--yellow);
+  background:rgba(5,7,11,.72);pointer-events:none;opacity:0;
+  transition:opacity .2s,border-color .18s,background .18s,transform .18s
+}
+.contract-hud.active{opacity:1}
+.contract-hud.resolved{transform:translateX(8px) scale(1.03)}
+.contract-hud.success{border-color:var(--mint);background:rgba(5,38,29,.9);box-shadow:0 0 28px rgba(84,246,194,.22)}
+.contract-hud.failure{border-color:var(--red);background:rgba(45,8,16,.9);box-shadow:0 0 28px rgba(255,93,115,.22)}
+.contract-hud-title{color:var(--yellow);font-size:10px;font-weight:900;letter-spacing:1px}
+.contract-hud.success .contract-hud-title,.contract-hud.success .contract-hud-progress{color:var(--mint)}
+.contract-hud.failure .contract-hud-title,.contract-hud.failure .contract-hud-progress{color:var(--red)}
+.contract-hud-progress{margin-top:4px;font-size:12px;font-weight:900}
+.contract-hud-risk{margin-top:3px;color:var(--muted);font-size:9px}
+.contract-result{
+  position:fixed;inset:0;z-index:35;display:grid;place-items:center;
+  overflow:hidden;pointer-events:none;opacity:0;visibility:hidden
+}
+.contract-result::before{
+  content:"";position:absolute;inset:0;border:0 solid currentColor;
+  background:rgba(2,4,8,.35)
+}
+.contract-result.active{opacity:1;visibility:visible}
+.contract-result.active::before{animation:contractImpact 1.15s cubic-bezier(.15,.75,.2,1)}
+.contract-result.success{color:var(--mint)}.contract-result.failure{color:var(--red)}
+.contract-result-line{
+  position:absolute;left:-10%;top:50%;width:120%;height:2px;background:currentColor;
+  box-shadow:0 0 35px currentColor;transform:scaleX(0)
+}
+.contract-result.active .contract-result-line{animation:contractSweep 1.05s cubic-bezier(.15,.85,.2,1)}
+.contract-result-copy{text-align:center;transform:scale(1.65);opacity:0}
+.contract-result.active .contract-result-copy{animation:contractStamp 1.15s cubic-bezier(.12,.82,.18,1)}
+.contract-result-kicker{font-size:11px;font-weight:900;letter-spacing:4px}
+.contract-result-title{margin-top:8px;font-size:clamp(38px,8vw,78px);line-height:1;font-weight:900;text-shadow:0 0 34px currentColor}
+.contract-result-detail{margin-top:12px;color:#f4f7ff;font-size:13px;font-weight:900}
+@keyframes contractImpact{
+  0%{border-width:0;background:rgba(2,4,8,0)}
+  15%{border-width:18px;background:rgba(255,255,255,.12)}
+  45%{border-width:5px;background:rgba(2,4,8,.56)}
+  100%{border-width:0;background:rgba(2,4,8,0)}
+}
+@keyframes contractSweep{0%{transform:scaleX(0)}35%,68%{transform:scaleX(1)}100%{transform:scaleX(0)}}
+@keyframes contractStamp{0%{transform:scale(1.65);opacity:0}18%{transform:scale(.92);opacity:1}32%{transform:scale(1);opacity:1}82%{transform:scale(1);opacity:1}100%{transform:scale(.96);opacity:0}}
+.offers{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.upgrade{
+  position:relative;min-height:220px;border:1px solid var(--line);
+  border-radius:6px;padding:18px;background:var(--panel);
+  color:var(--text);text-align:left;cursor:pointer;
+  transition:transform .13s,border-color .13s,background .13s
+}
+.upgrade:hover:not(:disabled){
+  transform:translateY(-3px);border-color:var(--mint);background:#101923
+}
+.upgrade.item-offer{border-color:#6b592f;background:#15130d}
+.upgrade.item-offer:hover:not(:disabled){border-color:var(--yellow);background:#1b180e}
+.upgrade.item-offer .upgrade-icon,.upgrade.item-offer .upgrade-level{color:var(--yellow)}
+.upgrade:disabled{cursor:not-allowed;opacity:.42}
+.upgrade-icon{
+  display:grid;place-items:center;width:42px;height:42px;
+  margin-bottom:22px;border:1px solid #3b4655;
+  color:var(--mint);font-size:22px;font-weight:900
+}
+.upgrade-top{display:flex;justify-content:space-between;gap:8px}
+.upgrade-name{font-size:15px;font-weight:900}
+.upgrade-level{color:var(--mint);font-size:11px;font-weight:900}
+.upgrade-desc{
+ min-height:50px;margin:12px 0;color:var(--muted);
+  font-size:12px;line-height:1.55
+}
+.upgrade-cost{color:var(--cyan);font-size:14px;font-weight:900}
+.shop-actions{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:16px;margin-top:18px
+}
+.shop-tip{color:var(--muted);font-size:12px}
+.damage-flash{
+  position:fixed;inset:0;z-index:10;pointer-events:none;
+  border:0 solid transparent
+}
+.damage-flash.active{animation:damageFlash .3s ease-out}
+@keyframes damageFlash{
+  0%{border-width:14px;border-color:rgba(255,93,115,.85)}
+  100%{border-width:0;border-color:rgba(255,93,115,0)}
+}
+@media(max-width:680px){
+  .hud{padding:16px}.score{font-size:24px}
+  .bottom-hud{left:16px;right:16px;bottom:14px}
+  .contract-hud{left:16px;top:82px}
+  .contracts,.offers{grid-template-columns:1fr}
+  .shop-panel{max-height:92vh;overflow:auto}
+  .upgrade{min-height:150px}
+  .upgrade-icon{margin-bottom:12px}
+  .upgrade-desc{min-height:0}
+  .shop-head{align-items:flex-start}.shop-wallet{font-size:18px}
+  .report-grid{gap:10px}.report-stat{min-width:76px}
+  .shop-tip{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="wave-track"><i id="waveProgress"></i></div>
+
+<div class="hud">
+  <div>
+    <div class="brand">NEON PULSE</div>
+    <div class="meta" id="waveLabel">WAVE 01</div>
+    <div class="meta coin-value" id="coinLabel">▣ 0</div>
+  </div>
+  <div class="stats">
+    <div class="score" id="score">000000</div>
+    <div class="meta" id="best">BEST 000000</div>
+  </div>
+</div>
+
+<div class="bottom-hud">
+  <div class="status-bars">
+    <div class="bar-row">
+      <span>CORE</span>
+      <div class="bar hp-bar"><i id="hpBar"></i></div>
+      <span id="hpText">3 / 3</span>
+    </div>
+    <div class="bar-row">
+      <span>DASH</span>
+      <div class="bar dash-bar"><i id="dashBar"></i></div>
+      <span id="dashText">READY</span>
+    </div>
+    <div class="inventory" id="itemInventory"></div>
+  </div>
+  <div class="combat-readout">
+    <div class="combo" id="combo">CHAIN ×1</div>
+  </div>
+</div>
+
+<div class="contract-hud" id="contractHud">
+  <div class="contract-hud-title" id="contractHudTitle"></div>
+  <div class="contract-hud-progress" id="contractHudProgress"></div>
+  <div class="contract-hud-risk" id="contractHudRisk"></div>
+</div>
+
+<div class="contract-result" id="contractResult">
+  <div class="contract-result-line"></div>
+  <div class="contract-result-copy">
+    <div class="contract-result-kicker" id="contractResultKicker">CONTRACT VERIFIED</div>
+    <div class="contract-result-title" id="contractResultTitle">合约完成</div>
+    <div class="contract-result-detail" id="contractResultDetail"></div>
+  </div>
+</div>
+
+<div class="damage-flash" id="damageFlash"></div>
+
+<div class="salvage-status" id="salvageStatus">
+  <div class="salvage-label">战场回收窗口</div>
+  <div class="salvage-time" id="salvageTime">3.0s · 拾取剩余芯片</div>
+  <div class="salvage-meter"><i id="salvageMeter"></i></div>
+</div>
+
+<div class="wave-transition" id="waveTransition">
+  <div class="transition-copy">
+    <div class="transition-kicker">PULSE SYNCHRONIZED</div>
+    <div class="transition-wave" id="transitionWave">WAVE 02</div>
+  </div>
+</div>
+
+<div class="overlay" id="startOverlay">
+  <div class="start-panel">
+    <h1 id="mainTitle">NEON<br>PULSE</h1>
+    <div class="subtitle" id="mainSubtitle">
+      移动鼠标或触摸控制核心，武器自动锁定射击。<br>
+      点击、触摸或空格发动冲刺。
+    </div>
+    <div class="mode-actions" id="modeActions">
+      <button class="primary" id="startButton">接入战场</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="shopOverlay">
+  <div class="shop-panel">
+    <div class="shop-head">
+      <div>
+        <h2 class="shop-title">波次整备 / AFTER ACTION</h2>
+        <div class="shop-summary" id="shopSummary"></div>
+      </div>
+      <div class="shop-wallet" id="shopWallet">▣ 0</div>
+    </div>
+    <div class="contract-section">
+      <div class="contract-head">
+        <div class="contract-title">下一波战术合约 / RISK CONTRACT</div>
+        <div class="contract-hint">选择风险规则，达成目标获得额外芯片</div>
+      </div>
+      <div class="contracts" id="contracts"></div>
+    </div>
+    <div class="offers" id="offers"></div>
+    <div class="shop-actions">
+      <div class="shop-tip">购买后会立即补充一项新的随机升级或一次性道具</div>
+      <button class="primary" id="continueButton">进入下一波</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.querySelector("#game");
+const ctx = canvas.getContext("2d");
+const domCache = new Map();
+const $ = selector => {
+  let element=domCache.get(selector);
+  if(!element){
+    element=document.querySelector(selector);
+    domCache.set(selector,element);
+  }
+  return element;
+};
+
+let W = innerWidth;
+let H = innerHeight;
+let DPR = Math.min(devicePixelRatio || 1, 2);
+let state = "menu";
+let wavePhase = "combat";
+let last = 0;
+let worldTime = 0;
+let waveTime = 0;
+let spawnTimer = 0;
+let fireTimer = 0;
+let score = 0;
+let coins = 0;
+let wave = 1;
+let chain = 1;
+let chainTime = 0;
+let killsThisWave = 0;
+let coinsThisWave = 0;
+let shake = 0;
+let flash = 0;
+let hitStop = 0;
+let bossSpawned = false;
+let salvageTime = 0;
+let transitionTimer = 0;
+let eliteSpawnTimer = 0;
+let best = +(localStorage.neonPulseBest || 0);
+let audio = null;
+let animationId = 0;
+let nextEnemyId = 1;
+
+const WAVE_DURATION = 46;
+const SALVAGE_DURATION = 3;
+const SHOP_PRICE_MULTIPLIER = 1.85;
+const ITEM_OFFER_CHANCE = .28;
+const COLLISION_CELL_SIZE = 96;
+const keys = new Set();
+const enemyCollisionGrid = new Map();
+const collisionCandidates = [];
+let collisionQueryId = 0;
+
+let enemies = [];
+let bullets = [];
+let enemyBullets = [];
+let particles = [];
+let rings = [];
+let pickups = [];
+let texts = [];
+let stars = [];
+let shockwaves = [];
+let shopOffers = [];
+let contractOffers = [];
+let selectedContract = null;
+let activeContract = null;
+let contractStats = {hits:0,dashKills:0,eliteKills:0,eliteSpawned:0};
+
+const player = {
+  x:W/2,y:H/2,tx:W/2,ty:H/2,r:10,
+ hp:3,maxHp:3,damage:1,fireRate:3.1,
+  bulletSpeed:610,speed:1,dashCooldown:1.05,
+  dashTimer:0,dashDamage:3,invincible:0,
+  critChance:.05,critDamage:2,multiShot:1,
+  pierce:0,magnet:105,coinBonus:1,regen:0,
+  knockback:1,revengeTimer:0,trail:[],angle:0
+};
+
+const itemInventory = {shield:0,revenge:0};
+const consumableDefinitions = [
+  {
+    id:"itemShield",type:"item",itemId:"shield",icon:"◇",
+    name:"零点护盾",desc:"自动抵御下一次伤害，触发后消耗 1 个",base:30
+  },
+  {
+    id:"itemRevenge",type:"item",itemId:"revenge",icon:"▲",
+    name:"反击协议",desc:"受到伤害后自动消耗，5 秒内攻击伤害提高 50%",base:34
+  }
+];
+
+const contractDefinitions = [
+  {
+    id:"swarm",icon:"≋",name:"蜂群过载",
+    build(targetWave){return{
+      id:this.id,icon:this.icon,name:this.name,
+      objective:`击破 ${30+targetWave*4} 个目标`,target:30+targetWave*4,
+      risk:"敌群刷新加快 38%，编队规模扩大",reward:18+targetWave*6,
+      modifiers:{spawnRate:.62,packBonus:.28}
+    }}
+  },
+  {
+    id:"elite",icon:"◆",name:"精英猎杀",
+    build(targetWave){return{
+      id:this.id,icon:this.icon,name:this.name,
+      objective:`猎杀 ${2+Math.floor(targetWave/3)} 个脉冲精英`,target:2+Math.floor(targetWave/3),
+      risk:"精英拥有 3 倍生命并周期释放环形弹幕",reward:22+targetWave*7,
+      modifiers:{elite:true}
+    }}
+  },
+  {
+    id:"untouched",icon:"○",name:"无损协议",
+    build(targetWave){return{
+      id:this.id,icon:this.icon,name:this.name,
+      objective:"保持核心不受到真实伤害",target:0,
+      risk:"全部敌人移动速度提高 24%",reward:25+targetWave*8,
+      modifiers:{enemySpeed:1.24}
+    }}
+  },
+  {
+    id:"dash",icon:"↯",name:"冲撞处决",
+    build(targetWave){return{
+      id:this.id,icon:this.icon,name:this.name,
+      objective:`使用冲刺击破 ${4+Math.floor(targetWave/2)} 个目标`,target:4+Math.floor(targetWave/2),
+      risk:"冲刺伤害临时提高 75%，需要主动近身处决",reward:20+targetWave*7,
+      modifiers:{dashDamage:1.75}
+    }}
+  }
+];
+
+const upgradeLevels = {};
+
+const upgrades = [
+ {
+    id:"damage",icon:"▲",name:"过载弹头",desc:"子弹伤害提高 22%",
+    base:26,max:12,apply(){player.damage*=1.22}
+  },
+  {
+    id:"fireRate",icon:"»",name:"超频扳机",desc:"射击速度提高 12%",
+    base:27,max:10,apply(){player.fireRate*=1.12}
+  },
+  {
+    id:"maxHp",icon:"+",name:"核心扩容",desc:"最大生命 +1，并回复 1 点生命",
+    base:38,max:7,apply(){player.maxHp++;player.hp++}
+  },
+  {
+    id:"heal",icon:"✚",name:"紧急修复",desc:"立即回复 2 点生命",
+    base:22,max:Infinity,scaling:1.08,
+    available(){return player.hp<player.maxHp},
+    apply(){player.hp=Math.min(player.maxHp,player.hp+2)}
+ },
+  {
+    id:"multiShot",icon:"⋮",name:"分裂协议",desc:"每次射击增加 1 枚弹丸",
+    base:68,max:4,scaling:1.72,apply(){player.multiShot++}
+  },
+  {
+    id:"pierce",icon:"→",name:"相位穿透",desc:"子弹额外穿透 1 个敌人",
+    base:48,max:5,scaling:1.55,apply(){player.pierce++}
+  },
+  {
+    id:"crit",icon:"◇",name:"弱点扫描",desc:"暴击率提高 7%",
+    base:34,max:8,apply(){player.critChance+=.07}
+  },
+ {
+    id:"critDamage",icon:"!",name:"临界增幅",desc:"暴击伤害提高 30%",
+    base:42,max:7,apply(){player.critDamage+=.3}
+  },
+ {
+    id:"dash",icon:"↯",name:"脉冲冷却",desc:"冲刺冷却缩短 11%",
+    base:31,max:7,apply(){player.dashCooldown*=.89}
+  },
+  {
+    id:"dashDamage",icon:"◎",name:"冲击震荡",desc:"冲刺伤害 +2，冲击范围扩大",
+    base:37,max:7,apply(){player.dashDamage+=2}
+  },
+  {
+    id:"magnet",icon:"∩",name:"量子磁场",desc:"芯片和治疗拾取范围增加 50",
+    base:23,max:7,apply(){player.magnet+=50}
+  },
+  {
+    id:"coinBonus",icon:"▣",name:"赏金协议",desc:"芯片收益提高 16%",
+    base:48,max:7,apply(){player.coinBonus+=.16}
+  },
+  {
+    id:"regen",icon:"↻",name:"再生核心",desc:"每轮结算时回复 1 点生命",
+    base:58,max:4,apply(){player.regen++}
+  },
+  {
+    id:"speed",icon:"›",name:"矢量推进",desc:"移动响应和速度提高 10%",
+    base:25,max:6,apply(){player.speed*=1.1}
+  },
+  {
+    id:"bulletSpeed",icon:"—",name:"磁轨加速",desc:"弹速提高 16%",
+    base:22,max:6,apply(){player.bulletSpeed*=1.16}
+  },
+  {
+    id:"knockback",icon:")",name:"动能放大",desc:"命中击退效果提高 35%",
+    base:27,max:6,apply(){player.knockback*=1.35}
+  },
+  {
+    id:"fullHeal",icon:"✚",name:"完全修复",desc:"立即恢复全部生命",
+    base:55,max:Infinity,scaling:1,
+    available(){return player.hp<player.maxHp},
+    apply(){player.hp=player.maxHp}
+  }
+];
+
+function resize(){
+  W=innerWidth;H=innerHeight;
+ DPR=Math.min(devicePixelRatio||1,2);
+  canvas.width=Math.floor(W*DPR);
+  canvas.height=Math.floor(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+
+  if(!stars.length){
+    stars=Array.from({length:140},()=>({
+      x:Math.random()*W,y:Math.random()*H,z:Math.random()
+    }));
+  }
+  render();
+}
+
+function sound(freq=300,duration=.08,type="sine",volume=.04,slide=.55){
+  if(!audio)return;
+  const oscillator=audio.createOscillator();
+  const gain=audio.createGain();
+  const now=audio.currentTime;
+  oscillator.type=type;
+  oscillator.frequency.setValueAtTime(Math.max(20,freq),now);
+  oscillator.frequency.exponentialRampToValueAtTime(
+    Math.max(20,freq*slide),now+duration
+  );
+  gain.gain.setValueAtTime(volume,now);
+  gain.gain.exponentialRampToValueAtTime(.001,now+duration);
+  oscillator.connect(gain).connect(audio.destination);
+  oscillator.start(now);
+  oscillator.stop(now+duration);
+}
+
+function difficulty(){
+  return {
+    hp:Math.pow(1.24,wave-1),
+    speed:(1+Math.min(.7,(wave-1)*.045))*(activeContract?.modifiers.enemySpeed||1),
+    spawn:Math.max(.15,.76-wave*.04),
+    projectileSpeed:145+wave*9,
+    contactDamage:1+Math.floor((wave-1)/5)
+  };
+}
+
+function resetPlayer(){
+  Object.assign(player,{
+    x:W/2,y:H/2,tx:W/2,ty:H/2,
+    hp:3,maxHp:3,damage:1,fireRate:3.1,
+    bulletSpeed:610,speed:1,dashCooldown:1.05,
+    dashTimer:0,dashDamage:3,invincible:0,
+    critChance:.05,critDamage:2,multiShot:1,
+    pierce:0,magnet:105,coinBonus:1,regen:0,
+    knockback:1,revengeTimer:0,trail:[],angle:0
+  });
+}
+
+function clearWorld(){
+  enemies=[];bullets=[];enemyBullets=[];particles=[];
+  rings=[];pickups=[];texts=[];shockwaves=[];
+}
+
+function resetRun(){
+  clearWorld();
+  score=0;coins=0;wave=1;chain=1;chainTime=0;
+  worldTime=0;waveTime=0;spawnTimer=.5;fireTimer=.1;
+  shake=0;flash=0;hitStop=0;nextEnemyId=1;
+  killsThisWave=0;coinsThisWave=0;bossSpawned=false;
+  salvageTime=0;transitionTimer=0;eliteSpawnTimer=0;
+  contractOffers=[];selectedContract=null;activeContract=null;
+  contractStats={hits:0,dashKills:0,eliteKills:0,eliteSpawned:0};
+  for(const id of Object.keys(upgradeLevels))delete upgradeLevels[id];
+  for(const itemId of Object.keys(itemInventory))itemInventory[itemId]=0;
+  resetPlayer();
+  startWave();
+}
+
+function startGame(){
+  audio||=new(window.AudioContext||window.webkitAudioContext)();
+  audio.resume?.();
+  cancelAnimationFrame(animationId);
+  $("#startOverlay").classList.add("hidden");
+  $("#shopOverlay").classList.remove("active");
+  $("#shopOverlay").classList.add("hidden");
+  $("#waveTransition").classList.remove("active");
+  $("#salvageStatus").classList.remove("active");
+  resetRun();
+}
+
+function startWave(){
+  clearWorld();
+  $("#salvageStatus").classList.remove("active");
+  waveTime=0;
+  wavePhase="combat";
+  spawnTimer=.45;
+  fireTimer=.08;
+  killsThisWave=0;
+  coinsThisWave=0;
+  bossSpawned=false;
+  eliteSpawnTimer=3.5;
+  contractStats={hits:0,dashKills:0,eliteKills:0,eliteSpawned:0};
+  player.revengeTimer=0;
+  player.x=W/2;player.y=H/2;
+  player.tx=W/2;player.ty=H/2;
+  player.invincible=1;
+  player.trail=[];
+
+  state="playing";
+  last=performance.now();
+
+  showFixedText(
+    wave%5===0?`BOSS WAVE ${wave}`:`WAVE ${String(wave).padStart(2,"0")}`,
+    wave%5===0?"#ff5d73":"#f4f7ff",1.4,28
+  );
+
+  if(wave%5===0){
+    spawnBoss();
+    bossSpawned=true;
+  }
+
+  updateHud();
+  cancelAnimationFrame(animationId);
+  animationId=requestAnimationFrame(loop);
+}
+
+function pointerPosition(event){
+  const rect=canvas.getBoundingClientRect();
+  player.tx=(event.clientX-rect.left)*W/rect.width;
+  player.ty=(event.clientY-rect.top)*H/rect.height;
+}
+
+function dash(){
+  if(state!=="playing"||player.dashTimer>0||player.hp<=0)return;
+
+  player.dashTimer=player.dashCooldown;
+  player.invincible=.38;
+
+  const angle=Math.atan2(player.ty-player.y,player.tx-player.x);
+  const distance=92+player.speed*15;
+  const oldX=player.x,oldY=player.y;
+  player.x+=Math.cos(angle)*distance;
+  player.y+=Math.sin(angle)*distance;
+  player.x=Math.max(14,Math.min(W-14,player.x));
+  player.y=Math.max(14,Math.min(H-14,player.y));
+
+  shockwaves.push({
+    x:player.x,y:player.y,r:12,max:155+player.dashDamage*3,
+    life:.45,maxLife:.45,color:"#54f6c2"
+  });
+  rings.push({
+    x:oldX,y:oldY,r:8,speed:330,life:.45,maxLife:.45,
+    color:"#54f6c2",width:4
+  });
+
+  const contractDashMultiplier=activeContract?.modifiers.dashDamage||1;
+  for(const enemy of enemies){
+    if(enemy.dead)continue;
+    if(Math.hypot(enemy.x-player.x,enemy.y-player.y)<145+player.dashDamage*3){
+      damageEnemy(enemy,player.dashDamage*contractDashMultiplier,true,player.x,player.y,false,"dash");
+    }
+  }
+
+  burst(player.x,player.y,"#54f6c2",34,500,3);
+  shake=Math.max(shake,13);
+  flash=.12;
+  sound(145,.24,"sawtooth",.08,.3);
+}
+
+function edgePosition(padding=40){
+  const edge=Math.floor(Math.random()*4);
+  if(edge===0)return{x:Math.random()*W,y:-padding};
+  if(edge===1)return{x:W+padding,y:Math.random()*H};
+  if(edge===2)return{x:Math.random()*W,y:H+padding};
+  return{x:-padding,y:Math.random()*H};
+}
+
+function chooseEnemyType(){
+  const roll=Math.random();
+  if(wave>=4&&roll<Math.min(.19,.06+wave*.012))return"shooter";
+  if(wave>=3&&roll<Math.min(.37,.15+wave*.016))return"charger";
+  if(wave>=2&&roll<Math.min(.51,.25+wave*.018))return"tank";
+  return"chaser";
+}
+
+const ENEMY_CONFIGS={
+  chaser:{r:9,hp:2.3,speed:76,color:"#ffcf5a",value:1},
+  tank:{r:16,hp:8.5,speed:42,color:"#8d74ff",value:3},
+  charger:{r:11,hp:4.5,speed:64,color:"#ff7b45",value:2},
+  shooter:{r:12,hp:5.2,speed:48,color:"#ff5da8",value:3}
+};
+
+function spawnEnemy(forcedType,forceElite=false){
+  const d=difficulty();
+  const type=forcedType||chooseEnemyType();
+  const p=edgePosition();
+  const config=ENEMY_CONFIGS[type];
+  const elite=forceElite;
+  const hp=config.hp*d.hp*(elite?3:1);
+
+  enemies.push({
+    id:nextEnemyId++,type,x:p.x,y:p.y,r:config.r*(elite?1.35:1),
+    hp,maxHp:hp,
+    speed:config.speed*d.speed*(elite?1.08:1),color:elite?"#43d9ff":config.color,
+    coinValue:(config.value+Math.floor((wave-1)/4))*(elite?4:1),
+    phase:Math.random()*Math.PI*2,
+    rotation:Math.random()*Math.PI*2,
+    dead:false,hit:0,shootTimer:1+Math.random()*1.3,
+    chargeTimer:1.2+Math.random()*1.6,
+    chargeState:"idle",chargeAngle:0,chargeWindup:0,
+    elite,elitePulseTimer:2.2+Math.random(),
+    vx:0,vy:0,boss:false
+  });
+  if(elite){
+    contractStats.eliteSpawned++;
+    showFixedText("脉冲精英已入场","#43d9ff",.75,18);
+  }
+}
+
+function spawnBoss(){
+  const d=difficulty();
+  const p=edgePosition(70);
+  const hp=(105+wave*18)*Math.pow(1.13,wave-1);
+
+  enemies.push({
+    id:nextEnemyId++,type:"boss",x:p.x,y:p.y,r:34,
+    hp,maxHp:hp,speed:34*d.speed,color:"#ff315f",
+    coinValue:30+wave*5,phase:Math.random()*6,
+    rotation:0,dead:false,hit:0,boss:true,
+    shootTimer:1.4,summonTimer:4.5,burstTimer:2.8,
+    vx:0,vy:0
+  });
+
+  showFixedText("WARNING","#ff315f",2,34);
+  shake=18;
+  sound(80,.7,"sawtooth",.13,.45);
+}
+
+function nearestEnemy(){
+  let target=null;
+  let shortestSq=Infinity;
+  for(const enemy of enemies){
+    if(enemy.dead)continue;
+    const dx=enemy.x-player.x;
+    const dy=enemy.y-player.y;
+    const distanceSq=dx*dx+dy*dy;
+    if(distanceSq<shortestSq){shortestSq=distanceSq;target=enemy}
+  }
+ return target;
+}
+
+function shoot(){
+  const target=nearestEnemy();
+  if(!target)return;
+
+  const baseAngle=Math.atan2(target.y-player.y,target.x-player.x);
+  player.angle=baseAngle;
+  const count=player.multiShot;
+  const spread=Math.min(.5,.12*(count-1));
+
+  for(let i=0;i<count;i++){
+    const offset=count===1?0:-spread/2+spread*i/(count-1);
+    const angle=baseAngle+offset;
+    const crit=Math.random()<player.critChance;
+    bullets.push({
+      x:player.x+Math.cos(angle)*16,
+      y:player.y+Math.sin(angle)*16,
+      px:player.x,py:player.y,
+      vx:Math.cos(angle)*player.bulletSpeed,
+      vy:Math.sin(angle)*player.bulletSpeed,
+      damage:player.damage*(player.revengeTimer>0?1.5:1)*(crit?player.critDamage:1),
+      crit,life:1.5,hitsLeft:player.pierce,
+      hitIds:new Set()
+    });
+  }
+
+  burst(
+    player.x+Math.cos(baseAngle)*16,
+    player.y+Math.sin(baseAngle)*16,
+    "#dceaff",3,110,1.4
+  );
+  sound(510+Math.min(chain,20)*7,.035,"square",.016,.72);
+}
+
+function fireEnemyBullet(x,y,angle,speed,size=5,color="#ff5d73"){
+  enemyBullets.push({
+    x,y,px:x,py:y,vx:Math.cos(angle)*speed,
+    vy:Math.sin(angle)*speed,r:size,color,life:7
+  });
+}
+
+function enemyRadialBurst(enemy,count,speed){
+  const pulseColor=enemy.elite?"#43d9ff":"#ff315f";
+  for(let i=0;i<count;i++){
+    fireEnemyBullet(
+      enemy.x,enemy.y,
+      i/count*Math.PI*2+worldTime*.35,
+      speed,5,pulseColor
+    );
+  }
+  rings.push({
+    x:enemy.x,y:enemy.y,r:enemy.r,speed:170,
+    life:.5,maxLife:.5,color:pulseColor,width:3
+  });
+  sound(130,.2,"sawtooth",.05,.65);
+}
+
+function burst(x,y,color,count=12,speed=260,radius=2){
+  for(let i=0;i<count;i++){
+    const angle=Math.random()*Math.PI*2;
+    const velocity=speed*(.25+Math.random()*.75);
+    const life=.25+Math.random()*.5;
+    particles.push({
+      x,y,vx:Math.cos(angle)*velocity,
+      vy:Math.sin(angle)*velocity,
+      life,maxLife:life,color,
+      r:radius*(.5+Math.random()),trail:false
+    });
+  }
+}
+
+function showFixedText(text,color="#fff",life=1.2,size=26){
+  texts.push({
+    x:W/2,y:H*.28,text,color,life,maxLife:life,size,fixed:true
+  });
+}
+
+function addText(x,y,text,color="#fff",size=12,life=.6){
+  texts.push({x,y,text,color,size,life,maxLife:life,fixed:false});
+}
+
+function damageEnemy(enemy,amount,heavy=false,sourceX=enemy.x,sourceY=enemy.y,crit=false,source="bullet"){
+  if(enemy.dead)return;
+
+  enemy.hp-=amount;
+  enemy.hit=.1;
+  addText(
+    enemy.x,enemy.y-enemy.r,
+    crit?`${Math.ceil(amount)}!`:`${Math.ceil(amount)}`,
+    crit?"#fff06a":"#f4f7ff",crit?19:12
+  );
+
+  const angle=Math.atan2(enemy.y-sourceY,enemy.x-sourceX);
+  const force=(heavy?20:3.5)*player.knockback/(enemy.boss?4:1);
+  enemy.x+=Math.cos(angle)*force;
+  enemy.y+=Math.sin(angle)*force;
+
+  if(heavy)burst(enemy.x,enemy.y,enemy.color,8,220,2);
+  if(enemy.hp<=0)killEnemy(enemy,source);
+}
+
+function killEnemy(enemy,source="bullet"){
+  if(enemy.dead)return;
+  enemy.dead=true;
+
+  const multiplier=enemy.boss?18:enemy.type==="tank"?3:enemy.type==="shooter"?2.5:1;
+  score+=Math.round(90*multiplier*Math.max(1,Math.floor(chain)));
+  chain=Math.min(99,chain+(enemy.boss?6:1));
+  chainTime=2.1;
+  killsThisWave++;
+  if(enemy.elite)contractStats.eliteKills++;
+  if(source==="dash")contractStats.dashKills++;
+
+  const dropCount=enemy.boss?20:
+    enemy.type==="tank"?4:
+    enemy.type==="shooter"?3:1;
+  const totalValue=Math.max(
+    dropCount,Math.round(enemy.coinValue*player.coinBonus)
+  );
+
+  for(let i=0;i<dropCount;i++){
+    const angle=Math.random()*Math.PI*2;
+    const speed=80+Math.random()*140;
+    pickups.push({
+      type:"coin",x:enemy.x,y:enemy.y,
+      vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,
+      value:Math.floor(totalValue/dropCount)+(i<totalValue%dropCount?1:0),
+      life:15,phase:Math.random()*6,dead:false,trail:[]
+    });
+  }
+
+  const healChance=enemy.boss?1:
+    enemy.type==="tank"?.12:
+    enemy.type==="shooter"?.07:.025;
+
+  if(Math.random()<healChance){
+    pickups.push({
+      type:"heal",x:enemy.x,y:enemy.y,
+      vx:(Math.random()-.5)*100,vy:(Math.random()-.5)*100,
+      value:enemy.boss?2:1,life:15,phase:0,dead:false,trail:[]
+    });
+  }
+
+  burst(
+    enemy.x,enemy.y,enemy.color,
+    enemy.boss?85:enemy.elite?52:enemy.type==="tank"?38:20,
+    enemy.boss?700:enemy.elite?560:420,enemy.boss?5:enemy.elite?4:3
+  );
+  shockwaves.push({
+    x:enemy.x,y:enemy.y,r:enemy.r,
+    max:enemy.boss?360:enemy.r*6,
+    life:enemy.boss?.9:.4,maxLife:enemy.boss?.9:.4,
+    color:enemy.color
+  });
+  rings.push({
+    x:enemy.x,y:enemy.y,r:enemy.r,
+    speed:enemy.boss?500:270,
+    life:enemy.boss?.9:.45,maxLife:enemy.boss?.9:.45,
+    color:enemy.color,width:enemy.boss?7:2
+  });
+
+  shake=Math.max(shake,enemy.boss?28:enemy.type==="tank"?12:5);
+  hitStop=Math.max(hitStop,enemy.boss?.13:enemy.type==="tank"?.05:.018);
+  flash=Math.max(flash,enemy.boss?.24:.05);
+  sound(
+    enemy.boss?70:175+Math.min(chain,20)*12,
+    enemy.boss?.6:.09,"triangle",
+    enemy.boss?.14:.035,.44
+  );
+}
+
+function collectPickup(pickup){
+  if(pickup.type==="coin"){
+    coins+=pickup.value;
+    coinsThisWave+=pickup.value;
+    score+=pickup.value*10;
+    addText(player.x,player.y-20,`+${pickup.value} ▣`,"#43d9ff",12);
+    sound(760+Math.random()*200,.045,"sine",.018,1.25);
+  }else if(player.hp<player.maxHp){
+    player.hp=Math.min(player.maxHp,player.hp+pickup.value);
+    addText(player.x,player.y-22,`+${pickup.value} CORE`,"#54f6c2",14,.8);
+    rings.push({
+      x:player.x,y:player.y,r:10,speed:180,
+      life:.7,maxLife:.7,color:"#54f6c2",width:3
+    });
+    sound(360,.25,"sine",.055,1.8);
+  }else{
+    coins+=6;
+    coinsThisWave+=6;
+    addText(player.x,player.y-20,"+6 ▣","#43d9ff",12);
+  }
+  pickup.dead=true;
+}
+
+function damagePlayer(amount=1){
+  if(player.invincible>0||state!=="playing")return;
+
+  if(itemInventory.shield>0){
+    itemInventory.shield--;
+    player.invincible=.45;
+    shockwaves.push({
+      x:player.x,y:player.y,r:14,max:150,
+      life:.55,maxLife:.55,color:"#54f6c2"
+    });
+    showFixedText("零点护盾 · 伤害抵消","#54f6c2",.7,20);
+    sound(620,.28,"sine",.065,.45);
+    updateHud();
+    return;
+  }
+
+  player.hp-=amount;
+  contractStats.hits++;
+  player.invincible=1.1;
+  chain=1;
+  chainTime=0;
+  shake=24;
+  hitStop=.08;
+
+  if(player.hp>0&&itemInventory.revenge>0){
+    itemInventory.revenge--;
+    player.revengeTimer=5;
+    showFixedText("反击协议 · 伤害 +50%","#ffcf5a",1,21);
+    burst(player.x,player.y,"#ffcf5a",26,380,2.5);
+  }
+
+  burst(player.x,player.y,"#ffffff",42,540,3);
+  rings.push({
+    x:player.x,y:player.y,r:10,speed:380,
+    life:.65,maxLife:.65,color:"#ff5d73",width:5
+  });
+
+  const damageFlash=$("#damageFlash");
+  damageFlash.classList.remove("active");
+  void damageFlash.offsetWidth;
+  damageFlash.classList.add("active");
+  sound(90,.35,"sawtooth",.11,.25);
+
+  if(player.hp<=0){
+    player.hp=0;
+    gameOver();
+  }
+}
+
+function beginCleanup(){
+  if(wavePhase!=="combat")return;
+  wavePhase="cleanup";
+  waveTime=WAVE_DURATION;
+  spawnTimer=Infinity;
+  showFixedText("清除残敌","#f4f7ff",1.5,28);
+ shockwaves.push({
+    x:player.x,y:player.y,r:20,max:360,
+    life:.75,maxLife:.75,color:"#54f6c2"
+  });
+  sound(235,.4,"sine",.065,1.8);
+}
+
+function beginSalvage(){
+  if(wavePhase!=="cleanup")return;
+  wavePhase="salvage";
+  salvageTime=SALVAGE_DURATION;
+  enemyBullets=[];
+  bullets=[];
+  player.invincible=SALVAGE_DURATION+.5;
+  $("#salvageTime").textContent=`${SALVAGE_DURATION.toFixed(1)}s · 拾取剩余芯片`;
+  $("#salvageMeter").style.transform="scaleX(1)";
+  $("#salvageStatus").classList.add("active");
+  showFixedText("区域肃清","#54f6c2",1.1,30);
+  sound(330,.36,"sine",.07,1.9);
+}
+
+function finishWave(){
+  if(state!=="playing"||wavePhase!=="salvage")return;
+  state="contractResult";
+  $("#salvageStatus").classList.remove("active");
+
+  const contractResult=settleContract();
+  if(contractResult){
+    playContractResult(contractResult);
+    setTimeout(()=>openShop(contractResult),1150);
+  }else{
+    openShop(null);
+  }
+}
+
+function playContractResult(result){
+  const color=result.success?"#54f6c2":"#ff5d73";
+  const hud=$("#contractHud");
+  hud.classList.add("active","resolved",result.success?"success":"failure");
+  $("#contractHudTitle").textContent=`${result.icon} ${result.name}`;
+  $("#contractHudProgress").textContent=result.success?"合约完成":"合约失败";
+  $("#contractHudRisk").textContent=result.success
+    ?`奖金已核准 · ▣ ${result.reward}`:"目标未达成 · 奖金撤销";
+
+  const resultOverlay=$("#contractResult");
+  resultOverlay.className=`contract-result active ${result.success?"success":"failure"}`;
+  $("#contractResultKicker").textContent=result.success?"CONTRACT VERIFIED":"CONTRACT BREACHED";
+  $("#contractResultTitle").textContent=result.success?"合约完成":"合约失败";
+  $("#contractResultDetail").textContent=result.success
+    ?`${result.name} · 奖励 ▣ ${result.reward}`:`${result.name} · 未获得额外奖励`;
+
+  shockwaves.push({
+    x:player.x,y:player.y,r:18,max:Math.max(W,H)*.8,
+    life:1,maxLife:1,color
+  });
+  rings.push({x:player.x,y:player.y,r:12,speed:650,life:.85,maxLife:.85,color,width:7});
+  burst(player.x,player.y,color,result.success?90:64,result.success?850:650,4);
+  shake=result.success?36:28;
+  flash=.22;
+  sound(result.success?520:105,.65,result.success?"sine":"sawtooth",.12,result.success?1.8:.3);
+  render();
+}
+
+function openShop(contractResult){
+  state="shop";
+  $("#contractResult").className="contract-result";
+  $("#contractHud").classList.remove("active","resolved","success","failure");
+
+  const clearBonus=10+wave*3;
+  coins+=clearBonus;
+  coinsThisWave+=clearBonus;
+  if(contractResult?.success){
+    coins+=contractResult.reward;
+    coinsThisWave+=contractResult.reward;
+  }
+
+  if(player.regen>0){
+    const healed=Math.min(player.regen,player.maxHp-player.hp);
+    player.hp+=healed;
+  }
+
+  enemyBullets=[];
+  bullets=[];
+  enemies=[];
+  pickups=[];
+
+  const waveNumber=String(wave).padStart(2,"0");
+  $("#shopSummary").innerHTML=`
+    <div class="report-title"><span>WAVE ${waveNumber}</span> 已肃清</div>
+    <div class="report-grid">
+      <div class="report-stat">
+        <div class="report-label">击破目标</div>
+        <div class="report-value">${killsThisWave}</div>
+      </div>
+      <div class="report-stat accent">
+        <div class="report-label">回收芯片</div>
+        <div class="report-value">▣ ${coinsThisWave}</div>
+      </div>
+      <div class="report-stat">
+        <div class="report-label">核心状态</div>
+        <div class="report-value">${Math.max(0,player.hp)} / ${player.maxHp}</div>
+      </div>
+      ${contractResult?`<div class="report-stat ${contractResult.success?"accent":""}">
+        <div class="report-label">战术合约</div>
+        <div class="report-value">${contractResult.success?`完成 +▣ ${contractResult.reward}`:"目标失败"}</div>
+      </div>`:""}
+    </div>`;
+
+  activeContract=null;
+  createContractOffers(wave+1);
+  createShopOffers();
+  renderShop();
+  updateHud();
+  const overlay=$("#shopOverlay");
+  overlay.classList.remove("hidden");
+  requestAnimationFrame(()=>requestAnimationFrame(()=>overlay.classList.add("active")));
+  sound(280,.45,"sine",.07,2);
+}
+
+function contractProgress(contract=activeContract){
+  if(!contract)return{current:0,label:""};
+  if(contract.id==="swarm")return{current:killsThisWave,label:`击破 ${killsThisWave} / ${contract.target}`};
+  if(contract.id==="elite")return{current:contractStats.eliteKills,label:`精英 ${contractStats.eliteKills} / ${contract.target}`};
+  if(contract.id==="untouched")return{current:contractStats.hits===0?1:0,label:contractStats.hits===0?"核心完整 · 奖励有效":"核心受损 · 奖励失效"};
+  return{current:contractStats.dashKills,label:`冲刺处决 ${contractStats.dashKills} / ${contract.target}`};
+}
+
+function settleContract(){
+  if(!activeContract)return null;
+  const progress=contractProgress(activeContract);
+  const success=activeContract.id==="untouched"
+    ?contractStats.hits===0:progress.current>=activeContract.target;
+  return{...activeContract,success};
+}
+
+function createContractOffers(targetWave){
+  contractOffers=[...contractDefinitions]
+    .sort(()=>Math.random()-.5).slice(0,3)
+    .map(definition=>definition.build(targetWave));
+  selectedContract=null;
+  renderContracts();
+}
+
+function selectContract(index){
+  if(state!=="shop")return;
+  selectedContract=contractOffers[index]||null;
+  renderContracts();
+}
+
+function renderContracts(){
+  $("#contracts").innerHTML=contractOffers.map((contract,index)=>`
+    <button class="contract-card ${selectedContract===contract?"selected":""}" data-contract="${index}">
+      <div class="contract-name"><b>${contract.icon}</b>${contract.name}</div>
+      <div class="contract-objective">目标：${contract.objective}<br>风险：${contract.risk}</div>
+      <div class="contract-reward">完成奖励 · ▣ ${contract.reward}</div>
+    </button>
+  `).join("");
+  document.querySelectorAll("[data-contract]").forEach(button=>{
+    button.addEventListener("click",()=>selectContract(+button.dataset.contract));
+  });
+  const continueButton=$("#continueButton");
+  continueButton.disabled=!selectedContract;
+  continueButton.textContent=selectedContract?`签署 ${selectedContract.name} · 进入下一波`:"选择一项战术合约";
+}
+
+function upgradeCost(definition){
+ const level=upgradeLevels[definition.id]||0;
+  return Math.round(
+    definition.base*SHOP_PRICE_MULTIPLIER*Math.pow(definition.scaling||1.4,level)
+  );
+}
+
+function offerCost(definition){
+  if(definition.type==="item")return definition.base+Math.max(0,wave-1)*2;
+  return upgradeCost(definition);
+}
+
+function validUpgradePool(excluded=[]){
+  return upgrades.filter(item=>{
+    const level=upgradeLevels[item.id]||0;
+    return level<item.max&&
+      !excluded.includes(item.id)&&
+      (!item.available||item.available());
+  });
+}
+
+function randomUpgrade(excluded=[]){
+  let pool=validUpgradePool(excluded);
+ if(!pool.length)pool=upgrades.filter(item=>!excluded.includes(item.id));
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function randomShopOffer(excluded=[]){
+  const itemPool=consumableDefinitions.filter(item=>!excluded.includes(item.id));
+  if(itemPool.length&&Math.random()<ITEM_OFFER_CHANCE){
+    return itemPool[Math.floor(Math.random()*itemPool.length)];
+  }
+  return randomUpgrade(excluded)||itemPool[Math.floor(Math.random()*itemPool.length)];
+}
+
+function createShopOffers(){
+  shopOffers=[];
+  for(let i=0;i<3;i++){
+    const offer=randomShopOffer(shopOffers.map(item=>item.id));
+    if(offer)shopOffers.push(offer);
+  }
+}
+
+function replaceOffer(index){
+  const excluded=shopOffers
+    .filter((_,i)=>i!==index)
+    .map(item=>item.id);
+ shopOffers[index]=randomShopOffer(excluded);
+}
+
+function buyUpgrade(index){
+  if(state!=="shop")return;
+  const definition=shopOffers[index];
+  if(!definition)return;
+
+  const isItem=definition.type==="item";
+  const level=upgradeLevels[definition.id]||0;
+  const cost=offerCost(definition);
+  if((!isItem&&level>=definition.max)||coins<cost){
+    sound(110,.12,"square",.025,.8);
+    return;
+  }
+
+  coins-=cost;
+  if(isItem){
+    itemInventory[definition.itemId]++;
+    showFixedText(`${definition.name} ×1`,"#ffcf5a",.8,19);
+  }else{
+    upgradeLevels[definition.id]=level+1;
+    definition.apply();
+  }
+  replaceOffer(index);
+  sound(420,.16,"sine",.045,1.7);
+  renderShop();
+  updateHud();
+}
+
+function renderShop(){
+  $("#shopWallet").textContent=`▣ ${coins}`;
+
+  $("#offers").innerHTML=shopOffers.map((definition,index)=>{
+    if(!definition)return"";
+    const isItem=definition.type==="item";
+    const level=upgradeLevels[definition.id]||0;
+    const cost=offerCost(definition);
+    const maxed=!isItem&&level>=definition.max;
+    const disabled=maxed||coins<cost;
+    const status=isItem?`库存 ×${itemInventory[definition.itemId]}`:(maxed?"MAX":`LV.${level}`);
+
+    return `
+      <button class="upgrade ${isItem?"item-offer":""}" data-index="${index}" ${disabled?"disabled":""}>
+        <div class="upgrade-icon">${definition.icon}</div>
+        <div class="upgrade-top">
+          <span class="upgrade-name">${definition.name}</span>
+          <span class="upgrade-level">${status}</span>
+        </div>
+        <div class="upgrade-desc">${definition.desc}</div>
+        <div class="upgrade-cost">${maxed?"已满级":`▣ ${cost}`}</div>
+      </button>
+    `;
+  }).join("");
+
+  document.querySelectorAll("[data-index]").forEach(button=>{
+    button.addEventListener("click",()=>buyUpgrade(+button.dataset.index));
+  });
+}
+
+function continueGame(){
+  if(state!=="shop"||!selectedContract)return;
+  state="transition";
+  const nextWave=wave+1;
+  activeContract={...selectedContract,modifiers:{...selectedContract.modifiers}};
+  const transition=$("#waveTransition");
+  $("#transitionWave").textContent=nextWave%5===0
+    ?`BOSS WAVE ${String(nextWave).padStart(2,"0")}`
+    :`WAVE ${String(nextWave).padStart(2,"0")}`;
+  transition.classList.add("active");
+  sound(180,.45,"sine",.055,1.7);
+
+  setTimeout(()=>{
+    const overlay=$("#shopOverlay");
+    overlay.classList.remove("active");
+    overlay.classList.add("hidden");
+    wave=nextWave;
+    startWave();
+    setTimeout(()=>transition.classList.remove("active"),260);
+  },460);
+}
+
+function gameOver(){
+  state="gameover";
+  best=Math.max(best,score);
+  localStorage.neonPulseBest=best;
+  window.parent.postMessage({ type: 'neon-pulse-score', score: Math.floor(score) }, window.location.origin);
+
+  $("#mainTitle").innerHTML="PULSE<br>LOST";
+  $("#mainSubtitle").innerHTML=
+    `抵达 WAVE ${String(wave).padStart(2,"0")}<br>`+
+    `得分 ${Math.floor(score)} · 持有芯片 ${coins} · 最高 ${best}`;
+  $("#contractHud").classList.remove("active");
+  $("#startButton").textContent="再次接入";
+  $("#startOverlay").classList.remove("hidden");
+  updateHud();
+}
+
+function updatePlayer(dt){
+  player.dashTimer=Math.max(0,player.dashTimer-dt);
+  player.invincible=Math.max(0,player.invincible-dt);
+
+  let dx=0,dy=0;
+  if(keys.has("KeyA")||keys.has("ArrowLeft"))dx--;
+  if(keys.has("KeyD")||keys.has("ArrowRight"))dx++;
+  if(keys.has("KeyW")||keys.has("ArrowUp"))dy--;
+  if(keys.has("KeyS")||keys.has("ArrowDown"))dy++;
+
+  if(dx||dy){
+    const length=Math.hypot(dx,dy);
+    const velocity=275*player.speed;
+    player.x+=dx/length*velocity*dt;
+    player.y+=dy/length*velocity*dt;
+    player.tx=player.x;player.ty=player.y;
+  }else{
+    const follow=1-Math.pow(.0012,dt*player.speed);
+    player.x+=(player.tx-player.x)*follow;
+    player.y+=(player.ty-player.y)*follow;
+  }
+
+  player.x=Math.max(14,Math.min(W-14,player.x));
+  player.y=Math.max(14,Math.min(H-14,player.y));
+  player.trail.unshift({x:player.x,y:player.y});
+  if(player.trail.length>18)player.trail.pop();
+}
+
+function nearestTeamTarget(){
+  return player;
+}
+
+function updateChaser(enemy,dt){
+  const target=nearestTeamTarget(enemy);
+  const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+  const weave=Math.sin(worldTime*3.2+enemy.phase)*.28;
+  enemy.x+=Math.cos(angle+weave)*enemy.speed*dt;
+  enemy.y+=Math.sin(angle+weave)*enemy.speed*dt;
+}
+
+function updateTank(enemy,dt){
+  const target=nearestTeamTarget(enemy);
+  const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+  enemy.x+=Math.cos(angle)*enemy.speed*dt;
+  enemy.y+=Math.sin(angle)*enemy.speed*dt;
+}
+
+function updateShooter(enemy,dt){
+  const target=nearestTeamTarget(enemy);
+  const dx=target.x-enemy.x;
+  const dy=target.y-enemy.y;
+  const distance=Math.hypot(dx,dy);
+  const angle=Math.atan2(dy,dx);
+
+  if(distance>330){
+    enemy.x+=Math.cos(angle)*enemy.speed*dt;
+    enemy.y+=Math.sin(angle)*enemy.speed*dt;
+  }else if(distance<210){
+    enemy.x-=Math.cos(angle)*enemy.speed*.8*dt;
+    enemy.y-=Math.sin(angle)*enemy.speed*.8*dt;
+  }else{
+    enemy.x+=Math.cos(angle+Math.PI/2)*enemy.speed*.65*dt;
+    enemy.y+=Math.sin(angle+Math.PI/2)*enemy.speed*.65*dt;
+  }
+
+  enemy.shootTimer-=dt;
+  if(enemy.shootTimer<=0){
+    const leadX=target.tx??target.x;
+    const leadY=target.ty??target.y;
+    const shotAngle=Math.atan2(leadY-enemy.y,leadX-enemy.x);
+    fireEnemyBullet(
+      enemy.x,enemy.y,shotAngle,
+      difficulty().projectileSpeed,5,"#ff5da8"
+    );
+    enemy.shootTimer=Math.max(.75,1.75-wave*.045);
+    rings.push({
+      x:enemy.x,y:enemy.y,r:enemy.r,speed:100,
+      life:.28,maxLife:.28,color:enemy.color,width:2
+    });
+    sound(170,.08,"square",.025,.75);
+  }
+}
+
+function updateCharger(enemy,dt){
+  const target=nearestTeamTarget(enemy);
+  if(enemy.chargeState==="idle"){
+    const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+    enemy.x+=Math.cos(angle)*enemy.speed*.65*dt;
+    enemy.y+=Math.sin(angle)*enemy.speed*.65*dt;
+    enemy.chargeTimer-=dt;
+
+    if(enemy.chargeTimer<=0){
+      enemy.chargeState="windup";
+      enemy.chargeWindup=.7;
+      enemy.chargeAngle=angle;
+      sound(230,.25,"sawtooth",.035,1.5);
+    }
+  }else if(enemy.chargeState==="windup"){
+    enemy.chargeWindup-=dt;
+    enemy.chargeAngle=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+    if(enemy.chargeWindup<=0){
+      enemy.chargeState="charging";
+      enemy.chargeTimer=.75;
+      enemy.vx=Math.cos(enemy.chargeAngle)*enemy.speed*4.5;
+      enemy.vy=Math.sin(enemy.chargeAngle)*enemy.speed*4.5;
+      burst(enemy.x,enemy.y,enemy.color,12,260,2);
+    }
+  }else{
+    enemy.x+=enemy.vx*dt;
+    enemy.y+=enemy.vy*dt;
+    enemy.chargeTimer-=dt;
+    if(enemy.chargeTimer<=0){
+      enemy.chargeState="idle";
+      enemy.chargeTimer=1.4+Math.random();
+    }
+  }
+}
+
+function updateBoss(enemy,dt){
+  const target=nearestTeamTarget(enemy);
+  const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+  const distance=Math.hypot(target.x-enemy.x,target.y-enemy.y);
+
+  if(distance>250){
+    enemy.x+=Math.cos(angle)*enemy.speed*dt;
+    enemy.y+=Math.sin(angle)*enemy.speed*dt;
+  }else{
+    enemy.x+=Math.cos(angle+Math.PI/2)*enemy.speed*.75*dt;
+    enemy.y+=Math.sin(angle+Math.PI/2)*enemy.speed*.75*dt;
+  }
+
+  enemy.burstTimer-=dt;
+  enemy.shootTimer-=dt;
+  enemy.summonTimer-=dt;
+
+  if(enemy.burstTimer<=0){
+    enemyRadialBurst(enemy,10+Math.min(8,Math.floor(wave/2)),125+wave*6);
+    enemy.burstTimer=Math.max(1.8,3.2-wave*.035);
+  }
+
+  if(enemy.shootTimer<=0){
+    const aim=Math.atan2(target.y-enemy.y,target.x-enemy.x);
+    for(let i=-2;i<=2;i++){
+      fireEnemyBullet(
+        enemy.x,enemy.y,aim+i*.15,
+        180+wave*7,6,"#ff315f"
+      );
+    }
+    enemy.shootTimer=1.65;
+  }
+
+  if(enemy.summonTimer<=0&&wavePhase==="combat"){
+    for(let i=0;i<2+Math.floor(wave/10);i++){
+      spawnEnemy(Math.random()<.5?"chaser":"charger");
+    }
+    showFixedText("REINFORCEMENTS","#ff7b45",.8,18);
+    enemy.summonTimer=5;
+  }
+}
+
+function rebuildEnemyCollisionGrid(){
+  enemyCollisionGrid.clear();
+  for(let index=0;index<enemies.length;index++){
+    const enemy=enemies[index];
+    if(enemy.dead)continue;
+    enemy.collisionIndex=index;
+    const cellX=Math.floor(enemy.x/COLLISION_CELL_SIZE);
+    const cellY=Math.floor(enemy.y/COLLISION_CELL_SIZE);
+    const key=`${cellX},${cellY}`;
+    let cell=enemyCollisionGrid.get(key);
+    if(!cell){
+      cell=[];
+      enemyCollisionGrid.set(key,cell);
+    }
+    cell.push(enemy);
+  }
+}
+
+function nearbyEnemies(x,y){
+  collisionCandidates.length=0;
+  const centerX=Math.floor(x/COLLISION_CELL_SIZE);
+  const centerY=Math.floor(y/COLLISION_CELL_SIZE);
+  const queryId=++collisionQueryId;
+  for(let cellY=centerY-1;cellY<=centerY+1;cellY++){
+    for(let cellX=centerX-1;cellX<=centerX+1;cellX++){
+      const cell=enemyCollisionGrid.get(`${cellX},${cellY}`);
+      if(!cell)continue;
+      for(const enemy of cell){
+        if(enemy.collisionQueryId===queryId)continue;
+        enemy.collisionQueryId=queryId;
+        collisionCandidates.push(enemy);
+      }
+    }
+  }
+  collisionCandidates.sort((a,b)=>a.collisionIndex-b.collisionIndex);
+  return collisionCandidates;
+}
+
+function updateEnemies(dt){
+  for(const enemy of enemies){
+    if(enemy.dead)continue;
+    enemy.hit=Math.max(0,enemy.hit-dt);
+    enemy.rotation+=dt*(enemy.boss?.7:1.8);
+
+    if(enemy.elite){
+      enemy.elitePulseTimer-=dt;
+      if(enemy.elitePulseTimer<=0){
+        enemyRadialBurst(enemy,7,145+wave*5);
+        enemy.elitePulseTimer=3.1;
+      }
+    }
+
+    if(enemy.type==="chaser")updateChaser(enemy,dt);
+    else if(enemy.type==="tank")updateTank(enemy,dt);
+    else if(enemy.type==="charger")updateCharger(enemy,dt);
+    else if(enemy.type==="shooter")updateShooter(enemy,dt);
+    else updateBoss(enemy,dt);
+
+    const contactRadius=enemy.r+player.r;
+    const contactDx=enemy.x-player.x;
+    const contactDy=enemy.y-player.y;
+    if(contactDx*contactDx+contactDy*contactDy<contactRadius*contactRadius){
+      const angle=Math.atan2(contactDy,contactDx);
+      enemy.x+=Math.cos(angle)*32;
+      enemy.y+=Math.sin(angle)*32;
+      damagePlayer(difficulty().contactDamage);
+      if(state!=="playing")return;
+    }
+  }
+}
+
+function updateBullets(dt){
+  rebuildEnemyCollisionGrid();
+  for(const bullet of bullets){
+    bullet.px=bullet.x;bullet.py=bullet.y;
+    bullet.x+=bullet.vx*dt;
+    bullet.y+=bullet.vy*dt;
+    bullet.life-=dt;
+
+    for(const enemy of nearbyEnemies(bullet.x,bullet.y)){
+      if(enemy.dead||bullet.life<=0||bullet.hitIds.has(enemy.id))continue;
+      const dx=bullet.x-enemy.x;
+      const dy=bullet.y-enemy.y;
+      const collisionRadius=enemy.r+5;
+      if(dx*dx+dy*dy<collisionRadius*collisionRadius){
+        bullet.hitIds.add(enemy.id);
+        damageEnemy(
+          enemy,bullet.damage,false,
+          bullet.px,bullet.py,bullet.crit
+        );
+        burst(
+          bullet.x,bullet.y,enemy.color,
+          bullet.crit?10:4,160,1.5
+        );
+
+        if(bullet.hitsLeft>0){
+          bullet.hitsLeft--;
+          bullet.damage*=.82;
+        }else{
+          bullet.life=0;
+        }
+      }
+    }
+  }
+
+  compactInPlace(bullets,bullet=>
+    bullet.life>0&&bullet.x>-50&&bullet.x<W+50&&
+    bullet.y>-50&&bullet.y<H+50
+  );
+}
+
+function updateEnemyBullets(dt){
+  for(const bullet of enemyBullets){
+    bullet.px=bullet.x;bullet.py=bullet.y;
+    bullet.x+=bullet.vx*dt;
+    bullet.y+=bullet.vy*dt;
+    bullet.life-=dt;
+
+    if(
+      bullet.life>0&&player.invincible<=0&&
+      Math.hypot(bullet.x-player.x,bullet.y-player.y)<bullet.r+player.r
+    ){
+      bullet.life=0;
+      damagePlayer(1);
+      if(state!=="playing")return;
+    }
+  }
+
+  compactInPlace(enemyBullets,bullet=>
+    bullet.life>0&&bullet.x>-80&&bullet.x<W+80&&
+    bullet.y>-80&&bullet.y<H+80
+  );
+}
+
+function updatePickups(dt){
+  for(const pickup of pickups){
+    if(pickup.dead)continue;
+    pickup.life-=dt;
+    pickup.phase+=dt*6;
+    pickup.vx*=Math.pow(.07,dt);
+    pickup.vy*=Math.pow(.07,dt);
+    pickup.x+=pickup.vx*dt;
+    pickup.y+=pickup.vy*dt;
+
+    pickup.trail.unshift({x:pickup.x,y:pickup.y});
+    if(pickup.trail.length>5)pickup.trail.pop();
+
+    const dx=player.x-pickup.x;
+    const dy=player.y-pickup.y;
+    const distance=Math.hypot(dx,dy);
+
+    if(distance<player.magnet){
+      const pull=720+(player.magnet-distance)*9;
+      pickup.x+=dx/Math.max(1,distance)*pull*dt;
+      pickup.y+=dy/Math.max(1,distance)*pull*dt;
+    }
+
+    if(distance<19)collectPickup(pickup);
+  }
+
+  compactInPlace(pickups,pickup=>!pickup.dead&&pickup.life>0);
+}
+
+function compactInPlace(items,keep){
+  let writeIndex=0;
+  for(let readIndex=0;readIndex<items.length;readIndex++){
+    const item=items[readIndex];
+    if(keep(item))items[writeIndex++]=item;
+  }
+  items.length=writeIndex;
+}
+
+function updateEffects(dt){
+  for(const particle of particles){
+    particle.x+=particle.vx*dt;
+    particle.y+=particle.vy*dt;
+    particle.vx*=Math.pow(.035,dt);
+    particle.vy*=Math.pow(.035,dt);
+    particle.life-=dt;
+  }
+
+  for(const ring of rings){
+    ring.r+=ring.speed*dt;
+    ring.life-=dt;
+  }
+
+  for(const shockwave of shockwaves){
+    const progress=1-shockwave.life/shockwave.maxLife;
+    shockwave.r+=
+      (shockwave.max-shockwave.r)*Math.min(1,dt*9);
+    shockwave.life-=dt;
+  }
+
+  for(const text of texts){
+    if(!text.fixed)text.y-=36*dt;
+    text.life-=dt;
+  }
+
+  compactInPlace(particles,item=>item.life>0);
+  compactInPlace(rings,item=>item.life>0);
+  compactInPlace(shockwaves,item=>item.life>0);
+  compactInPlace(texts,item=>item.life>0);
+  compactInPlace(enemies,item=>!item.dead);
+}
+
+function update(dt){
+  if(state!=="playing")return;
+  if(hitStop>0){
+    hitStop-=dt;
+    updateEffects(dt*.25);
+    return;
+  }
+
+  worldTime+=dt;
+  spawnTimer-=dt;
+  fireTimer-=dt;
+  chainTime-=dt;
+  player.revengeTimer=Math.max(0,player.revengeTimer-dt);
+  shake=Math.max(0,shake-38*dt);
+  flash=Math.max(0,flash-dt);
+
+  if(wavePhase==="combat"){
+    waveTime+=dt;
+    if(waveTime>=WAVE_DURATION)beginCleanup();
+  }
+
+  if(chainTime<=0)chain=Math.max(1,chain-dt*2.8);
+
+  if(player.hp>0)updatePlayer(dt);
+
+  if(wavePhase==="combat"&&activeContract?.id==="elite"){
+    eliteSpawnTimer-=dt;
+    if(contractStats.eliteSpawned<activeContract.target&&eliteSpawnTimer<=0){
+      spawnEnemy(chooseEnemyType(),true);
+      eliteSpawnTimer=Math.max(2.4,(WAVE_DURATION-6)/activeContract.target);
+    }
+  }
+
+  if(wavePhase==="combat"&&spawnTimer<=0){
+    const progress=waveTime/WAVE_DURATION;
+    const packChance=Math.min(.75,wave*.035+progress*.22+(activeContract?.modifiers.packBonus||0));
+    const amount=Math.random()<packChance?2:1;
+
+    for(let i=0;i<amount;i++)spawnEnemy();
+
+    spawnTimer=difficulty().spawn*(1-progress*.3)*(activeContract?.modifiers.spawnRate||1);
+  }
+
+  if(wavePhase!=="salvage"&&player.hp>0&&fireTimer<=0){
+    shoot();
+    fireTimer=1/player.fireRate;
+  }
+
+  updateEnemies(dt);
+  if(state!=="playing")return;
+  updateBullets(dt);
+  updateEnemyBullets(dt);
+  if(state!=="playing")return;
+  updatePickups(dt);
+  updateEffects(dt);
+
+  if(wavePhase==="cleanup"&&enemies.length===0){
+    beginSalvage();
+  }
+
+  if(wavePhase==="salvage"){
+    salvageTime=Math.max(0,salvageTime-dt);
+    $("#salvageTime").textContent=`${salvageTime.toFixed(1)}s · 拾取剩余芯片`;
+    $("#salvageMeter").style.transform=`scaleX(${salvageTime/SALVAGE_DURATION})`;
+    if(salvageTime<=0){
+      finishWave();
+      return;
+    }
+  }
+
+  updateHud();
+}
+
+function updateHud(){
+  const hpRatio=Math.max(0,player.hp/player.maxHp);
+  const dashRatio=player.dashTimer<=0
+    ?1:1-player.dashTimer/player.dashCooldown;
+  const waveRatio=Math.min(1,waveTime/WAVE_DURATION);
+  const seconds=Math.max(0,Math.ceil(WAVE_DURATION-waveTime));
+
+  const contractHud=$("#contractHud");
+  if(activeContract&&state==="playing"){
+    const progress=contractProgress();
+    $("#contractHudTitle").textContent=`${activeContract.icon} 战术合约 · ${activeContract.name}`;
+    $("#contractHudProgress").textContent=progress.label;
+    $("#contractHudRisk").textContent=`风险：${activeContract.risk} · 奖励 ▣ ${activeContract.reward}`;
+    contractHud.classList.add("active");
+  }else{
+    contractHud.classList.remove("active");
+  }
+
+  $("#score").textContent=String(Math.floor(score)).padStart(6,"0");
+  $("#best").textContent=`BEST ${String(best).padStart(6,"0")}`;
+  $("#coinLabel").textContent=`▣ ${coins}`;
+  $("#waveLabel").textContent=wavePhase==="cleanup"
+    ?`WAVE ${String(wave).padStart(2,"0")} · 清除残敌 ${enemies.length}`
+    :wavePhase==="salvage"
+      ?`WAVE ${String(wave).padStart(2,"0")} · 战场回收`
+      :`WAVE ${String(wave).padStart(2,"0")} · ${seconds}s`;
+  $("#combo").textContent=`CHAIN ×${Math.max(1,Math.floor(chain))}`;
+  const inventory=[];
+  if(itemInventory.shield>0){
+    inventory.push(`<div class="item-slot shield" title="零点护盾：自动抵御下一次伤害"><span class="item-icon">◇</span><span class="item-count">×${itemInventory.shield}</span></div>`);
+  }
+  if(itemInventory.revenge>0||player.revengeTimer>0){
+    const revengeStatus=player.revengeTimer>0?`${player.revengeTimer.toFixed(1)}s`:`×${itemInventory.revenge}`;
+    inventory.push(`<div class="item-slot revenge ${player.revengeTimer>0?"active":""}" title="反击协议：受伤后 5 秒内伤害提高 50%"><span class="item-icon">▲</span><span class="item-count">${revengeStatus}</span></div>`);
+  }
+  $("#itemInventory").innerHTML=inventory.join("");
+  $("#hpBar").style.transform=`scaleX(${hpRatio})`;
+  $("#hpText").textContent=`${Math.max(0,player.hp)} / ${player.maxHp}`;
+  $("#dashBar").style.transform=`scaleX(${dashRatio})`;
+  $("#dashText").textContent=player.dashTimer<=0
+    ?"READY":`${player.dashTimer.toFixed(1)}s`;
+  $("#waveProgress").style.width=`${waveRatio*100}%`;
+  $("#waveProgress").style.background=
+    wavePhase==="cleanup"?"#ffcf5a":"#54f6c2";
+}
+
+function drawBackground(){
+  ctx.fillStyle="#05070b";
+  ctx.fillRect(-40,-40,W+80,H+80);
+
+  const gap=48;
+  const ox=(worldTime*9)%gap;
+  const oy=(worldTime*6)%gap;
+  ctx.strokeStyle="rgba(90,105,130,.085)";
+  ctx.lineWidth=1;
+
+  for(let x=-gap+ox;x<W+gap;x+=gap){
+    ctx.beginPath();ctx.moveTo(x,-40);ctx.lineTo(x,H+40);ctx.stroke()
+  }
+  for(let y=-gap+oy;y<H+gap;y+=gap){
+    ctx.beginPath();ctx.moveTo(-40,y);ctx.lineTo(W+40,y);ctx.stroke()
+  }
+
+  for(const star of stars){
+    const alpha=.12+star.z*.32;
+    ctx.fillStyle=`rgba(210,225,255,${alpha})`;
+    ctx.fillRect(star.x,star.y,1+star.z,1+star.z);
+  }
+}
+
+function drawShockwaves(){
+  for(const waveEffect of shockwaves){
+    const alpha=Math.max(0,waveEffect.life/waveEffect.maxLife);
+    const gradient=ctx.createRadialGradient(
+      waveEffect.x,waveEffect.y,waveEffect.r*.5,
+      waveEffect.x,waveEffect.y,waveEffect.r
+    );
+    gradient.addColorStop(0,"rgba(0,0,0,0)");
+    gradient.addColorStop(.75,"rgba(0,0,0,0)");
+    gradient.addColorStop(1,waveEffect.color);
+    ctx.globalAlpha=alpha*.32;
+    ctx.fillStyle=gradient;
+    ctx.beginPath();
+    ctx.arc(waveEffect.x,waveEffect.y,waveEffect.r,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawRings(){
+  for(const ring of rings){
+    ctx.globalAlpha=Math.max(0,ring.life/ring.maxLife);
+    ctx.strokeStyle=ring.color;
+    ctx.lineWidth=ring.width;
+    ctx.beginPath();
+    ctx.arc(ring.x,ring.y,ring.r,0,Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+function drawPlayer(){
+  for(let i=player.trail.length-1;i>=0;i--){
+    const point=player.trail[i];
+    const progress=1-i/player.trail.length;
+    ctx.globalAlpha=progress*.24;
+    ctx.fillStyle="#54f6c2";
+    ctx.beginPath();
+    ctx.arc(point.x,point.y,player.r*progress,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  const flicker=player.invincible>0&&Math.floor(worldTime*20)%2;
+  ctx.globalAlpha=flicker?.3:1;
+  ctx.shadowBlur=26;
+  ctx.shadowColor="#54f6c2";
+
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.rotate(player.angle);
+  ctx.fillStyle="#eafff8";
+  ctx.beginPath();
+  ctx.moveTo(15,0);
+  ctx.lineTo(-8,-9);
+  ctx.lineTo(-4,0);
+  ctx.lineTo(-8,9);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle=player.revengeTimer>0?"#ffcf5a":"#54f6c2";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(0,0,18+Math.sin(worldTime*6)*2,0,Math.PI*2);
+  ctx.stroke();
+  if(itemInventory.shield>0){
+    ctx.strokeStyle="#54f6c2";
+    ctx.lineWidth=3;
+    ctx.globalAlpha=.6+Math.sin(worldTime*8)*.2;
+    ctx.beginPath();
+    ctx.arc(0,0,27,0,Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function enemySides(enemy){
+  if(enemy.boss)return 10;
+  if(enemy.type==="tank")return 8;
+  if(enemy.type==="shooter")return 4;
+  if(enemy.type==="charger")return 3;
+  return 6;
+}
+
+function drawEnemies(){
+  for(const enemy of enemies){
+    if(enemy.type==="charger"&&enemy.chargeState==="windup"){
+      ctx.globalAlpha=.25+.25*Math.sin(worldTime*20);
+      ctx.strokeStyle=enemy.color;
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(enemy.x,enemy.y);
+      ctx.lineTo(
+        enemy.x+Math.cos(enemy.chargeAngle)*500,
+        enemy.y+Math.sin(enemy.chargeAngle)*500
+      );
+      ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.translate(enemy.x,enemy.y);
+    ctx.rotate(enemy.rotation);
+    ctx.globalAlpha=1;
+    ctx.shadowColor=enemy.color;
+    ctx.shadowBlur=enemy.hit>0?30:17;
+    ctx.fillStyle=enemy.hit>0?"#ffffff":enemy.color;
+
+    const sides=enemySides(enemy);
+    ctx.beginPath();
+    for(let i=0;i<sides;i++){
+      const angle=i/sides*Math.PI*2;
+      const radius=enemy.r*(i%2?.7:1);
+      const x=Math.cos(angle)*radius;
+      const y=Math.sin(angle)*radius;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    if(enemy.boss||enemy.type==="tank"||enemy.elite){
+      ctx.strokeStyle=enemy.elite?"#43d9ff":"#ffffff";
+      ctx.globalAlpha=enemy.elite?.8:.45;
+      ctx.lineWidth=enemy.boss?3:enemy.elite?2:1;
+      ctx.beginPath();
+      ctx.arc(0,0,enemy.r+7+Math.sin(worldTime*5)*2,0,Math.PI*2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if(enemy.boss||enemy.elite||enemy.type==="tank"||enemy.type==="shooter"){
+      const width=enemy.boss?86:enemy.elite?54:38;
+      const ratio=Math.max(0,enemy.hp/enemy.maxHp);
+      ctx.globalAlpha=.9;
+      ctx.shadowBlur=0;
+      ctx.fillStyle="#222a35";
+      ctx.fillRect(enemy.x-width/2,enemy.y-enemy.r-14,width,4);
+      ctx.fillStyle=enemy.color;
+      ctx.fillRect(enemy.x-width/2,enemy.y-enemy.r-14,width*ratio,4);
+    }
+  }
+}
+
+function drawBullets(){
+  ctx.lineCap="round";
+  for(const bullet of bullets){
+    ctx.globalAlpha=1;
+    ctx.strokeStyle=bullet.crit?"#fff06a":"#71a7ff";
+    ctx.lineWidth=bullet.crit?5:3;
+    ctx.shadowColor=bullet.crit?"#fff06a":"#71a7ff";
+    ctx.shadowBlur=bullet.crit?20:13;
+    ctx.beginPath();
+    ctx.moveTo(bullet.px,bullet.py);
+    ctx.lineTo(bullet.x,bullet.y);
+    ctx.stroke();
+    ctx.fillStyle="#ffffff";
+    ctx.beginPath();
+    ctx.arc(bullet.x,bullet.y,bullet.crit?4:3,0,Math.PI*2);
+    ctx.fill();
+  }
+
+ for(const bullet of enemyBullets){
+    ctx.globalAlpha=1;
+    ctx.strokeStyle=bullet.color;
+    ctx.lineWidth=4;
+    ctx.shadowColor=bullet.color;
+    ctx.shadowBlur=16;
+    ctx.beginPath();
+    ctx.moveTo(bullet.px,bullet.py);
+    ctx.lineTo(bullet.x,bullet.y);
+    ctx.stroke();
+    ctx.fillStyle="#ffffff";
+    ctx.beginPath();
+    ctx.arc(bullet.x,bullet.y,bullet.r,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawPickups(){
+  for(const pickup of pickups){
+    if(pickup.type==="coin"){
+      for(let i=pickup.trail.length-1;i>=0;i--){
+        const point=pickup.trail[i];
+        ctx.globalAlpha=(1-i/pickup.trail.length)*.08;
+        ctx.fillStyle="#43d9ff";
+        ctx.fillRect(point.x-3,point.y-3,6,6);
+      }
+    }
+
+    const pulse=1+Math.sin(pickup.phase)*.12;
+    ctx.save();
+    ctx.translate(pickup.x,pickup.y);
+    ctx.scale(pulse,pulse);
+    ctx.shadowBlur=20;
+
+    if(pickup.type==="coin"){
+      ctx.rotate(worldTime*2.7+pickup.phase);
+      ctx.shadowColor="#43d9ff";
+      ctx.fillStyle="#43d9ff";
+      ctx.fillRect(-7,-7,14,14);
+      ctx.rotate(-worldTime*5.4-pickup.phase*2);
+      ctx.fillStyle="#06131a";
+      ctx.fillRect(-3,-3,6,6);
+      ctx.strokeStyle="#c4f7ff";
+      ctx.lineWidth=1;
+      ctx.strokeRect(-8,-8,16,16);
+    }else{
+      ctx.shadowColor="#54f6c2";
+      ctx.fillStyle="#54f6c2";
+      ctx.fillRect(-8,-3,16,6);
+      ctx.fillRect(-3,-8,6,16);
+      ctx.strokeStyle="#eafff8";
+      ctx.strokeRect(-9,-9,18,18);
+    }
+    ctx.restore();
+ }
+}
+
+function drawParticles(){
+  ctx.shadowBlur=0;
+  for(const particle of particles){
+    ctx.globalAlpha=Math.max(0,particle.life/particle.maxLife);
+    ctx.fillStyle=particle.color;
+    ctx.fillRect(
+      particle.x-particle.r/2,
+      particle.y-particle.r/2,
+      particle.r,particle.r
+    );
+ }
+}
+
+function drawTexts(){
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+
+  for(const text of texts){
+    const alpha=Math.min(1,text.life/text.maxLife*2);
+    ctx.save();
+    ctx.globalAlpha=alpha;
+    ctx.fillStyle=text.color;
+    ctx.font=`900 ${text.size}px Inter,system-ui,sans-serif`;
+    ctx.shadowColor=text.color;
+    ctx.shadowBlur=text.fixed?24:10;
+
+    if(text.fixed){
+      const progress=1-text.life/text.maxLife;
+      const scale=1+Math.sin(progress*Math.PI)*.15;
+      ctx.translate(text.x,text.y);
+      ctx.scale(scale,scale);
+      ctx.fillText(text.text,0,0);
+    }else{
+      ctx.fillText(text.text,text.x,text.y);
+    }
+    ctx.restore();
+  }
+}
+
+function render(){
+  ctx.save();
+  const shakeX=shake>0?(Math.random()-.5)*shake:0;
+  const shakeY=shake>0?(Math.random()-.5)*shake:0;
+  ctx.translate(shakeX,shakeY);
+
+ drawBackground();
+  drawShockwaves();
+  drawRings();
+  drawPickups();
+  drawPlayer();
+  drawEnemies();
+ drawBullets();
+  drawParticles();
+  drawTexts();
+  ctx.restore();
+
+  ctx.globalAlpha=1;
+  ctx.shadowBlur=0;
+
+  if(flash>0){
+    ctx.fillStyle=`rgba(255,255,255,${Math.min(.18,flash)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(state==="playing"&&wavePhase==="combat"&&waveTime>WAVE_DURATION-6){
+    const urgency=.08+Math.sin(worldTime*11)*.045;
+    ctx.strokeStyle=`rgba(255,93,115,${urgency})`;
+    ctx.lineWidth=8;
+    ctx.strokeRect(4,4,W-8,H-8);
+  }
+
+  if(state==="playing"&&(wavePhase==="cleanup"||wavePhase==="salvage")){
+    ctx.strokeStyle=wavePhase==="salvage"
+      ?"rgba(67,217,255,.18)":"rgba(255,207,90,.14)";
+    ctx.lineWidth=5;
+    ctx.strokeRect(3,3,W-6,H-6);
+  }
+}
+
+function loop(now){
+  if(state!=="playing")return;
+  const dt=Math.min(.033,(now-last)/1000||0);
+  last=now;
+  update(dt);
+ render();
+  if(state==="playing")animationId=requestAnimationFrame(loop);
+}
+
+canvas.addEventListener("pointermove",pointerPosition);
+canvas.addEventListener("pointerdown",event=>{
+  pointerPosition(event);
+  dash();
+});
+
+addEventListener("keydown",event=>{
+  keys.add(event.code);
+  if(event.code==="Space"){
+    event.preventDefault();
+    dash();
+  }
+});
+
+addEventListener("keyup",event=>keys.delete(event.code));
+addEventListener("resize",resize);
+
+$("#startButton").addEventListener("click",startGame);
+$("#continueButton").addEventListener("click",continueGame);
+
+resize();
+updateHud();
+render();
+</script>
+</body>
+</html>

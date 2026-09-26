@@ -44,7 +44,12 @@ login.json
 cookies.txt
 signup-initial.png
 *.png
+# 挡住本地生成的 HTML 报告，但放行前端构建模板与 public 下的静态页面，
+# 否则 clone 后无法构建前端。
 *.html
+!web/classic/index.html
+!web/default/index.html
+!web/classic/public/games/*.html
 check_all_tables.py
 check_users.py
 fix_theme.py
@@ -70,6 +75,7 @@ __pycache__/
 .omo/
 .agents/
 .workbuddy/
+.workbuddy-ai/
 .zcode/
 .tmp_test_write
 .trae/
@@ -87,3 +93,5 @@ new-api.stdout.log
 *.deploy.gz
 *.gz
 *.bak
+*.bak-*
+*.prev

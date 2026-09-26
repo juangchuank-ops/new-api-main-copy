@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -32,6 +33,7 @@ const (
 type PasskeyCredential struct {
 	ID              int            `json:"id" gorm:"primaryKey"`
 	UserID          int            `json:"user_id" gorm:"index:idx_passkey_credentials_user_id;not null"`
+	RPID            *string        `json:"rp_id,omitempty" gorm:"column:rp_id;type:varchar(253)"`
 	CredentialID    string         `json:"credential_id" gorm:"type:varchar(512);uniqueIndex;not null"` // base64 encoded
 	DisplayName     string         `json:"display_name" gorm:"type:varchar(64);not null;default:''"`
 	PublicKey       string         `json:"public_key" gorm:"type:text;not null"` // base64 encoded
@@ -230,27 +232,59 @@ func GetPasskeyByCredentialID(credentialID []byte) (*PasskeyCredential, error) {
 // UpdatePasskeyAssertionState persists only fields produced by a successful
 // assertion. Registration identity (credential ID, public key, AAGUID,
 // transports and attestation metadata) is immutable on this path.
-func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, lastUsedAt time.Time) error {
-	if userID <= 0 || credential == nil || len(credential.ID) == 0 || lastUsedAt.IsZero() {
+func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, lastUsedAt time.Time, rpID string) error {
+	if userID <= 0 || credential == nil || len(credential.ID) == 0 || lastUsedAt.IsZero() || rpID == "" {
 		return fmt.Errorf("Passkey 保存失败，请重试")
 	}
 	credentialID := base64.StdEncoding.EncodeToString(credential.ID)
-	result := DB.Model(&PasskeyCredential{}).
-		Where("user_id = ? AND credential_id = ?", userID, credentialID).
-		Updates(map[string]any{
-			"sign_count":      credential.Authenticator.SignCount,
-			"clone_warning":   credential.Authenticator.CloneWarning,
-			"user_present":    credential.Flags.UserPresent,
-			"user_verified":   credential.Flags.UserVerified,
-			"backup_eligible": credential.Flags.BackupEligible,
-			"backup_state":    credential.Flags.BackupState,
-			"last_used_at":    lastUsedAt,
-		})
-	if result.Error != nil {
-		return result.Error
+	passkeyOptionMutex.Lock()
+	defer passkeyOptionMutex.Unlock()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := validatePasskeyRPIDWithTx(tx, rpID); err != nil {
+			return err
+		}
+		var stored PasskeyCredential
+		if err := lockForUpdate(tx).Where("user_id = ? AND credential_id = ?", userID, credentialID).First(&stored).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPasskeyNotFound
+			}
+			return err
+		}
+		// Compare in Go: the database collation may fold historical case.
+		if stored.RPID != nil && *stored.RPID != "" && *stored.RPID != rpID {
+			return system_setting.ErrPasskeyRPIDUnavailable
+		}
+		result := tx.Model(&PasskeyCredential{}).
+			Where("user_id = ? AND credential_id = ?", userID, credentialID).
+			Where("rp_id IS NULL OR rp_id = ? OR rp_id = ?", "", rpID).
+			Updates(map[string]any{
+				"rp_id":           rpID,
+				"sign_count":      credential.Authenticator.SignCount,
+				"clone_warning":   credential.Authenticator.CloneWarning,
+				"user_present":    credential.Flags.UserPresent,
+				"user_verified":   credential.Flags.UserVerified,
+				"backup_eligible": credential.Flags.BackupEligible,
+				"backup_state":    credential.Flags.BackupState,
+				"last_used_at":    lastUsedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrPasskeyNotFound
+		}
+		return nil
+	})
+}
+
+func upsertPasskeyCredentialWithTx(tx *gorm.DB, credential *PasskeyCredential) error {
+	if err := tx.Unscoped().Where("user_id = ?", credential.UserID).Delete(&PasskeyCredential{}).Error; err != nil {
+		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to delete existing credential for user %d: %v", credential.UserID, err))
+		return fmt.Errorf("Passkey 保存失败，请重试")
 	}
-	if result.RowsAffected != 1 {
-		return ErrPasskeyNotFound
+	if err := tx.Create(credential).Error; err != nil {
+		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to create credential for user %d: %v", credential.UserID, err))
+		return fmt.Errorf("Passkey 保存失败，请重试")
 	}
 	return nil
 }
@@ -276,6 +310,14 @@ func createPasskeyCredential(credential *PasskeyCredential, additionalEnrollment
 	}
 	credential.DisplayName = displayName
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if identity != nil && (credential.RPID == nil || *credential.RPID == "") {
+			return system_setting.ErrPasskeyRPIDUnavailable
+		}
+		if credential.RPID != nil && *credential.RPID != "" {
+			if err := validatePasskeyRPIDWithTx(tx, *credential.RPID); err != nil {
+				return err
+			}
+		}
 		if identity != nil {
 			if identity.UserID != credential.UserID {
 				return ErrUserSessionInactive

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -43,7 +44,9 @@ type Channel struct {
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
 	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
 	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
-	AutoBan           *int    `json:"auto_ban" gorm:"default:1"`
+	// Concurrency 渠道级并发上限：nil 表示走全局默认，0 表示不限制，正数为同时在途请求上限。
+	Concurrency *int  `json:"concurrency"`
+	AutoBan     *int  `json:"auto_ban" gorm:"default:1"`
 	OtherInfo         string  `json:"other_info"`
 	Tag               *string `json:"tag" gorm:"index"`
 	Setting           *string `json:"setting" gorm:"type:text"` // 渠道额外设置
@@ -62,6 +65,8 @@ type Channel struct {
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
 }
+
+const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
 
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
@@ -526,6 +531,51 @@ func (channel *Channel) GetWeight() int {
 	return int(*channel.Weight)
 }
 
+// normalizeChannelBaseURL trims a trailing API version fragment ("/v", "/v1",
+// "/v1beta") from a channel base URL so callers that append their own versioned
+// request path do not build duplicated segments such as
+// /v1/v1/chat/completions. Channel types whose base URL is itself a complete
+// request address are returned verbatim.
+func normalizeChannelBaseURL(raw string, channelType int) string {
+	baseURL := strings.TrimSpace(raw)
+	if baseURL == "" {
+		return ""
+	}
+	switch channelType {
+	case constant.ChannelTypeCustom, constant.ChannelTypeAdvancedCustom, constant.ChannelTypeMidjourney:
+		return baseURL
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	// Longest suffix first, so "/v1beta" is not shadowed by "/v1" or "/v".
+	for _, suffix := range []string{"/v1beta", "/v1", "/v"} {
+		if len(baseURL) > len(suffix) && strings.EqualFold(baseURL[len(baseURL)-len(suffix):], suffix) {
+			return baseURL[:len(baseURL)-len(suffix)]
+		}
+	}
+	return baseURL
+}
+
+// baseURLIsFullRequestURL reports whether the channel marks its base URL as a
+// complete request address that must be used as-is. The flag is defined on
+// ChannelOtherSettings, but channel setting blobs may carry it as well, so both
+// sources are honored.
+func (channel *Channel) baseURLIsFullRequestURL() bool {
+	var probe struct {
+		FullRequestURL bool `json:"full_request_url"`
+	}
+	if channel.Setting != nil && *channel.Setting != "" {
+		if err := common.UnmarshalJsonStr(*channel.Setting, &probe); err == nil && probe.FullRequestURL {
+			return true
+		}
+	}
+	if channel.OtherSettings != "" {
+		if err := common.UnmarshalJsonStr(channel.OtherSettings, &probe); err == nil && probe.FullRequestURL {
+			return true
+		}
+	}
+	return false
+}
+
 func (channel *Channel) GetBaseURL() string {
 	if channel.BaseURL == nil {
 		return ""
@@ -534,7 +584,10 @@ func (channel *Channel) GetBaseURL() string {
 	if url == "" {
 		url = constant.GetChannelBaseURL(channel.Type)
 	}
-	return url
+	if channel.baseURLIsFullRequestURL() {
+		return strings.TrimSpace(url)
+	}
+	return normalizeChannelBaseURL(url, channel.Type)
 }
 
 func (channel *Channel) GetModelMapping() string {
@@ -750,7 +803,7 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
-			info["status_reason"] = "All keys are disabled"
+			info["status_reason"] = ChannelStatusReasonAllKeysDisabled
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
 		} else if status == common.ChannelStatusEnabled {
@@ -783,6 +836,16 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		if err := lockForUpdate(tx).First(channel, "id = ?", channelId).Error; err != nil {
 			return err
 		}
+
+		// A manual channel operation must replace the exhaustion reason even
+		// when the status value is already manually disabled.
+		overridesKeyExhaustion := channel.ChannelInfo.IsMultiKey && usingKey == "" &&
+			status == common.ChannelStatusManuallyDisabled && reason != ChannelStatusReasonAllKeysDisabled &&
+			channel.GetOtherInfo()["status_reason"] == ChannelStatusReasonAllKeysDisabled
+		if channel.Status == status && !overridesKeyExhaustion {
+			return nil
+		}
+
 		before := channel.Status
 		if channel.ChannelInfo.IsMultiKey {
 			if common.MemoryCacheEnabled {
@@ -833,6 +896,19 @@ func EnableChannelByTag(tag string) error {
 }
 
 func DisableChannelByTag(tag string) error {
+	// Explicit tag-level disable also cancels automatic restoration for
+	// channels that were already disabled because all keys were unavailable.
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		if channel.ChannelInfo.IsMultiKey && channel.GetOtherInfo()["status_reason"] == ChannelStatusReasonAllKeysDisabled {
+			if !UpdateChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "manual tag operation") {
+				return fmt.Errorf("failed to disable channel #%d by tag", channel.Id)
+			}
+		}
+	}
 	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusManuallyDisabled).Error
 	if err != nil {
 		return err
@@ -1037,7 +1113,13 @@ func (channel *Channel) ValidateSettings() error {
 	if err := channelOtherSettings.ValidateToolLossPolicy(); err != nil {
 		return err
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom {
+	if err := setting.ValidateChannelModelConcurrency(channelOtherSettings.ModelConcurrency); err != nil {
+		return fmt.Errorf("invalid model concurrency: %w", err)
+	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		channelOtherSettings.AdvancedCustom = preset
+	}
+	if constant.IsAdvancedCustomChannel(channel.Type) {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return fmt.Errorf("advanced_custom is required")
 		}
@@ -1047,7 +1129,7 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
+	if constant.IsAdvancedCustomChannel(channel.Type) && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
 		if _, ok := channelOtherSettings.AdvancedCustom.ModelListRoute(); !ok {
 			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
@@ -1186,6 +1268,9 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 				_ = DB.Model(&Channel{}).Where("id = ? AND settings = ?", channel.Id, oldSettings).Update("settings", channel.OtherSettings).Error
 			}
 		}
+	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		setting.AdvancedCustom = preset
 	}
 	return setting
 }

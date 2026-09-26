@@ -5009,6 +5009,26 @@
     "Allow users to sign in with Google": "Allow users to sign in with Google",
     "Your Google OAuth Client ID": "Your Google OAuth Client ID",
     "Your Google OAuth Client Secret": "Your Google OAuth Client Secret",
-    "Google": "Google"
+    "Google": "Google",
+    "Concurrency": "Concurrency",
+    "Follow global default": "Follow global default",
+    "Per-model concurrency": "Per-model concurrency",
+    "Leave it empty by default. A model configured here uses its own concurrency limit and is counted independently, no longer bound by the channel-level limit; other models share the channel-level limit.": "Leave it empty by default. A model configured here uses its own concurrency limit and is counted independently, no longer bound by the channel-level limit; other models share the channel-level limit.",
+    "No model configured yet": "No model configured yet",
+    "Select or type a model name": "Select or type a model name",
+    "Concurrency limit": "Concurrency limit",
+    "Add model concurrency": "Add model concurrency",
+    "Not set separately; follows the global default concurrency": "Not set separately; follows the global default concurrency",
+    "This channel does not limit concurrency": "This channel does not limit concurrency",
+    "Per-model concurrency has a row without a model": "Per-model concurrency has a row without a model",
+    "Per-model concurrency must be an integer between 1 and 1000000": "Per-model concurrency must be an integer between 1 and 1000000",
+    "Per-model concurrency contains duplicate models": "Per-model concurrency contains duplicate models",
+    "Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.": "Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.",
+    "Enable channel concurrency limit": "Enable channel concurrency limit",
+    "Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.": "Caps in-flight requests per channel. Requests above the limit are rejected with 429 and are not retried on another channel.",
+    "Default channel concurrency": "Default channel concurrency",
+    "concurrent": "concurrent",
+    "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.": "Used when a channel has no concurrency of its own. Range 0-1000000; 0 means unlimited.",
+    "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit.": "A single channel can override this default in its edit dialog. Models configured under \"Advanced settings - Per-model concurrency\" use their own limit and are counted independently, no longer bound by the channel-level limit."
   }
 }

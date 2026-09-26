@@ -50,7 +50,7 @@ func MergeUsageNonZero(current *Usage, incoming *Usage) *Usage {
 			details.CacheWriteTokens > 0 ||
 			details.TextTokens > 0 ||
 			details.AudioTokens > 0 ||
-			details.ImageTokens > 0 {
+			details.ImageTokens > 0 || details.CachedTokensDetails != nil {
 			if current.InputTokensDetails == nil {
 				current.InputTokensDetails = &InputTokenDetails{}
 			}
@@ -265,34 +265,46 @@ func normalizeGeminiModality(modality string) string {
 }
 
 func mergeGeminiTokenDetails(current []GeminiPromptTokensDetails, incoming []GeminiPromptTokensDetails) []GeminiPromptTokensDetails {
-	merged := make([]GeminiPromptTokensDetails, 0, len(current)+len(incoming))
-	indexes := make(map[string]int)
-	// Each frame contains cumulative counts. Sum duplicate modalities within
-	// that frame, then replace the previous frame's count for that modality.
-	for _, snapshot := range [][]GeminiPromptTokensDetails{current, incoming} {
-		seen := make(map[string]bool, len(snapshot))
-		for _, detail := range snapshot {
-			if detail.TokenCount <= 0 {
-				continue
-			}
-			key := normalizeGeminiModality(detail.Modality)
-			if index, ok := indexes[key]; ok {
-				if seen[key] {
-					merged[index].TokenCount += detail.TokenCount
-				} else {
-					merged[index] = detail
-				}
-			} else {
-				indexes[key] = len(merged)
-				merged = append(merged, detail)
-			}
-			seen[key] = true
+	merged := append([]GeminiPromptTokensDetails{}, current...)
+	indexes := make(map[string]int, len(merged))
+	for index, detail := range merged {
+		indexes[normalizeGeminiModality(detail.Modality)] = index
+	}
+	for _, detail := range incoming {
+		if detail.TokenCount <= 0 {
+			continue
 		}
+		key := normalizeGeminiModality(detail.Modality)
+		if index, ok := indexes[key]; ok {
+			merged[index].TokenCount += detail.TokenCount
+			continue
+		}
+		indexes[key] = len(merged)
+		merged = append(merged, detail)
 	}
 	return merged
 }
 
 func mergeInputTokenDetails(current *InputTokenDetails, incoming InputTokenDetails) {
+	if incoming.CachedTokensDetails != nil {
+		// Unlike legacy scalar counters, these optional fields explicitly report
+		// zero. Merge only present modalities and detach the resulting snapshot.
+		merged := current.Clone()
+		if merged.CachedTokensDetails == nil {
+			merged.CachedTokensDetails = &CachedTokenDetails{}
+		}
+		details := incoming.Clone().CachedTokensDetails
+		if details.TextTokens != nil {
+			merged.CachedTokensDetails.TextTokens = details.TextTokens
+		}
+		if details.ImageTokens != nil {
+			merged.CachedTokensDetails.ImageTokens = details.ImageTokens
+		}
+		if details.AudioTokens != nil {
+			merged.CachedTokensDetails.AudioTokens = details.AudioTokens
+		}
+		current.CachedTokensDetails = merged.CachedTokensDetails
+	}
 	if incoming.CachedTokens > 0 {
 		current.CachedTokens = incoming.CachedTokens
 	}

@@ -238,7 +238,6 @@ func ApplyMetadataSync(updates []MetadataSyncUpdate, upstreamVendors map[string]
 								return fmt.Errorf("upstream vendor not found: %s", name)
 							}
 							vendor = &Vendor{Name: name, Description: up.Description, Icon: up.Icon, Status: 1, CreatedTime: common.GetTimestamp(), UpdatedTime: common.GetTimestamp()}
-							vendor.ActiveName = &vendor.Name
 							if err := validateVendorMetadata(tx, vendor); err != nil {
 								return err
 							}
@@ -256,7 +255,6 @@ func ApplyMetadataSync(updates []MetadataSyncUpdate, upstreamVendors map[string]
 			fields["updated_time"] = common.GetTimestamp()
 			if update.Create {
 				fields["model_name"] = update.ModelName
-				fields["active_name"] = update.ModelName
 				fields["sync_official"] = 1
 				fields["created_time"] = common.GetTimestamp()
 				if err := tx.Model(&Model{}).Create(fields).Error; err != nil {

@@ -86,7 +86,7 @@ func TestOptionPrimaryKeyMigration(t *testing.T) {
 		assert.NotContains(t, err.Error(), original[0].Value)
 		assert.False(t, db.Migrator().HasTable(&User{}), "startup stops before unrelated migrations")
 		require.ErrorIs(t, SeedCanonicalPricingOptions(), ErrPricingOptionIntegrity)
-		_, err = readModelPricingMaps(db)
+		_, _, _, err = readModelPricingMaps(db)
 		require.ErrorIs(t, err, ErrPricingOptionIntegrity)
 		_, err = MutatePricingOptions(func(_ *gorm.DB, _ map[string]map[string]json.RawMessage) error {
 			t.Error("ambiguous persisted pricing must not reach a mutation")

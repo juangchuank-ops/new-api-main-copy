@@ -27,6 +27,18 @@ export const isUserDeleted = (user: UserType): boolean => {
   return user.DeletedAt != null
 }
 
+/**
+ * 自动封禁中的用户：命中风控规则且封禁未到期（auto_ban_until 为 -1 表示永久封禁）。
+ * 与后端 model.SearchUsers 的 status=-2 筛选使用同一套判定。
+ */
+export const isUserBanned = (user: UserType): boolean => {
+  if (!String(user.auto_ban_rule || '').trim()) {
+    return false
+  }
+  const until = Number(user.auto_ban_until || 0)
+  return until === -1 || until > Math.floor(Date.now() / 1000)
+}
+
 // ============================================================================
 // User Status Configuration
 // ============================================================================
@@ -35,6 +47,8 @@ export const USER_STATUS = {
   ENABLED: 1,
   DISABLED: 2,
   DELETED: -1,
+  // 不落库的虚拟状态，仅用于状态筛选：后端按 auto_ban_* 字段换算
+  BANNED: -2,
 } as const
 
 export const USER_STATUSES = {
@@ -53,12 +67,18 @@ export const USER_STATUSES = {
     variant: 'danger' as const,
     value: USER_STATUS.DELETED,
   },
+  [USER_STATUS.BANNED]: {
+    labelKey: 'Auto Banned',
+    variant: 'danger' as const,
+    value: USER_STATUS.BANNED,
+  },
 } as const
 
 export const getUserStatusOptions = (t: (key: string) => string) => [
   { label: t('Enabled'), value: String(USER_STATUS.ENABLED) },
   { label: t('Disabled'), value: String(USER_STATUS.DISABLED) },
   { label: t('Deleted'), value: String(USER_STATUS.DELETED) },
+  { label: t('Auto Banned'), value: String(USER_STATUS.BANNED) },
 ]
 
 // ============================================================================

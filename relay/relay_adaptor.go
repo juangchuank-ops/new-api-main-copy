@@ -189,9 +189,6 @@ func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, strin
 }
 
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
-	if legacy := getLegacyTaskAdaptor(platform); legacy != nil {
-		return legacy
-	}
 	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
 	if !ok {
 		return nil
@@ -226,6 +223,8 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (c
 			return platform, nil
 		}
 	}
+	// 数字平台（渠道类型编号）先交给内置 adaptor，插件只接管它认不出的平台名。
+	// 这样插件被禁用时，遗留渠道的任务提交不会整体失效。
 	if legacy := getLegacyTaskAdaptor(platform); legacy != nil {
 		return platform, legacy
 	}

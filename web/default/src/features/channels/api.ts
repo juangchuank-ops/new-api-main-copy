@@ -139,6 +139,23 @@ export async function updateChannel(
 }
 
 /**
+ * Update channel status (enable/disable).
+ * Status is an operational field: the general PUT /api/channel/ endpoint rejects
+ * it, so status changes must go through the dedicated status endpoint.
+ */
+export async function updateChannelStatus(
+  id: number,
+  status: number
+): Promise<{ success: boolean; message?: string; data?: boolean }> {
+  const res = await api.post(
+    `/api/channel/${id}/status`,
+    { status },
+    channelActionConfig()
+  )
+  return res.data
+}
+
+/**
  * Delete single channel
  */
 export async function deleteChannel(

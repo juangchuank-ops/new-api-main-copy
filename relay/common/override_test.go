@@ -2175,6 +2175,7 @@ func TestApplyParamOverrideWithRelayInfoActiveClaudeCodeAllowsSafeOperations(t *
 
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{
+
 			ChannelType: constant.ChannelTypeClaudeCode,
 			ParamOverride: map[string]interface{}{
 				"operations": []interface{}{
@@ -2313,6 +2314,7 @@ func TestApplyParamOverrideWithRelayInfoHeaderOperationsRemainAvailableOutsideAc
 func TestApplyParamOverrideWithRelayInfoMoveAndCopyHeaders(t *testing.T) {
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{
+
 			ParamOverride: map[string]any{
 				"operations": []any{
 					map[string]any{

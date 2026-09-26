@@ -17,26 +17,35 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const KEY = 'default_collapse_sidebar';
+const CHANGE_EVENT = 'sidebar-collapsed-change';
 
 export const useSidebarCollapsed = () => {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(KEY) === 'true',
   );
 
+  // 跨实例同步：PageLayout（布局模式）与 SiderBar（折叠按钮）各自持有实例，
+  // 任一实例变化时通过自定义事件通知其它实例。同值更新会被 React 跳过，不会成环。
+  useEffect(() => {
+    localStorage.setItem(KEY, collapsed.toString());
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: collapsed }));
+  }, [collapsed]);
+
+  useEffect(() => {
+    const handler = (event) => setCollapsed(event.detail === true);
+    window.addEventListener(CHANGE_EVENT, handler);
+    return () => window.removeEventListener(CHANGE_EVENT, handler);
+  }, []);
+
   const toggle = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem(KEY, next.toString());
-      return next;
-    });
+    setCollapsed((prev) => !prev);
   }, []);
 
   const set = useCallback((value) => {
-    setCollapsed(value);
-    localStorage.setItem(KEY, value.toString());
+    setCollapsed(Boolean(value));
   }, []);
 
   return [collapsed, toggle, set];

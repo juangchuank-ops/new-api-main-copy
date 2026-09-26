@@ -13,12 +13,24 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// BillingExprOptionKey holds per-model billing expressions. It belongs to the
+// pricing family but owns a dedicated validate-then-write path, so it is exempt
+// from the pricing-patch-only guard.
+const BillingExprOptionKey = "billing_setting.billing_expr"
+
 // PricingOptionKeys is the complete, ordered set of option rows owned by the
 // pricing patch service. Keep this order stable: it is also the lock/read order.
 var PricingOptionKeys = []string{
 	"ModelPrice", "ModelRatio", "CompletionRatio", "CacheRatio", "CreateCacheRatio",
 	"ImageRatio", "AudioRatio", "AudioCompletionRatio",
-	"billing_setting.billing_mode", "billing_setting.billing_expr",
+	"billing_setting.billing_mode", BillingExprOptionKey,
+}
+
+// IsPricingPatchOnlyKey reports whether a key may only be written through the
+// pricing patch service. Billing expressions carry their own per-model
+// validation on the generic option endpoint, so they are not patch-only.
+func IsPricingPatchOnlyKey(key string) bool {
+	return key != BillingExprOptionKey && IsPricingOptionKey(key)
 }
 
 var (
@@ -141,7 +153,7 @@ func SeedCanonicalPricingOptions() error {
 				return fmt.Errorf("seed pricing option %q: %w", key, err)
 			}
 		}
-		_, err := readModelPricingMaps(tx)
+		_, _, _, err := readModelPricingMaps(tx)
 		return err
 	})
 }

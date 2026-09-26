@@ -433,6 +433,10 @@ func UpdateChannelAdminPatchTx(tx *gorm.DB, input ChannelAdminPatchInput) (*Chan
 			next.StatusCodeMapping = input.Patch.StatusCodeMapping
 		case "priority":
 			next.Priority = input.Patch.Priority
+		case "concurrency":
+			// nil 表示跟随全局默认值，显式 0 表示该渠道不限制，两者语义不同，
+			// 因此这里直接透传指针而不做零值兜底。
+			next.Concurrency = input.Patch.Concurrency
 		case "auto_ban":
 			next.AutoBan = input.Patch.AutoBan
 		case "other_info":
@@ -848,7 +852,7 @@ func updateAdministratorChannelTx(tx *gorm.DB, channel *model.Channel) error {
 		"type": desired.Type, "key": desired.Key, "open_ai_organization": desired.OpenAIOrganization, "test_model": desired.TestModel,
 		"name": desired.Name, "weight": desired.Weight, "base_url": desired.BaseURL, "other": desired.Other, "models": desired.Models,
 		"group": desired.Group, "model_mapping": desired.ModelMapping, "status_code_mapping": desired.StatusCodeMapping,
-		"priority": desired.Priority, "auto_ban": desired.AutoBan, "other_info": desired.OtherInfo, "tag": desired.Tag,
+		"priority": desired.Priority, "concurrency": desired.Concurrency, "auto_ban": desired.AutoBan, "other_info": desired.OtherInfo, "tag": desired.Tag,
 		"setting": desired.Setting, "param_override": desired.ParamOverride, "header_override": desired.HeaderOverride, "remark": desired.Remark,
 		"channel_info": desired.ChannelInfo, "settings": desired.OtherSettings, "auto_price_guard_id": int64(0), "config_revision": desired.ConfigRevision,
 	}
@@ -871,6 +875,7 @@ type channelAdminConfigSnapshot struct {
 	Other, Models, Group                                string
 	ModelMapping, StatusCodeMapping                     *string
 	Priority                                            *int64
+	Concurrency                                         *int
 	AutoBan                                             *int
 	OtherInfo                                           string
 	Tag, Setting, ParamOverride, HeaderOverride, Remark *string
@@ -882,6 +887,6 @@ type channelAdminConfigSnapshot struct {
 
 func adminConfigSnapshot(c model.Channel) channelAdminConfigSnapshot {
 	return channelAdminConfigSnapshot{c.Type, c.Key, c.OpenAIOrganization, c.TestModel, c.Name, c.Weight, c.BaseURL, c.Other, c.Models, c.Group,
-		c.ModelMapping, c.StatusCodeMapping, c.Priority, c.AutoBan, c.OtherInfo, c.Tag, c.Setting, c.ParamOverride, c.HeaderOverride, c.Remark,
+		c.ModelMapping, c.StatusCodeMapping, c.Priority, c.Concurrency, c.AutoBan, c.OtherInfo, c.Tag, c.Setting, c.ParamOverride, c.HeaderOverride, c.Remark,
 		c.OtherSettings, c.ChannelInfo.IsMultiKey, c.ChannelInfo.MultiKeySize, c.ChannelInfo.MultiKeyMode}
 }

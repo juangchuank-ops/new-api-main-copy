@@ -29,7 +29,7 @@ import {
   Avatar,
 } from '@douyinfe/semi-ui';
 import { IconHelpCircle } from '@douyinfe/semi-icons';
-import { Copy } from 'lucide-react';
+import { Copy, ChevronRight } from 'lucide-react';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
@@ -340,38 +340,84 @@ const PricingCardView = ({
 
                 {/* 底部区域 */}
                 <div className='mt-auto'>
-                  {/* 性能指标（近 24 小时）：延迟 / tps / 成功率 */}
+                  {/* 性能指标（近 24 小时）：状态 / 延迟 / 吞吐 + 详情入口（对齐新版样式） */}
                   {(() => {
                     const perf = perfSummaryMap[model.model_name];
-                    const stats = [
-                      {
-                        label: t('延迟'),
-                        value: perf ? `${(perf.avg_latency_ms / 1000).toFixed(2)}s` : '-',
-                      },
-                      {
-                        label: 'tps',
-                        value: perf ? `${Number(perf.avg_tps).toFixed(2)} t/s` : '-',
-                      },
-                      {
-                        label: t('成功率'),
-                        value: perf ? `${Number(perf.success_rate).toFixed(1)}%` : '-',
-                      },
-                    ];
+                    const successRate = perf ? Number(perf.success_rate) : null;
+                    const successText =
+                      successRate === null ? '-%' : `${successRate.toFixed(1)}%`;
+                    const barCount = 20;
+                    const filledBars =
+                      successRate === null
+                        ? 0
+                        : Math.max(
+                            successRate > 0 ? 1 : 0,
+                            Math.round((successRate / 100) * barCount),
+                          );
                     return (
                       <div
-                        className='grid grid-cols-3 gap-2 mb-3 pb-3'
+                        className='flex items-center gap-4 mb-3 pb-3'
                         style={{ borderBottom: '1px solid var(--semi-color-border)' }}
                       >
-                        {stats.map((item) => (
-                          <div key={item.label} className='text-center'>
-                            <div className='text-[11px]' style={{ color: 'var(--semi-color-text-2)' }}>
-                              {item.label}
-                            </div>
-                            <div className='text-xs font-medium mt-0.5'>
-                              {item.value}
-                            </div>
+                        <div className='min-w-0 w-24'>
+                          <div className='flex items-center justify-between gap-2'>
+                            <span
+                              className='text-[11px]'
+                              style={{ color: 'var(--semi-color-text-2)' }}
+                            >
+                              {t('状态')}
+                            </span>
+                            <span className='text-xs font-medium'>{successText}</span>
                           </div>
-                        ))}
+                          <div className='flex gap-[2px] items-stretch h-2.5 mt-1'>
+                            {Array.from({ length: barCount }).map((_, i) => (
+                              <span
+                                key={i}
+                                className='flex-1 rounded-[1px]'
+                                style={{
+                                  background:
+                                    i < filledBars
+                                      ? 'var(--semi-color-primary)'
+                                      : 'var(--semi-color-fill-2)',
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <div className='flex-shrink-0'>
+                          <div
+                            className='text-[11px]'
+                            style={{ color: 'var(--semi-color-text-2)' }}
+                          >
+                            {t('延迟')}
+                          </div>
+                          <div className='text-xs font-medium mt-0.5'>
+                            {perf ? `${(perf.avg_latency_ms / 1000).toFixed(2)}s` : '-s'}
+                          </div>
+                        </div>
+                        <div className='flex-shrink-0'>
+                          <div
+                            className='text-[11px]'
+                            style={{ color: 'var(--semi-color-text-2)' }}
+                          >
+                            {t('吞吐')}
+                          </div>
+                          <div className='text-xs font-medium mt-0.5'>
+                            {perf ? `${Number(perf.avg_tps).toFixed(2)} t/s` : '-t/s'}
+                          </div>
+                        </div>
+                        <button
+                          type='button'
+                          className='ml-auto flex items-center gap-0.5 text-xs font-medium flex-shrink-0'
+                          style={{ color: 'var(--semi-color-primary)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openModelDetail && openModelDetail(model);
+                          }}
+                        >
+                          {t('详情')}
+                          <ChevronRight size={13} />
+                        </button>
                       </div>
                     );
                   })()}

@@ -48,7 +48,17 @@ export const useUsersData = () => {
   const formInitValues = {
     searchKeyword: '',
     searchGroup: '',
+    searchStatus: '',
   };
+
+  // 用户状态筛选选项（与后端 /api/user/search 的 status 参数一致）
+  // 1/2 是落库状态；-1（已注销）与 -2（自动封禁中）是后端支持的虚拟筛选值。
+  const statusOptions = [
+    { label: t('已启用'), value: '1' },
+    { label: t('已禁用'), value: '2' },
+    { label: t('已注销'), value: '-1' },
+    { label: t('自动封禁'), value: '-2' },
+  ];
 
   // Form API reference
   const [formApi, setFormApi] = useState(null);
@@ -59,6 +69,10 @@ export const useUsersData = () => {
     return {
       searchKeyword: formValues.searchKeyword || '',
       searchGroup: formValues.searchGroup || '',
+      searchStatus:
+        formValues.searchStatus === undefined || formValues.searchStatus === null
+          ? ''
+          : String(formValues.searchStatus),
     };
   };
 
@@ -97,21 +111,23 @@ export const useUsersData = () => {
     setLoading(false);
   };
 
-  // Search users with keyword and group
+  // Search users with keyword, group and status
   const searchUsers = async (
     startIdx,
     pageSize,
     searchKeyword = null,
     searchGroup = null,
+    searchStatus = null,
   ) => {
     // If no parameters passed, get values from form
-    if (searchKeyword === null || searchGroup === null) {
+    if (searchKeyword === null || searchGroup === null || searchStatus === null) {
       const formValues = getFormValues();
       searchKeyword = formValues.searchKeyword;
       searchGroup = formValues.searchGroup;
+      searchStatus = formValues.searchStatus;
     }
 
-    if (searchKeyword === '' && searchGroup === '') {
+    if (searchKeyword === '' && searchGroup === '' && searchStatus === '') {
       // If keyword is blank, load files instead
       await loadUsers(startIdx, pageSize);
       return;
@@ -119,8 +135,10 @@ export const useUsersData = () => {
     setSearching(true);
     let res;
     try {
+      const statusQuery =
+        searchStatus === '' ? '' : `&status=${encodeURIComponent(searchStatus)}`;
       res = await API.get(
-        `/api/user/search?keyword=${searchKeyword}&group=${searchGroup}&p=${startIdx}&page_size=${pageSize}`,
+        `/api/user/search?keyword=${searchKeyword}&group=${searchGroup}${statusQuery}&p=${startIdx}&page_size=${pageSize}`,
         { skipErrorHandler: true },
       );
     } catch (error) {
@@ -276,11 +294,11 @@ export const useUsersData = () => {
   // Handle page change
   const handlePageChange = (page) => {
     setActivePage(page);
-    const { searchKeyword, searchGroup } = getFormValues();
-    if (searchKeyword === '' && searchGroup === '') {
+    const { searchKeyword, searchGroup, searchStatus } = getFormValues();
+    if (searchKeyword === '' && searchGroup === '' && searchStatus === '') {
       loadUsers(page, pageSize).then();
     } else {
-      searchUsers(page, pageSize, searchKeyword, searchGroup).then();
+      searchUsers(page, pageSize, searchKeyword, searchGroup, searchStatus).then();
     }
   };
 
@@ -311,11 +329,11 @@ export const useUsersData = () => {
 
   // Refresh data
   const refresh = async (page = activePage) => {
-    const { searchKeyword, searchGroup } = getFormValues();
-    if (searchKeyword === '' && searchGroup === '') {
+    const { searchKeyword, searchGroup, searchStatus } = getFormValues();
+    if (searchKeyword === '' && searchGroup === '' && searchStatus === '') {
       await loadUsers(page, pageSize);
     } else {
-      await searchUsers(page, pageSize, searchKeyword, searchGroup);
+      await searchUsers(page, pageSize, searchKeyword, searchGroup, searchStatus);
     }
   };
 
@@ -369,6 +387,7 @@ export const useUsersData = () => {
     userCount,
     searching,
     groupOptions,
+    statusOptions,
 
     // Modal state
     showAddUser,

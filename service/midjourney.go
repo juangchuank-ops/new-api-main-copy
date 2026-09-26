@@ -272,6 +272,31 @@ func ConvertSimpleChangeParams(content string) *dto.MidjourneyRequest {
 	return changeParams
 }
 
+// RecordMidjourneyPolicyResponse distinguishes accepted tasks from errors inside
+// HTTP 200 responses. Submissions are single-attempt: an ambiguous transport
+// failure must never create a duplicate task on another channel.
+func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResponseWithStatusCode, requestErr error) bool {
+	if response == nil {
+		response = MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response", http.StatusBadGateway)
+	}
+	accepted := requestErr == nil && response.StatusCode == http.StatusOK && (response.Response.Code == 1 || response.Response.Code == 21 || response.Response.Code == 22)
+	if accepted {
+		properties, _ := response.Response.Properties.(map[string]any)
+		if properties["status"] != "FAILURE" {
+			return true
+		}
+	}
+	state := RequestPolicy(c)
+	event := PolicyEvent{ChannelID: c.GetInt("channel_id"), Status: response.StatusCode, ErrorCode: strconv.Itoa(response.Response.Code), ErrorSource: "upstream", Decision: PolicyDecision{Action: "failure", Reason: "upstream_failure", Source: "upstream"}}
+	state.AddEvent(event)
+	event.Decision, event.Health = PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}, "unchanged"
+	if accepted {
+		event.Decision.Reason = "task_accepted"
+	}
+	state.AddEvent(event)
+	return false
+}
+
 func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
 	var nullBytes []byte
 	//var requestBody io.Reader

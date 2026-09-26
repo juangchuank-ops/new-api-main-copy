@@ -120,10 +120,12 @@ func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, 
 		return nil, err
 	}
 	bundle, err := issueAuthBundle(session, session.SID+"."+refreshSecret, true)
+
 	if err != nil {
 		_, _ = model.RevokeUserSession(userID, session.SID, "token_issue_failed")
 		return nil, err
 	}
+
 	return bundle, nil
 }
 

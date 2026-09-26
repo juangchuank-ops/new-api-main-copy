@@ -18,16 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import HeaderBar from './headerbar';
-import { Layout } from '@douyinfe/semi-ui';
+import { Button, Layout } from '@douyinfe/semi-ui';
+import { PanelLeft } from 'lucide-react';
 import SiderBar from './SiderBar';
 import App from '../../App';
 import FooterBar from './Footer';
 import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
 import PublicBanners from '../banner/PublicBanners';
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
+import { useAppearance, useSetAppearance } from '../../context/ThemeAppearance';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -48,8 +50,10 @@ const PageLayout = () => {
   const [, statusDispatch] = useContext(StatusContext);
   const isMobile = useIsMobile();
   const [collapsed, , setCollapsed] = useSidebarCollapsed();
+  const { sidebarVariant, layoutMode } = useAppearance();
+  const setAppearance = useSetAppearance();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
 
   const cardProPages = [
@@ -73,14 +77,35 @@ const PageLayout = () => {
     location.pathname !== '/console/playground';
 
   const isConsoleRoute = location.pathname.startsWith('/console');
-  const showSider = isConsoleRoute && (!isMobile || drawerOpen);
+  const fullscreenLayout =
+    isConsoleRoute && layoutMode === 'fullscreen' && !isMobile;
+  const floatingSidebar = sidebarVariant === 'floating' && !isMobile;
+  const insetLayout = sidebarVariant === 'inset' && !isMobile && isConsoleRoute;
+  const showSider =
+    isConsoleRoute && !fullscreenLayout && (!isMobile || drawerOpen);
   const isFixedLayout = isConsoleRoute || location.pathname === '/pricing';
+  const contentMarginLeft =
+    !isMobile && showSider && !floatingSidebar
+      ? 'var(--sidebar-current-width)'
+      : '0';
 
   useEffect(() => {
     if (isMobile && drawerOpen && collapsed) {
       setCollapsed(false);
     }
   }, [isMobile, drawerOpen, collapsed, setCollapsed]);
+
+  // 布局模式切换时同步折叠状态（跳过首次挂载，避免覆盖已保存的折叠偏好）
+  const layoutModeRef = useRef(layoutMode);
+  useEffect(() => {
+    if (layoutModeRef.current === layoutMode) return;
+    layoutModeRef.current = layoutMode;
+    if (layoutMode === 'default') {
+      setCollapsed(false);
+    } else if (layoutMode === 'compact') {
+      setCollapsed(true);
+    }
+  }, [layoutMode, setCollapsed]);
 
   const loadUser = () => {
     let user = localStorage.getItem('user');
@@ -176,12 +201,11 @@ const PageLayout = () => {
       <PublicBanners
         style={{
           marginTop: '64px',
-          marginLeft:
-            isConsoleRoute && !isMobile ? 'var(--sidebar-current-width)' : '0',
+          marginLeft: contentMarginLeft,
           width:
-            isConsoleRoute && !isMobile
-              ? 'calc(100% - var(--sidebar-current-width))'
-              : '100%',
+            contentMarginLeft === '0'
+              ? '100%'
+              : 'calc(100% - var(--sidebar-current-width))',
         }}
       />
       <Layout
@@ -195,15 +219,32 @@ const PageLayout = () => {
         {showSider && (
           <Sider
             className='app-sider'
-            style={{
-              position: 'fixed',
-              left: 0,
-              top: '64px',
-              zIndex: 99,
-              border: 'none',
-              paddingRight: '0',
-              width: 'var(--sidebar-current-width)',
-            }}
+            style={
+              floatingSidebar
+                ? {
+                    position: 'fixed',
+                    left: '8px',
+                    top: '72px',
+                    bottom: '8px',
+                    height: 'auto',
+                    zIndex: 99,
+                    border: 'none',
+                    width: 'var(--sidebar-current-width)',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: 'var(--shadow-lg)',
+                    background: 'var(--semi-color-bg-1)',
+                  }
+                : {
+                    position: 'fixed',
+                    left: 0,
+                    top: '64px',
+                    zIndex: 99,
+                    border: 'none',
+                    paddingRight: '0',
+                    width: 'var(--sidebar-current-width)',
+                  }
+            }
           >
             <SiderBar
               onNavigate={() => {
@@ -214,15 +255,22 @@ const PageLayout = () => {
         )}
         <Layout
           style={{
-            marginLeft: isMobile
-              ? '0'
-              : showSider
-                ? 'var(--sidebar-current-width)'
-                : '0',
+            marginLeft: insetLayout
+              ? 'calc(var(--sidebar-current-width) + 8px)'
+              : contentMarginLeft,
+            marginTop: insetLayout ? '8px' : 0,
+            marginRight: insetLayout ? '8px' : 0,
             flex: '1 1 auto',
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
+            ...(insetLayout
+              ? {
+                  borderRadius: '12px',
+                  border: '1px solid var(--semi-color-border)',
+                  background: 'var(--semi-color-bg-1)',
+                }
+              : {}),
           }}
         >
           <Content
@@ -253,6 +301,21 @@ const PageLayout = () => {
         </Layout>
       </Layout>
       {!isMobile && <FloatingWindowHost />}
+      {fullscreenLayout && (
+        <Button
+          aria-label={t('恢复侧边栏')}
+          icon={<PanelLeft size={16} />}
+          onClick={() => setAppearance('layoutMode', 'default')}
+          style={{
+            position: 'fixed',
+            left: '16px',
+            bottom: '16px',
+            zIndex: 98,
+            borderRadius: '9999px',
+            boxShadow: 'var(--shadow-lg)',
+          }}
+        />
+      )}
       <ToastContainer />
     </Layout>
   );

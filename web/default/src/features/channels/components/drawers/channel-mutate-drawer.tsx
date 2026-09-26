@@ -123,6 +123,7 @@ import {
   ERROR_MESSAGES,
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
+  MAX_MODEL_CONCURRENCY,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
@@ -161,6 +162,7 @@ import {
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
+import { ModelConcurrencyEditor } from '../model-concurrency-editor'
 import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
@@ -217,6 +219,8 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.remark?.trim() ||
     values.priority ||
     values.weight ||
+    (values.concurrency !== null && values.concurrency !== undefined) ||
+    (values.model_concurrency?.length ?? 0) > 0 ||
     values.proxy?.trim() ||
     values.system_prompt?.trim() ||
     values.force_format ||
@@ -2622,7 +2626,65 @@ export function ChannelMutateDrawer({
                               </FormItem>
                             )}
                           />
+
+                          <FormField
+                            control={form.control}
+                            name='concurrency'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('Concurrency')}</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type='number'
+                                    min={0}
+                                    max={MAX_MODEL_CONCURRENCY}
+                                    placeholder={t('Follow global default')}
+                                    value={field.value ?? ''}
+                                    onBlur={field.onBlur}
+                                    name={field.name}
+                                    ref={field.ref}
+                                    onChange={(e) => {
+                                      // 空值代表"未单独设置"（跟随全局默认），
+                                      // 与显式 0（不限制）语义不同，必须区分。
+                                      const raw = e.target.value
+                                      field.onChange(
+                                        raw === '' ? null : Number(raw)
+                                      )
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormDescription>
+                                  {t(FIELD_DESCRIPTIONS.CONCURRENCY)}
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
                         </div>
+
+                        <FormField
+                          control={form.control}
+                          name='model_concurrency'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Per-model concurrency')}
+                              </FormLabel>
+                              <FormControl>
+                                <div>
+                                  <ModelConcurrencyEditor
+                                    rows={field.value || []}
+                                    models={parseModelsString(
+                                      currentModels || ''
+                                    )}
+                                    onChange={field.onChange}
+                                  />
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
                         <FormField
                           control={form.control}

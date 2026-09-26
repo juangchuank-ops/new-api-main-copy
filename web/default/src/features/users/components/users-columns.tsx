@@ -36,6 +36,7 @@ import {
   USER_STATUS,
   USER_STATUSES,
   USER_ROLES,
+  isUserBanned,
   isUserDeleted,
 } from '../constants'
 import { type User } from '../types'
@@ -132,7 +133,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
 
         const statusConfig = isUserDeleted(user)
           ? USER_STATUSES[USER_STATUS.DELETED]
-          : USER_STATUSES[user.status as keyof typeof USER_STATUSES]
+          : isUserBanned(user)
+            ? USER_STATUSES[USER_STATUS.BANNED]
+            : USER_STATUSES[user.status as keyof typeof USER_STATUSES]
 
         if (!statusConfig) {
           return null

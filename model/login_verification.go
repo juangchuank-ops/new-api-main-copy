@@ -10,26 +10,14 @@ import (
 // UserVerificationState is an authoritative, credential-free projection for
 // choosing an authentication method. Loading it never fetches credential secrets.
 type UserVerificationState struct {
-	UserID         int
-	Status         int
-	Role           int
-	AuthVersion    int64
-	HasPassword    bool
-	HasTwoFA       bool
-	TwoFALocked    bool
-	HasPasskey     bool
-	AutoBanUntil   int64
-	AutoBanRule    string
-	AutoBanStatus  int    `gorm:"column:auto_ban_response_status"`
-	AutoBanCode    string `gorm:"column:auto_ban_response_code"`
-	AutoBanMessage string `gorm:"column:auto_ban_response_message"`
-}
-
-func (state *UserVerificationState) ActiveAutoBan() (AutoBanResponse, bool) {
-	if state == nil {
-		return AutoBanResponse{}, false
-	}
-	return normalizeAutoBanResponse(state.AutoBanUntil, state.AutoBanRule, state.AutoBanStatus, state.AutoBanCode, state.AutoBanMessage)
+	UserID      int
+	Status      int
+	Role        int
+	AuthVersion int64
+	HasPassword bool
+	HasTwoFA    bool
+	TwoFALocked bool
+	HasPasskey  bool
 }
 
 func GetUserVerificationState(userID int) (*UserVerificationState, error) {
@@ -42,9 +30,7 @@ func getUserVerificationState(tx *gorm.DB, userID int, forUpdate bool) (*UserVer
 	}
 	var state UserVerificationState
 	query := tx.Model(&User{}).Select(
-		"id AS user_id, status, role, auth_version, auto_ban_until, auto_ban_rule, "+
-			"auto_ban_response_status, auto_ban_response_code, auto_ban_response_message, "+
-			"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password, "+
+		"id AS user_id, status, role, auth_version, CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password, "+
 			"EXISTS (?) AS has_two_fa, EXISTS (?) AS two_fa_locked, EXISTS (?) AS has_passkey",
 		tx.Model(&TwoFA{}).Select("1").Where("user_id = ? AND is_enabled = ?", userID, true),
 		tx.Model(&TwoFA{}).Select("1").Where("user_id = ? AND is_enabled = ? AND locked_until > ?", userID, true, time.Now()),
@@ -61,8 +47,9 @@ func getUserVerificationState(tx *gorm.DB, userID int, forUpdate bool) (*UserVer
 
 // CreateUserSessionFromLoginFlow commits the one-time login authorization and
 // the resulting session together. The user lock serializes credential changes
-// and session issuance, including the per-user session limits.
-func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate func(*AuthFlow, *UserVerificationState) error) error {
+// and session issuance, including the per-user session limits. validate runs
+// inside the transaction and may write through tx.
+func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate func(*gorm.DB, *AuthFlow, *UserVerificationState) error) error {
 	if session == nil || validate == nil {
 		return ErrUserSessionInvalid
 	}
@@ -77,7 +64,7 @@ func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate
 		if state.Status != common.UserStatusEnabled || state.AuthVersion != session.UserAuthVersion {
 			return ErrUserSessionInactive
 		}
-		if err := validate(flow, state); err != nil {
+		if err := validate(tx, flow, state); err != nil {
 			return err
 		}
 		now := time.Now().Unix()

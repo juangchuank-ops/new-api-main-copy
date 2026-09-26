@@ -27,9 +27,11 @@ import { UserProvider } from './context/User';
 import 'react-toastify/dist/ReactToastify.css';
 import { StatusProvider } from './context/Status';
 import { ThemeProvider } from './context/Theme';
+import { ThemeAppearanceProvider } from './context/ThemeAppearance';
 import PageLayout from './components/layout/PageLayout';
 import './i18n/i18n';
 import './index.css';
+import './styles/appearance.css';
 import { LocaleProvider } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import zh_CN from '@douyinfe/semi-ui/lib/es/locale/source/zh_CN';
@@ -68,9 +70,11 @@ root.render(
           }}
         >
           <ThemeProvider>
-            <SemiLocaleWrapper>
-              <PageLayout />
-            </SemiLocaleWrapper>
+            <ThemeAppearanceProvider>
+              <SemiLocaleWrapper>
+                <PageLayout />
+              </SemiLocaleWrapper>
+            </ThemeAppearanceProvider>
           </ThemeProvider>
         </BrowserRouter>
       </UserProvider>

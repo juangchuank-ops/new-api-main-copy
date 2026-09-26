@@ -219,6 +219,7 @@ rate_limit.reached: "您已達到請求數限制：{{.Minutes}}分鐘內最多�
 rate_limit.total_reached: "您已達到總請求數限制：{{.Minutes}}分鐘內最多請求{{.Max}}次，包括失敗次數"
 rate_limit.user_requests_per_minute: "您已達到每分鐘請求數限制：每分鐘最多請求{{.Max}}次"
 rate_limit.user_requests_unavailable: "每分鐘請求數限流服務暫時不可用，請稍後再試"
+rate_limit.channel_concurrency: "渠道「{{.Channel}}」併發已達上限（{{.Max}}），請稍後重試"
 
 # Setting messages
 setting.invalid_type: "無效的預警類型"

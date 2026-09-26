@@ -1235,11 +1235,15 @@ body[theme-mode='dark'] .classic-glass-header {
   background: rgba(20, 20, 24, 0.85);
 }
 
-/* Keep the legacy interface square while leaving the performance panel intact. */
+/* Keep the legacy interface square while leaving the performance panel intact.
+   主题设置抽屉选择了圆角后（body[data-theme-radius] 存在）本规则失效，交给 Semi 半径变量。 */
 @layer base {
-  body *:not(.model-performance-panel):not(.model-performance-panel *),
-  body *:not(.model-performance-panel):not(.model-performance-panel *)::before,
-  body *:not(.model-performance-panel):not(.model-performance-panel *)::after {
+  body:not([data-theme-radius])
+    *:not(.model-performance-panel):not(.model-performance-panel *),
+  body:not([data-theme-radius])
+    *:not(.model-performance-panel):not(.model-performance-panel *)::before,
+  body:not([data-theme-radius])
+    *:not(.model-performance-panel):not(.model-performance-panel *)::after {
     border-radius: 0 !important;
   }
 }

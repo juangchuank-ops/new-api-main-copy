@@ -267,6 +267,9 @@ export const SUCCESS_MESSAGES = {
 
 export const DEFAULT_PAGE_SIZE = 20
 
+// 与后端 setting.MaxChannelConcurrency 保持一致。
+export const MAX_MODEL_CONCURRENCY = 1000000
+
 export const DEFAULT_CHANNEL_VALUES = {
   name: '',
   type: 0,
@@ -359,6 +362,8 @@ export const FIELD_DESCRIPTIONS = {
     'Map request model names to actual provider model names (JSON format)',
   PRIORITY: 'Higher priority channels are selected first',
   WEIGHT: 'Used for load balancing. Higher weight = more requests',
+  CONCURRENCY:
+    'Max in-flight requests for this channel. Leave empty to use the global default; 0 means unlimited. Models with their own concurrency setting are not affected.',
   TEST_MODEL: 'Model to use when testing channel connectivity',
   AUTO_BAN: 'Automatically disable channel on repeated failures',
   STATUS_CODE_MAPPING: 'Map response status codes (JSON format)',

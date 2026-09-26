@@ -169,6 +169,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRequestRateLimitSuccessCount"] = strconv.Itoa(setting.ModelRequestRateLimitSuccessCount)
 	common.OptionMap["ModelRequestRateLimitGroup"] = setting.ModelRequestRateLimitGroup2JSONString()
 	common.OptionMap[setting.UserRequestRateLimitDefaultOptionKey] = strconv.Itoa(setting.UserRequestRateLimitDefault)
+	common.OptionMap[setting.ChannelConcurrencyDefaultOptionKey] = strconv.Itoa(setting.ChannelConcurrencyDefault)
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
@@ -198,6 +199,7 @@ func InitOptionMap() {
 	common.OptionMap["SelfUseModeEnabled"] = strconv.FormatBool(operation_setting.SelfUseModeEnabled)
 	common.OptionMap["ModelRequestRateLimitEnabled"] = strconv.FormatBool(setting.ModelRequestRateLimitEnabled)
 	common.OptionMap[setting.UserRequestRateLimitEnabledOptionKey] = strconv.FormatBool(setting.UserRequestRateLimitEnabled)
+	common.OptionMap[setting.ChannelConcurrencyEnabledOptionKey] = strconv.FormatBool(setting.ChannelConcurrencyEnabled)
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
@@ -227,13 +229,28 @@ func InitOptionMap() {
 }
 
 func loadOptionsFromDatabase() {
+	requestPolicyOptionMutex.Lock()
+	defer requestPolicyOptionMutex.Unlock()
+	defer func() {
+		if err := refreshRequestPolicySnapshot(); err != nil {
+			common.SysError("invalid request policy: " + err.Error())
+		}
+	}()
+	passkeyOptionMutex.Lock()
+	defer passkeyOptionMutex.Unlock()
 	options, _ := AllOption()
+	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if IsPasskeyDomainOption(option.Key) {
+			passkeyOptions[option.Key] = option.Value
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
+	applyPasskeyDomainOptions(passkeyOptions)
 }
 
 func SyncOptions(frequency int) {
@@ -268,6 +285,9 @@ func validateOptionValue(key string, value string) error {
 		_, err := setting.ValidateAndNormalizeDefaultThemeJSON(value)
 		return err
 	}
+	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
+		return err
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
@@ -284,6 +304,10 @@ func normalizeOptionValue(key string, value string) (string, error) {
 	if key == setting.UserRequestRateLimitDefaultOptionKey {
 		value = strings.TrimSpace(value)
 		return value, setting.ValidateUserRequestRateLimitDefault(value)
+	}
+	if key == setting.ChannelConcurrencyDefaultOptionKey {
+		value = strings.TrimSpace(value)
+		return value, setting.ValidateChannelConcurrencyDefault(value)
 	}
 	if key == operation_setting.ChannelTestMessageOptionKey {
 		normalized, err := operation_setting.NormalizeChannelTestMessage(value)
@@ -330,12 +354,25 @@ func normalizeOptionValue(key string, value string) (string, error) {
 }
 
 func UpdateOption(key string, value string) error {
-	if IsPricingOptionKey(key) {
+	if IsPricingPatchOnlyKey(key) {
 		return ErrPricingOptionRequiresPatch
+	}
+	if IsRequestPolicyOption(key) {
+		return UpdateRequestPolicyOptions(map[string]string{key: value})
+	}
+	if IsPasskeyDomainOption(key) {
+		_, err := UpdatePasskeyDomainOptions(map[string]string{key: value}, false, "")
+		return err
+	}
+	if IsModelPricingOption(key) {
+		return UpdateModelPricingOptions(map[string]string{key: value})
 	}
 	var err error
 	value, err = normalizeOptionValue(key, value)
 	if err != nil {
+		return err
+	}
+	if err := validateOptionValue(key, value); err != nil {
 		return err
 	}
 	// Save to database first
@@ -366,6 +403,10 @@ func UpdateOptionsBulk(values map[string]string) error {
 		if IsPricingOptionKey(key) {
 			return ErrPricingOptionRequiresPatch
 		}
+		if IsPasskeyDomainOption(key) {
+			_, err := UpdatePasskeyDomainOptions(values, false, "")
+			return err
+		}
 	}
 	normalizedValues := make(map[string]string, len(values))
 	for key, value := range values {
@@ -375,6 +416,26 @@ func UpdateOptionsBulk(values map[string]string) error {
 		}
 		normalizedValues[key] = normalizedValue
 	}
+	var policySnapshot *RequestPolicySnapshot
+	for key := range values {
+		if IsRequestPolicyOption(key) {
+			requestPolicyOptionMutex.Lock()
+			defer requestPolicyOptionMutex.Unlock()
+			options := maps.Clone(CurrentRequestPolicy().Options)
+			for key, value := range values {
+				if IsRequestPolicyOption(key) {
+					options[key] = value
+				}
+			}
+			var err error
+			policySnapshot, err = BuildRequestPolicy(options)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range normalizedValues {
 			option := Option{Key: k}
@@ -395,6 +456,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
+	}
+	if policySnapshot != nil {
+		requestPolicySnapshot.Store(policySnapshot)
 	}
 	return nil
 }
@@ -538,6 +602,8 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.ModelRequestRateLimitEnabled = boolValue
 		case setting.UserRequestRateLimitEnabledOptionKey:
 			setting.UserRequestRateLimitEnabled = boolValue
+		case setting.ChannelConcurrencyEnabledOptionKey:
+			setting.ChannelConcurrencyEnabled = boolValue
 		case "StopOnSensitiveEnabled":
 			setting.StopOnSensitiveEnabled = boolValue
 		case "SMTPSSLEnabled":
@@ -721,6 +787,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
 	case setting.UserRequestRateLimitDefaultOptionKey:
 		setting.UserRequestRateLimitDefault, _ = strconv.Atoi(value)
+	case setting.ChannelConcurrencyDefaultOptionKey:
+		setting.ChannelConcurrencyDefault, _ = strconv.Atoi(value)
 	case "RetryTimes":
 		common.RetryTimes, _ = strconv.Atoi(value)
 	case "DataExportInterval":

@@ -99,7 +99,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	setupLogin(&user, c)
+	setupLogin(&user, nil, c)
 }
 
 // loginMethodFromContext 根据请求路径推导登录方式，用于登录审计日志。
@@ -151,8 +151,8 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 
 // setupLogin evaluates the shared login policy after primary authentication.
 // Only a completed Passkey ceremony may go directly to session issuance.
-func setupLogin(user *model.User, c *gin.Context) {
-	challenge, err := service.StartLoginVerification(user, loginMethodFromContext(c))
+func setupLogin(user *model.User, migration *service.LegacyGitHubMigration, c *gin.Context) {
+	challenge, err := service.StartLoginVerification(user, loginMethodFromContext(c), migration)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
@@ -1108,6 +1108,14 @@ func DeleteSelf(c *gin.Context) {
 		return
 	}
 	deleteUserAvatarObject(id, avatar)
+	if err := model.DeleteUserForSession(identity); err != nil {
+		if errors.Is(err, model.ErrCannotDeleteRootUser) {
+			common.ApiErrorI18n(c, i18n.MsgUserCannotDeleteRootUser)
+			return
+		}
+		writeSecurityOperationError(c, err)
+		return
+	}
 	succeeded = true
 	service.ClearRefreshCookie(c)
 	c.JSON(http.StatusOK, gin.H{

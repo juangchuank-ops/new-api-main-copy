@@ -82,6 +82,12 @@ import ChannelQueueSettings, {
   extractQueueFormValues,
   getQueueSettingsError,
 } from './ChannelQueueSettings';
+import ChannelConcurrencySettings, {
+  MAX_MODEL_CONCURRENCY,
+  buildModelConcurrencyMap,
+  extractModelConcurrencyRows,
+  getModelConcurrencyError,
+} from './ChannelConcurrencySettings';
 import ChannelCustomBalanceCard from './ChannelCustomBalanceCard';
 import JSONEditor from '../../../common/ui/JSONEditor';
 import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
@@ -90,6 +96,10 @@ import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
 import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { parseChannelConnectionString } from '../../../../helpers/token';
 import { createApiCalls } from '../../../../services/secureVerification';
+import {
+  normalizeChannelBaseURLInput,
+  CHANNEL_RAW_BASE_URL_TYPES,
+} from './channelBaseURL';
 import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
@@ -260,6 +270,8 @@ const EditChannelModal = (props) => {
   const [multiKeyMode, setMultiKeyMode] = useState('random');
   const [autoBan, setAutoBan] = useState(true);
   const [inputs, setInputs] = useState(originInputs);
+  // 按模型细分并发（settings.model_concurrency）的行编辑状态。
+  const [modelConcurrencyRows, setModelConcurrencyRows] = useState([]);
   const [originModelOptions, setOriginModelOptions] = useState([]);
   const [modelOptions, setModelOptions] = useState([]);
   const [groupOptions, setGroupOptions] = useState([]);
@@ -751,6 +763,24 @@ const EditChannelModal = (props) => {
 
   const isIonetLocked = isIonetChannel && isEdit;
 
+  // API 地址失焦时按渠道类型自动补全/规范化标准路径后缀
+  const handleBaseURLBlur = () => {
+    if (isIonetChannel && isEdit) return;
+    const current =
+      formApiRef.current?.getValue('base_url') ?? inputs.base_url ?? '';
+    if (typeof current !== 'string' || current === '') return;
+    const normalized = normalizeChannelBaseURLInput(
+      inputs.type,
+      current,
+      inputs.full_request_url === true,
+    );
+    if (normalized !== current) {
+      formApiRef.current?.setValue('base_url', normalized);
+      setInputs((prev) => ({ ...prev, base_url: normalized }));
+      showInfo(t('API 地址已按渠道类型自动补全'));
+    }
+  };
+
   const handleInputChange = (name, value) => {
     if (
       isIonetChannel &&
@@ -766,17 +796,6 @@ const EditChannelModal = (props) => {
       value = Array.from(new Set(value.map((m) => (m || '').trim())));
     }
 
-    if (name === 'base_url' && value.endsWith('/v1')) {
-      Modal.confirm({
-        title: '警告',
-        content:
-          '不需要在末尾加/v1，New API会自动处理，添加后可能导致请求失败，是否继续？',
-        onOk: () => {
-          setInputs((inputs) => ({ ...inputs, [name]: value }));
-        },
-      });
-      return;
-    }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
       let localModels = [];
@@ -1146,6 +1165,8 @@ const EditChannelModal = (props) => {
 
       initialBaseUrlRef.current = data.base_url || '';
       setInputs(data);
+      // 按模型并发存放在 settings.model_concurrency，需要单独还原成可编辑的行。
+      setModelConcurrencyRows(extractModelConcurrencyRows(data.settings));
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
       }
@@ -1201,6 +1222,7 @@ const EditChannelModal = (props) => {
         (data.remark && data.remark.trim()) ||
         (data.priority && data.priority !== 0) ||
         (data.weight && data.weight !== 0) ||
+        (data.concurrency !== undefined && data.concurrency !== null) ||
         (data.proxy && data.proxy.trim()) ||
         (data.system_prompt && data.system_prompt.trim()) ||
         data.thinking_to_content ||
@@ -1208,7 +1230,8 @@ const EditChannelModal = (props) => {
         data.force_format ||
         data.claude_beta_query ||
         data.system_prompt_override ||
-        data.queue_enabled;
+        data.queue_enabled ||
+        extractModelConcurrencyRows(data.settings).length > 0;
       if (hasAdvancedValues) {
         setAdvancedSettingsOpen(true);
       }
@@ -1571,6 +1594,8 @@ const EditChannelModal = (props) => {
     }
     // 重置本地输入，避免下次打开残留上一次的 JSON 字段值
     setInputs(getInitValues());
+    // 重置按模型并发行
+    setModelConcurrencyRows([]);
     // 重置密钥显示状态
     resetKeyDisplayState();
     // 重置剪贴板检测状态
@@ -1821,8 +1846,9 @@ const EditChannelModal = (props) => {
     }
     delete localInputs.vertex_files;
 
-    if (!isEdit && (!localInputs.name || !localInputs.key)) {
-      showInfo(t('请填写渠道名称和渠道密钥！'));
+    // 名称允许留空：保存后自动命名为 渠道{ID}；密钥仍为必填
+    if (!isEdit && !localInputs.key) {
+      showInfo(t('请填写渠道密钥！'));
       return;
     }
     if (!Array.isArray(localInputs.models) || localInputs.models.length === 0) {
@@ -1906,12 +1932,11 @@ const EditChannelModal = (props) => {
       }
     }
 
-    if (localInputs.base_url && localInputs.base_url.endsWith('/')) {
-      localInputs.base_url = localInputs.base_url.slice(
-        0,
-        localInputs.base_url.length - 1,
-      );
-    }
+    localInputs.base_url = normalizeChannelBaseURLInput(
+      localInputs.type,
+      localInputs.base_url || '',
+      localInputs.full_request_url === true,
+    );
     if (localInputs.type === 18 && localInputs.other === '') {
       localInputs.other = 'v2.1';
     }
@@ -1925,6 +1950,41 @@ const EditChannelModal = (props) => {
     if (queueSettingsError) {
       showError(queueSettingsError);
       return;
+    }
+
+    // 按模型并发：校验范围与后端 ValidateChannelModelConcurrency 保持一致
+    const modelConcurrencyError = getModelConcurrencyError(
+      t,
+      modelConcurrencyRows,
+      normalizedModels,
+    );
+    if (modelConcurrencyError) {
+      showError(modelConcurrencyError);
+      return;
+    }
+
+    // 渠道级并发：留空表示未单独设置（跟随全局默认），0 表示不限制，两者语义不同，
+    // 因此清空时必须显式提交 null 而不是省略字段。
+    const rawChannelConcurrency = localInputs.concurrency;
+    if (
+      rawChannelConcurrency === undefined ||
+      rawChannelConcurrency === null ||
+      rawChannelConcurrency === ''
+    ) {
+      localInputs.concurrency = null;
+    } else {
+      const parsedConcurrency = Number(rawChannelConcurrency);
+      if (
+        !Number.isInteger(parsedConcurrency) ||
+        parsedConcurrency < 0 ||
+        parsedConcurrency > MAX_MODEL_CONCURRENCY
+      ) {
+        showError(
+          t('渠道并发必须是 0-1000000 之间的整数，留空表示跟随全局默认'),
+        );
+        return;
+      }
+      localInputs.concurrency = parsedConcurrency;
     }
 
     // 生成渠道额外设置JSON：以打开表单时的原始 setting 为基线合并，
@@ -2067,6 +2127,14 @@ const EditChannelModal = (props) => {
       }
     } else if ('client_identity' in settings) {
       delete settings.client_identity;
+    }
+
+    // 按模型并发：无条目时删除该键，避免留下空对象。
+    const modelConcurrencyMap = buildModelConcurrencyMap(modelConcurrencyRows);
+    if (Object.keys(modelConcurrencyMap).length > 0) {
+      settings.model_concurrency = modelConcurrencyMap;
+    } else {
+      delete settings.model_concurrency;
     }
 
     localInputs.settings = JSON.stringify(settings);
@@ -2740,6 +2808,25 @@ const EditChannelModal = (props) => {
                     </Col>
                   </Row>
 
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.InputNumber
+                        field='concurrency'
+                        label={t('渠道并发')}
+                        placeholder={t('留空跟随全局默认，0 表示不限制')}
+                        min={0}
+                        max={MAX_MODEL_CONCURRENCY}
+                        onNumberChange={(value) =>
+                          handleInputChange('concurrency', value)
+                        }
+                        style={{ width: '100%' }}
+                        extraText={t(
+                          '该渠道同时在途的请求数上限，超出直接返回 429。单独设置了并发的模型不受此限制。',
+                        )}
+                      />
+                    </Col>
+                  </Row>
+
                   {inputs.type === 1 && (
                     <>
                       <div className='mt-4 mb-2 text-sm font-medium text-gray-700'>
@@ -2793,6 +2880,13 @@ const EditChannelModal = (props) => {
                   models={inputs.models}
                   channelId={isEdit ? channelId : undefined}
                   onChange={handleInputChange}
+                />
+
+                {/* Per-model concurrency */}
+                <ChannelConcurrencySettings
+                  rows={modelConcurrencyRows}
+                  models={inputs.models}
+                  onChange={setModelConcurrencyRows}
                 />
 
                 {/* Channel Custom Balance & Check-in */}
@@ -3090,8 +3184,7 @@ const EditChannelModal = (props) => {
                     <Form.Input
                       field='name'
                       label={t('名称')}
-                      placeholder={t('请为渠道命名')}
-                      rules={[{ required: true, message: t('请为渠道命名') }]}
+                      placeholder={t('请为渠道命名，留空保存时自动命名')}
                       showClear
                       onChange={(value) => handleInputChange('name', value)}
                       autoComplete='new-password'
@@ -3697,6 +3790,7 @@ const EditChannelModal = (props) => {
                               onChange={(value) =>
                                 handleInputChange('base_url', value)
                               }
+                              onBlur={handleBaseURLBlur}
                               showClear
                               disabled={isIonetLocked}
                             />
@@ -3752,6 +3846,7 @@ const EditChannelModal = (props) => {
                               onChange={(value) =>
                                 handleInputChange('base_url', value)
                               }
+                              onBlur={handleBaseURLBlur}
                               showClear
                               disabled={isIonetLocked}
                             />
@@ -3792,11 +3887,12 @@ const EditChannelModal = (props) => {
                               placeholder={
                                 inputs.full_request_url
                                   ? t('填写完整请求地址，例如：https://open.bigmodel.cn/api/paas/v4/chat/completions')
-                                  : t('此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/')
+                                  : t('填写站点地址即可，系统会按渠道类型自动补全 API 路径（例如 /v1）')
                               }
                               onChange={(value) =>
                                 handleInputChange('base_url', value)
                               }
+                              onBlur={handleBaseURLBlur}
                               showClear
                               disabled={isIonetLocked}
                               extraText={

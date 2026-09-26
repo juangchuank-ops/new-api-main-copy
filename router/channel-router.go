@@ -38,6 +38,8 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 
 var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/:id/custom-balance", permission: authz.ChannelRead, handler: controller.GetChannelCustomBalance},
+	{method: http.MethodGet, path: "/:id/vllm/status", permission: authz.ChannelRead, handler: controller.GetVLLMChannelStatus},
+	{method: http.MethodGet, path: "/:id/sglang/status", permission: authz.ChannelRead, handler: controller.GetSGLangChannelStatus},
 	{method: http.MethodPut, path: "/:id/custom-balance", permission: authz.ChannelSensitiveWrite, handler: controller.UpdateChannelCustomBalance},
 	{method: http.MethodPost, path: "/:id/custom-balance/refresh", permission: authz.ChannelOperate, handler: controller.RefreshChannelCustomBalance},
 	{method: http.MethodPost, path: "/:id/custom-balance/checkin", permission: authz.ChannelOperate, handler: controller.CheckinChannelCustomBalance},

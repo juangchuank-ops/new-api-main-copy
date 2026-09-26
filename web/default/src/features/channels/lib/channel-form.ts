@@ -20,6 +20,7 @@ import { z } from 'zod'
 import {
   CHANNEL_STATUS,
   ERROR_MESSAGES,
+  MAX_MODEL_CONCURRENCY,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
 import type { Channel } from '../types'
@@ -145,6 +146,8 @@ export const channelFormSchema = z
       ),
     priority: z.number().optional(),
     weight: z.number().optional(),
+    // nil/未设置表示跟随全局默认并发，0 表示该渠道不限制并发。
+    concurrency: z.number().nullable().optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
@@ -208,6 +211,10 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
+    // 按模型细分并发（存入 settings.model_concurrency，不直接提交给后端）
+    model_concurrency: z
+      .array(z.object({ model: z.string(), limit: z.number() }))
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if ([3, 8, 36, 45].includes(data.type) && !data.base_url?.trim()) {
@@ -287,6 +294,41 @@ export const channelFormSchema = z
         ctx,
         'multi_key_mode',
         'Vertex AI API Key mode does not support batch creation'
+      )
+    }
+
+    const modelConcurrencyRows = data.model_concurrency || []
+    const configuredModels: string[] = []
+    for (const row of modelConcurrencyRows) {
+      const model = String(row?.model || '').trim()
+      if (!model) {
+        addRequiredIssue(
+          ctx,
+          'model_concurrency',
+          'Per-model concurrency has a row without a model'
+        )
+        break
+      }
+      const limit = Number(row?.limit)
+      if (
+        !Number.isInteger(limit) ||
+        limit <= 0 ||
+        limit > MAX_MODEL_CONCURRENCY
+      ) {
+        addRequiredIssue(
+          ctx,
+          'model_concurrency',
+          'Per-model concurrency must be an integer between 1 and 1000000'
+        )
+        break
+      }
+      configuredModels.push(model)
+    }
+    if (new Set(configuredModels).size !== configuredModels.length) {
+      addRequiredIssue(
+        ctx,
+        'model_concurrency',
+        'Per-model concurrency contains duplicate models'
       )
     }
   })
@@ -449,6 +491,8 @@ export function transformChannelToFormDefaults(
     model_mapping: channel.model_mapping || '',
     priority: channel.priority || 0,
     weight: channel.weight || 0,
+    concurrency: channel.concurrency ?? null,
+    model_concurrency: parseModelConcurrencyRows(channel.settings),
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -621,7 +665,58 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     delete settingsObj.advanced_custom
   }
 
+  // 按模型细分并发：无条目时删除该键，避免留下空对象。
+  const modelConcurrency = buildModelConcurrencyMap(formData.model_concurrency)
+  if (Object.keys(modelConcurrency).length > 0) {
+    settingsObj.model_concurrency = modelConcurrency
+  } else {
+    delete settingsObj.model_concurrency
+  }
+
   return JSON.stringify(settingsObj)
+}
+
+export type ModelConcurrencyRow = {
+  model: string
+  limit: number
+}
+
+/**
+ * 从渠道的 settings JSON 中还原按模型并发配置。
+ */
+export function parseModelConcurrencyRows(
+  settingsRaw?: string | null
+): ModelConcurrencyRow[] {
+  if (!settingsRaw?.trim()) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(settingsRaw)
+  } catch {
+    return []
+  }
+  if (!isJsonObjectValue(parsed)) return []
+  const raw = parsed.model_concurrency
+  if (!isJsonObjectValue(raw)) return []
+  return Object.entries(raw).map(([model, limit]) => ({
+    model,
+    limit: Number(limit),
+  }))
+}
+
+/**
+ * 行编辑状态 -> 后端需要的 map[string]int，空模型名与非法上限直接丢弃。
+ */
+export function buildModelConcurrencyMap(
+  rows?: ModelConcurrencyRow[]
+): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const row of rows || []) {
+    const model = String(row?.model || '').trim()
+    const limit = Number(row?.limit)
+    if (!model || !Number.isInteger(limit) || limit <= 0) continue
+    result[model] = limit
+  }
+  return result
 }
 
 function normalizeBaseUrl(value: string | undefined): string {
@@ -700,9 +795,9 @@ export function transformFormDataToUpdatePayload(
     model_mapping: formData.model_mapping || null,
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
+    concurrency: formData.concurrency ?? null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
-    status: formData.status,
     status_code_mapping: formData.status_code_mapping || null,
     tag: formData.tag || null,
     remark: formData.remark || '',

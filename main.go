@@ -155,9 +155,6 @@ func main() {
 		}
 		return a
 	}
-	service.GetTaskPluginAdaptorFunc = func(key string) service.TaskPollingAdaptor {
-		return relay.GetTaskPluginAdaptor(key)
-	}
 
 	// Register the periodic channel test, upstream model update, and async task
 	// polling (Midjourney / Suno / video) jobs as scheduled system tasks

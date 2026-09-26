@@ -29,6 +29,7 @@ const UsersFilters = ({
   activePage,
   pageSize,
   groupOptions,
+  statusOptions,
   loading,
   searching,
   t,
@@ -78,6 +79,23 @@ const UsersFilters = ({
             optionList={groupOptions}
             onChange={(value) => {
               // Group change triggers automatic search
+              setTimeout(() => {
+                searchUsers(1, pageSize);
+              }, 100);
+            }}
+            className='w-full'
+            showClear
+            pure
+            size='small'
+          />
+        </div>
+        <div className='w-full md:w-36'>
+          <Form.Select
+            field='searchStatus'
+            placeholder={t('选择状态')}
+            optionList={statusOptions}
+            onChange={() => {
+              // Status change triggers automatic search
               setTimeout(() => {
                 searchUsers(1, pageSize);
               }, 100);

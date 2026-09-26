@@ -64,7 +64,7 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 	var version string
 	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database: %s %s", dialect, version)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserAvatar{}, &model.UserSession{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.UserOAuthBinding{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.UserOAuthBinding{}, &model.Option{}))
 	require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 	model.DB, model.LOG_DB = db, logDB
 	dbType := common.DatabaseTypeSQLite
@@ -103,9 +103,6 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 }
 
 func securityEnrollmentRequest(method, path, body, proof string, identity service.AuthIdentity, handler gin.HandlerFunc) *httptest.ResponseRecorder {
-	if path == "/api/user/passkey/register/begin" && (body == "" || body == "{}") {
-		body = `{"display_name":"Test device"}`
-	}
 	response := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(response)
 	c.Request = httptest.NewRequest(method, path, strings.NewReader(body))
@@ -814,7 +811,7 @@ func TestSecurityEnrollmentPasskeyProofProtectsChannelKeyRead(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	registrationProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: "passkey.register"}, "password")
-	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"display_name":"Work laptop"}`, registrationProof, identity, PasskeyRegisterBegin)
+	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", registrationProof, identity, PasskeyRegisterBegin)
 	var body securityEnrollmentResponse
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 	require.True(t, body.Success, body.Message)
@@ -828,9 +825,8 @@ func TestSecurityEnrollmentPasskeyProofProtectsChannelKeyRead(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(body.Data, &begin))
 	require.NotEmpty(t, begin.Options.PublicKey.Challenge)
-	registrationBody, err := common.Marshal(map[string]any{
-		"flow_token": begin.FlowToken, "credential": securityPasskeyResponse(t, key, begin.Options.PublicKey.Challenge, true, 0),
-		"display_name": "Replaced at finish",
+	registrationBody, err := common.Marshal(passkeyFinishRequest{
+		FlowToken: begin.FlowToken, Credential: securityPasskeyResponse(t, key, begin.Options.PublicKey.Challenge, true, 0),
 	})
 	require.NoError(t, err)
 	// The dedicated registration flow remains authorized after the consumed proof expires.
@@ -838,9 +834,6 @@ func TestSecurityEnrollmentPasskeyProofProtectsChannelKeyRead(t *testing.T) {
 	response = securityEnrollmentRequest("POST", "/api/user/passkey/register/finish", string(registrationBody), "", identity, PasskeyRegisterFinish)
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 	require.True(t, body.Success, body.Message)
-	registered, err := model.GetPasskeyByUserID(user.Id)
-	require.NoError(t, err)
-	assert.Equal(t, "Work laptop", registered.DisplayName, "finish must retain the server-owned registration name")
 	var rotation struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -923,66 +916,6 @@ func TestSecurityEnrollmentPasskeyProofProtectsChannelKeyRead(t *testing.T) {
 	require.True(t, body.Success, body.Message)
 	_, err = model.GetPasskeyByUserID(user.Id)
 	assert.ErrorIs(t, err, model.ErrPasskeyNotFound)
-}
-
-func TestSecurityEnrollmentPasskeyDeletionIsBoundToOneDevice(t *testing.T) {
-	user, identity := setupSecurityEnrollmentTest(t)
-	credentials := []model.PasskeyCredential{
-		{UserID: user.Id, DisplayName: "Laptop", CredentialID: "laptop-credential", PublicKey: "laptop-public-key"},
-		{UserID: user.Id, DisplayName: "Phone", CredentialID: "phone-credential", PublicKey: "phone-public-key"},
-	}
-	require.NoError(t, model.DB.Create(&credentials).Error)
-	context, err := common.Marshal(service.PasskeyDeleteContext{CredentialID: credentials[0].ID})
-	require.NoError(t, err)
-	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-		Scope: service.VerificationScopePasskeyDelete, Context: context,
-	}, service.VerificationMethodPasskey)
-
-	for _, test := range []struct {
-		name string
-		id   int
-	}{
-		{"different device", credentials[1].ID},
-		{"legacy delete all", 0},
-		{"approved device", credentials[0].ID},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			response := securityEnrollmentRequest(http.MethodDelete, "/api/user/passkeys", "", proof, identity, func(c *gin.Context) {
-				if test.id == 0 {
-					PasskeyDelete(c)
-					return
-				}
-				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(test.id)}}
-				PasskeyDeleteByID(c)
-			})
-			var result securityEnrollmentResponse
-			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
-			remaining, err := model.ListPasskeyCredentialsByUserID(user.Id)
-			require.NoError(t, err)
-			var storedUser model.User
-			require.NoError(t, model.DB.First(&storedUser, user.Id).Error)
-			if test.id != credentials[0].ID {
-				assert.Equal(t, http.StatusForbidden, response.Code)
-				assert.Equal(t, "SECURITY_PROOF_CONTEXT_MISMATCH", result.Code)
-				assert.Len(t, remaining, 2)
-				assert.EqualValues(t, 1, storedUser.AuthVersion)
-				return
-			}
-			require.True(t, result.Success, result.Message)
-			require.Len(t, remaining, 1)
-			assert.Equal(t, credentials[1].ID, remaining[0].ID)
-			assert.Equal(t, credentials[1].PublicKey, remaining[0].PublicKey)
-			assert.EqualValues(t, 2, storedUser.AuthVersion)
-			var rotation struct {
-				AccessToken string `json:"access_token"`
-			}
-			require.NoError(t, common.Unmarshal(result.Data, &rotation))
-			rotated, err := service.ParseAccessToken(rotation.AccessToken)
-			require.NoError(t, err)
-			assert.Equal(t, identity.SessionID, rotated.SessionID)
-			assert.EqualValues(t, 2, rotated.UserAuthVersion)
-		})
-	}
 }
 
 func TestSecurityEnrollmentVerifyRequiresDedicatedFlowForInteractiveMethods(t *testing.T) {

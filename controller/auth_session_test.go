@@ -147,7 +147,7 @@ func TestSessionLimitDoesNotRecordRejectedLoginAsSuccessful(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/login", nil)
-	setupLogin(user, c)
+	setupLogin(user, nil, c)
 
 	assert.Equal(t, http.StatusConflict, recorder.Code)
 	var stored model.User
@@ -185,7 +185,7 @@ func TestSetupLoginReturnsConfiguredAutoBanResponse(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/login", nil)
-			setupLogin(candidate, c)
+			setupLogin(candidate, nil, c)
 
 			assert.Equal(t, http.StatusUnavailableForLegalReasons, recorder.Code)
 			assert.Contains(t, recorder.Body.String(), `"code":"sensitive_content_blocked"`)

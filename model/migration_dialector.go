@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -10,8 +11,8 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// Embed the concrete dialectors to retain their transaction/savepoint and other
-// optional GORM interfaces. Only schema comparison needs normalization.
+// Embed the concrete dialectors to customize schema reconciliation while
+// retaining transaction/savepoint and other optional GORM interfaces.
 type mysqlMigrationDialector struct{ mysql.Dialector }
 
 func (d mysqlMigrationDialector) Migrator(db *gorm.DB) gorm.Migrator {
@@ -21,32 +22,6 @@ func (d mysqlMigrationDialector) Migrator(db *gorm.DB) gorm.Migrator {
 type mysqlSchemaMigrator struct{ mysql.Migrator }
 
 func (m mysqlSchemaMigrator) MigrateColumn(value any, field *schema.Field, column gorm.ColumnType) error {
-	if strings.Contains(m.ServerVersion, "MariaDB") && strings.EqualFold(string(field.DataType), "json") && strings.EqualFold(column.DatabaseTypeName(), "longtext") {
-		// MariaDB implements JSON as LONGTEXT plus a JSON_VALID check. Only
-		// normalize columns that still enforce that check; plain LONGTEXT must
-		// undergo the real conversion so invalid JSON cannot silently persist.
-		var validJSON bool
-		err := m.RunWithValue(value, func(statement *gorm.Statement) error {
-			database, table := m.CurrentSchema(statement, statement.Table)
-			var checks []string
-			if err := m.DB.Raw("SELECT CHECK_CLAUSE FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?", database, table).Scan(&checks).Error; err != nil {
-				return err
-			}
-			for _, check := range checks {
-				if strings.EqualFold(strings.TrimSpace(check), "json_valid(`"+field.DBName+"`)") {
-					validJSON = true
-					break
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if validJSON {
-			column = mariaDBJSONColumnType{column}
-		}
-	}
 	if !field.HasDefaultValue || !strings.EqualFold(column.DatabaseTypeName(), "decimal") {
 		return m.Migrator.MigrateColumn(value, field, column)
 	}
@@ -69,20 +44,6 @@ func (m mysqlSchemaMigrator) MigrateColumn(value any, field *schema.Field, colum
 	return m.Migrator.MigrateColumn(value, &comparisonField, columnWithoutDefault{column})
 }
 
-func (m mysqlSchemaMigrator) MigrateColumnUnique(value any, field *schema.Field, column gorm.ColumnType) error {
-	if field.DBName == "active_name" && field.Schema != nil && (field.Schema.Table == "models" || field.Schema.Table == "vendors") && !field.Unique && field.UniqueIndex == "" {
-		// These uniqueness keys are validated, backfilled and indexed by
-		// MigrateModelVendorActiveNames after AutoMigrate. MySQL otherwise
-		// mistakes the deliberately external index for a redundant constraint.
-		return nil
-	}
-	return m.Migrator.MigrateColumnUnique(value, field, column)
-}
-
-type mariaDBJSONColumnType struct{ migrationColumnType }
-
-func (mariaDBJSONColumnType) DatabaseTypeName() string { return "json" }
-
 type migrationColumnType interface{ gorm.ColumnType }
 
 type columnWithoutDefault struct{ migrationColumnType }
@@ -104,6 +65,46 @@ func (m postgresSchemaMigrator) MigrateColumn(value any, field *schema.Field, co
 		column = charColumnType{column}
 	}
 	return m.Migrator.MigrateColumn(value, field, column)
+}
+
+// Older schemas and database imports can use a different constraint name from
+// the current naming strategy. Resolve single-column uniqueness from the
+// catalog instead of asking GORM to drop an inferred uni_<table>_<column>.
+func (m postgresSchemaMigrator) MigrateColumnUnique(value any, field *schema.Field, column gorm.ColumnType) error {
+	unique, ok := column.Unique()
+	if !ok || field.PrimaryKey || !unique || field.Unique {
+		return m.Migrator.MigrateColumnUnique(value, field, column)
+	}
+	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		schemaName, tableName := m.CurrentSchema(stmt, stmt.Table)
+		return m.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("LOCK TABLE ? IN ACCESS EXCLUSIVE MODE", m.CurrentTable(stmt)).Error; err != nil {
+				return err
+			}
+			var constraints []string
+			if err := tx.Raw(`
+SELECT constraint_meta.conname
+FROM pg_catalog.pg_constraint AS constraint_meta
+JOIN pg_catalog.pg_class AS table_meta ON table_meta.oid = constraint_meta.conrelid
+JOIN pg_catalog.pg_namespace AS schema_meta ON schema_meta.oid = table_meta.relnamespace
+JOIN pg_catalog.pg_attribute AS attribute_meta
+  ON attribute_meta.attrelid = table_meta.oid
+ AND attribute_meta.attnum = constraint_meta.conkey[1]
+WHERE schema_meta.nspname = ? AND table_meta.relname = ?
+  AND constraint_meta.contype = 'u'
+  AND cardinality(constraint_meta.conkey) = 1
+  AND attribute_meta.attname = ?
+ORDER BY constraint_meta.conname`, schemaName, tableName, field.DBName).Scan(&constraints).Error; err != nil {
+				return err
+			}
+			for _, name := range constraints {
+				if err := tx.Migrator().DropConstraint(value, name); err != nil {
+					return fmt.Errorf("drop obsolete unique constraint %q on %s.%s: %w", name, stmt.Table, field.DBName, err)
+				}
+			}
+			return nil
+		})
+	})
 }
 
 type charColumnType struct{ migrationColumnType }

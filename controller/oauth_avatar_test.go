@@ -124,11 +124,11 @@ func TestPendingOAuthRegistrationRetainsValidatedAvatarURL(t *testing.T) {
 	provider := &authFlowTestOAuthProvider{}
 	avatarURL := "https://cdn.example/avatar.png"
 
-	user, challenge, err := findOrCreateOAuthUser("auth-flow-test", provider, &oauth.OAuthUser{
+	user, _, challenge, err := findOrCreateOAuthUser(nil, "auth-flow-test", provider, &oauth.OAuthUser{
 		ProviderUserID: "pending-avatar-user",
 		Username:       "pending-avatar-user",
 		AvatarURL:      avatarURL,
-	}, "", "")
+	}, nil, "", "")
 
 	require.NoError(t, err)
 	assert.Nil(t, user)

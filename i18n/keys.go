@@ -1,5 +1,7 @@
 package i18n
 
+const MsgTaskPluginUnknownMetaField = "task_plugin.unknown_meta_field"
+
 // Message keys for i18n translations
 // Use these constants instead of hardcoded strings
 
@@ -238,7 +240,10 @@ const (
 	MsgPasskeyLoginAbnormal = "passkey.login_abnormal"
 	MsgPasskeyUpdateFailed  = "passkey.update_failed"
 	MsgPasskeyInvalidUserId = "passkey.invalid_user_id"
-	MsgPasskeyVerifyFailed  = "passkey.verify_failed"
+	MsgPasskeyVerifyFailed            = "passkey.verify_failed"
+	MsgPasskeyRPIDInvalid             = "passkey.rp_id_invalid"
+	MsgPasskeyRPIDUnavailable         = "passkey.rp_id_unavailable"
+	MsgPasskeyRPIDRemovalConfirmation = "passkey.rp_id_removal_confirmation"
 )
 
 // 2FA related messages
@@ -256,6 +261,7 @@ const (
 	MsgRateLimitTotalReached           = "rate_limit.total_reached"
 	MsgUserRequestRateLimitReached     = "rate_limit.user_requests_per_minute"
 	MsgUserRequestRateLimitUnavailable = "rate_limit.user_requests_unavailable"
+	MsgChannelConcurrencyReached       = "rate_limit.channel_concurrency"
 )
 
 // Setting related messages
@@ -312,6 +318,7 @@ const (
 	MsgOAuthUserBanned      = "oauth.user_banned"
 	MsgOAuthBindSuccess     = "oauth.bind_success"
 	MsgOAuthAlreadyBound    = "oauth.already_bound"
+	MsgOAuthNotAutoLinked   = "oauth.not_auto_linked"
 	MsgOAuthConnectFailed   = "oauth.connect_failed"
 	MsgOAuthTokenFailed     = "oauth.token_failed"
 	MsgOAuthUserInfoEmpty   = "oauth.user_info_empty"

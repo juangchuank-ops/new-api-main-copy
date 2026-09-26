@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Button, Col, Form, Row, Spin, Typography } from '@douyinfe/semi-ui';
 import {
   compareObjects,
   API,
@@ -28,6 +28,8 @@ import {
   verifyJSON,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+
+const { Text } = Typography;
 
 export default function RequestRateLimit(props) {
   const { t } = useTranslation();
@@ -41,6 +43,8 @@ export default function RequestRateLimit(props) {
     ModelRequestRateLimitGroup: '',
     UserRequestRateLimitEnabled: false,
     UserRequestRateLimitDefault: 60,
+    ChannelConcurrencyEnabled: false,
+    ChannelConcurrencyDefault: 0,
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -59,6 +63,19 @@ export default function RequestRateLimit(props) {
         requestsPerMinute > 1000000
       ) {
         return showError(t('默认每分钟请求数必须是 1-1000000 之间的整数'));
+      }
+    }
+    const concurrencyChanged = updateArray.some(
+      (item) => item.key === 'ChannelConcurrencyDefault',
+    );
+    if (concurrencyChanged) {
+      const concurrency = Number(inputs.ChannelConcurrencyDefault);
+      if (
+        !Number.isInteger(concurrency) ||
+        concurrency < 0 ||
+        concurrency > 1000000
+      ) {
+        return showError(t('默认渠道并发必须是 0-1000000 之间的整数'));
       }
     }
     const requestQueue = updateArray.map((item) => {
@@ -296,6 +313,62 @@ export default function RequestRateLimit(props) {
             <Row>
               <Button size='default' onClick={onSubmit}>
                 {t('保存用户速率限制')}
+              </Button>
+            </Row>
+          </Form.Section>
+          <Form.Section text={t('渠道并发限制')}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'ChannelConcurrencyEnabled'}
+                  label={t('启用渠道并发限制')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t(
+                    '限制单个渠道同时在途的请求数，超出上限的请求直接返回 429，不会重试到其它渠道。',
+                  )}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      ChannelConcurrencyEnabled: value,
+                    });
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('默认渠道并发')}
+                  step={1}
+                  min={0}
+                  max={1000000}
+                  suffix={t('并发')}
+                  extraText={t(
+                    '渠道未单独设置并发时使用该值，取值范围 0-1000000；0 表示不限制。',
+                  )}
+                  field={'ChannelConcurrencyDefault'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      ChannelConcurrencyDefault:
+                        value === undefined || value === null
+                          ? ''
+                          : String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row>
+              <Text type='tertiary' size='small'>
+                {t(
+                  '单个渠道可在渠道编辑弹窗里覆盖该默认值；在「高级设置 - 按模型细分并发」中单独设置的模型使用自己的上限并独立计数，不再受渠道级并发约束。',
+                )}
+              </Text>
+            </Row>
+            <Row>
+              <Button size='default' onClick={onSubmit}>
+                {t('保存渠道并发限制')}
               </Button>
             </Row>
           </Form.Section>

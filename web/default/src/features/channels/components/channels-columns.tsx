@@ -287,6 +287,56 @@ function WeightCell({ channel }: { channel: Channel }) {
 }
 
 /**
+ * Concurrency cell - read-only display of the channel-level concurrency limit.
+ * Models with their own limit are not governed by it.
+ */
+function ConcurrencyCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const concurrency = channel.concurrency
+
+  // 标签聚合行无法表达单个渠道的并发，统一显示占位。
+  if (isTagAggregateRow(channel)) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+
+  if (concurrency === null || concurrency === undefined) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className='text-muted-foreground cursor-help' />}
+          >
+            {t('Default')}
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Not set separately; follows the global default concurrency')}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+
+  if (concurrency === 0) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className='cursor-help' />}
+          >
+            {t('Unlimited')}
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('This channel does not limit concurrency')}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+
+  return <span>{concurrency}</span>
+}
+
+/**
  * Inline balance/used values longer than this switch to locale-aware compact
  * notation (e.g. "$28万"); the precise value stays available in the tooltip.
  */
@@ -1019,6 +1069,16 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         header: t('Weight'),
         meta: { mobileHidden: true },
         cell: ({ row }) => <WeightCell channel={row.original} />,
+        size: 90,
+        enableSorting: false,
+      },
+
+      // Concurrency column
+      {
+        accessorKey: 'concurrency',
+        header: t('Concurrency'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => <ConcurrencyCell channel={row.original} />,
         size: 90,
         enableSorting: false,
       },

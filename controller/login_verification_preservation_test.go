@@ -26,7 +26,7 @@ func TestSecurityLoginAutoBanAtEveryAuthorizationBoundary(t *testing.T) {
 			var verification *service.LoginVerification
 			var err error
 			if boundary != "primary authentication" {
-				challenge, err = service.StartLoginVerification(user, "password")
+				challenge, err = service.StartLoginVerification(user, "password", nil)
 				require.NoError(t, err)
 				require.NotNil(t, challenge)
 			}
@@ -48,14 +48,14 @@ func TestSecurityLoginAutoBanAtEveryAuthorizationBoundary(t *testing.T) {
 			}).Error)
 			switch boundary {
 			case "primary authentication":
-				challenge, err = service.StartLoginVerification(user, "password")
+				challenge, err = service.StartLoginVerification(user, "password", nil)
 				assert.Nil(t, challenge)
 			case "factor validation":
 				verification, err = service.RequireLoginVerification(challenge.FlowToken, service.VerificationMethodTwoFA)
 				assert.Nil(t, verification)
 			case "session commit":
 				var bundle *service.AuthBundle
-				bundle, err = service.CompleteLoginVerification(challenge.FlowToken, verification, service.VerificationMethodTwoFA, "127.0.0.1", "ban-preservation")
+				bundle, _, err = service.CompleteLoginVerification(challenge.FlowToken, verification, service.VerificationMethodTwoFA, "127.0.0.1", "ban-preservation")
 				assert.Nil(t, bundle)
 			}
 			require.Error(t, err)
@@ -81,7 +81,7 @@ func TestSecurityLoginAcceptsSecondNamedPasskeyAndUpdatesOnlyThatDevice(t *testi
 	for index, name := range []string{"Laptop", "Phone"} {
 		require.NoError(t, model.DB.Model(&credentials[index]).Update("display_name", name).Error)
 	}
-	pending, err := service.StartLoginVerification(user, "oauth:github")
+	pending, err := service.StartLoginVerification(user, "oauth:github", nil)
 	require.NoError(t, err)
 	require.NotNil(t, pending)
 	body, err := common.Marshal(map[string]string{"flow_token": pending.FlowToken})

@@ -35,9 +35,6 @@ func FlushWriter(c *gin.Context) (err error) {
 	}
 
 	flusher.Flush()
-	if reporter, ok := c.Writer.(interface{ FlushError() error }); ok {
-		return reporter.FlushError()
-	}
 	return nil
 }
 
@@ -73,17 +70,18 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 	}
-	return FlushWriter(c)
+	_ = FlushWriter(c)
+	return nil
 }
 
-func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) error {
+func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 	if requestContextDone(c) {
-		return nil
+		return
 	}
 
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	return FlushWriter(c)
+	_ = FlushWriter(c)
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {

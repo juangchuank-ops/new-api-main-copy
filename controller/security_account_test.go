@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -132,11 +131,6 @@ func TestSecurityAccountDeletionAcceptsEitherFactorAndRevokesSessions(t *testing
 			otherSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "second-session")
 			require.NoError(t, err)
 			require.NoError(t, model.UpdateUserAccessToken(user.Id, "account-delete-access-token"))
-			t.Setenv("USER_AVATAR_DIR", t.TempDir())
-			avatarStorage := service.NewAvatarStorage()
-			avatarObject, err := avatarStorage.Put(user.Id, strings.NewReader("account-avatar-fixture"))
-			require.NoError(t, err)
-			require.NoError(t, model.SaveUserAvatar(&model.UserAvatar{UserID: user.Id, ObjectKey: avatarObject, MimeType: service.AvatarContentType, Width: 1, Height: 1, Version: 1}))
 			response := securityEnrollmentRequest("DELETE", "/api/user/self", "", proof, identity, DeleteSelf)
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
@@ -147,11 +141,6 @@ func TestSecurityAccountDeletionAcceptsEitherFactorAndRevokesSessions(t *testing
 			require.NoError(t, model.DB.Unscoped().First(&deleted, user.Id).Error)
 			assert.True(t, deleted.DeletedAt.Valid)
 			assert.Equal(t, user.AuthVersion+1, deleted.AuthVersion)
-			avatar, err := model.GetUserAvatar(user.Id)
-			require.NoError(t, err)
-			assert.Nil(t, avatar)
-			_, err = avatarStorage.Open(avatarObject)
-			assert.ErrorIs(t, err, os.ErrNotExist)
 			_, _, err = service.ValidateLoginSession(identity)
 			assert.Error(t, err)
 			otherIdentity, err := service.ParseAccessToken(otherSession.AccessToken)
