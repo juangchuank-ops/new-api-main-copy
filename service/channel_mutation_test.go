@@ -115,6 +115,45 @@ func TestChannelMutationUpdateAndStatusRevision(t *testing.T) {
 	require.EqualValues(t, 4, stored.ConfigRevision)
 }
 
+// A channel must never be persisted with an empty group: group-scoped routing
+// cannot reach such a channel, and its abilities would be indexed under no
+// group, which is what hid the affected models from the pricing catalog.
+func assertChannelAbilitiesUseDefaultGroup(t *testing.T, db *gorm.DB, channelID int) {
+	t.Helper()
+	var stored model.Channel
+	require.NoError(t, db.First(&stored, channelID).Error)
+	require.Equal(t, model.DefaultChannelGroup, stored.Group)
+	var abilities []model.Ability
+	require.NoError(t, db.Where("channel_id = ?", channelID).Find(&abilities).Error)
+	require.NotEmpty(t, abilities)
+	for _, ability := range abilities {
+		require.Equal(t, model.DefaultChannelGroup, ability.Group)
+	}
+}
+
+func TestChannelMutationBlankGroupFallsBackToDefault(t *testing.T) {
+	db := setupChannelMutationDB(t, true)
+	enableMutationSync(t, db)
+
+	created, err := CreateChannels([]model.Channel{{Key: "secret", Name: "blank", Models: "a,b", Status: common.ChannelStatusEnabled}}, ChannelMutationTriggerCreate)
+	require.NoError(t, err)
+	assertChannelAbilitiesUseDefaultGroup(t, db, created[0].Id)
+
+	// An administrator patch may explicitly send an empty group; that must not
+	// be able to reintroduce the empty-group state on the channel or its
+	// abilities.
+	patchResult, err := UpdateChannelAdminPatch(ChannelAdminPatchInput{
+		ChannelID:        created[0].Id,
+		ExpectedRevision: created[0].ConfigRevision,
+		Patch:            model.Channel{Group: ""},
+		Fields:           map[string]bool{"group": true},
+		Trigger:          ChannelMutationTriggerUpdate,
+	})
+	require.NoError(t, err)
+	require.True(t, patchResult.ConfigChanged)
+	assertChannelAbilitiesUseDefaultGroup(t, db, created[0].Id)
+}
+
 func TestChannelMutationTagStatusAndEdit(t *testing.T) {
 	db := setupChannelMutationDB(t, true)
 	enableMutationSync(t, db)

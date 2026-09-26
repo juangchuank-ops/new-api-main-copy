@@ -837,6 +837,10 @@ func administratorChannel(current, next model.Channel) model.Channel {
 // is necessary because the legacy helper intentionally uses struct Updates,
 // which omits zero values and nil pointers.
 func updateAdministratorChannelTx(tx *gorm.DB, channel *model.Channel) error {
+	// Normalize before snapshotting: the explicit map write below persists the
+	// snapshot verbatim, so it must already carry the fallback group instead of
+	// the blank value that UpdateTx normalizes on the live channel.
+	channel.NormalizeGroup()
 	desired := *channel
 	if err := channel.UpdateTx(tx); err != nil {
 		return err

@@ -21,6 +21,13 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// DefaultChannelGroup is the group assigned to a channel that was submitted
+// without any group. A channel without a group cannot be selected by
+// group-scoped routing, and its abilities would be stored under an empty group
+// that no group query can reach, so an empty group list is normalized to this
+// value before the channel is persisted.
+const DefaultChannelGroup = "default"
+
 type Channel struct {
 	Id                 int     `json:"id"`
 	Type               int     `json:"type" gorm:"default:0"`
@@ -45,14 +52,14 @@ type Channel struct {
 	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
 	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
 	// Concurrency 渠道级并发上限：nil 表示走全局默认，0 表示不限制，正数为同时在途请求上限。
-	Concurrency *int  `json:"concurrency"`
-	AutoBan     *int  `json:"auto_ban" gorm:"default:1"`
-	OtherInfo         string  `json:"other_info"`
-	Tag               *string `json:"tag" gorm:"index"`
-	Setting           *string `json:"setting" gorm:"type:text"` // 渠道额外设置
-	ParamOverride     *string `json:"param_override" gorm:"type:text"`
-	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
-	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	Concurrency    *int    `json:"concurrency"`
+	AutoBan        *int    `json:"auto_ban" gorm:"default:1"`
+	OtherInfo      string  `json:"other_info"`
+	Tag            *string `json:"tag" gorm:"index"`
+	Setting        *string `json:"setting" gorm:"type:text"` // 渠道额外设置
+	ParamOverride  *string `json:"param_override" gorm:"type:text"`
+	HeaderOverride *string `json:"header_override" gorm:"type:text"`
+	Remark         *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
@@ -307,15 +314,28 @@ func (channel *Channel) GetModels() []string {
 	return strings.Split(strings.Trim(channel.Models, ","), ",")
 }
 
+// GetGroups returns the configured groups without surrounding whitespace and
+// without blank entries, so an unset group yields no groups instead of [""].
 func (channel *Channel) GetGroups() []string {
-	if channel.Group == "" {
-		return []string{}
-	}
-	groups := strings.Split(strings.Trim(channel.Group, ","), ",")
-	for i, group := range groups {
-		groups[i] = strings.TrimSpace(group)
+	groups := make([]string, 0, 2)
+	for _, group := range strings.Split(channel.Group, ",") {
+		if group = strings.TrimSpace(group); group != "" {
+			groups = append(groups, group)
+		}
 	}
 	return groups
+}
+
+// NormalizeGroup rewrites Group as a comma-separated list without blank
+// entries, falling back to DefaultChannelGroup when nothing remains. Keeping
+// the persisted channel and its abilities on the same group list is what makes
+// the channel reachable by group-scoped routing.
+func (channel *Channel) NormalizeGroup() {
+	groups := channel.GetGroups()
+	if len(groups) == 0 {
+		groups = []string{DefaultChannelGroup}
+	}
+	channel.Group = strings.Join(groups, ",")
 }
 
 func (channel *Channel) GetOtherInfo() map[string]any {
@@ -470,6 +490,9 @@ func BatchInsertChannels(channels []Channel) error {
 		}
 	}()
 
+	for i := range channels {
+		channels[i].NormalizeGroup()
+	}
 	for _, chunk := range lo.Chunk(channels, 50) {
 		if err := tx.Create(&chunk).Error; err != nil {
 			tx.Rollback()
@@ -615,6 +638,10 @@ func (channel *Channel) InsertTx(tx *gorm.DB) error {
 	if tx == nil {
 		return errors.New("channel insert transaction is nil")
 	}
+	// GORM omits a zero-valued Group when the column declares a default, so the
+	// in-memory struct could otherwise persist one group while its abilities are
+	// written under another.
+	channel.NormalizeGroup()
 	err := tx.Create(channel).Error
 	if err != nil {
 		return err
@@ -633,6 +660,9 @@ func (channel *Channel) UpdateTx(tx *gorm.DB) error {
 	if tx == nil {
 		return errors.New("channel update transaction is nil")
 	}
+	// A blank group would leave the channel unreachable and its abilities
+	// unindexed, so normalize it before the row and the abilities are written.
+	channel.NormalizeGroup()
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
