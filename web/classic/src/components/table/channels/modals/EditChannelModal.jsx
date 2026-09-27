@@ -2168,6 +2168,9 @@ const EditChannelModal = (props) => {
     delete localInputs.client_identity_profile;
     delete localInputs.client_identity_version;
     delete localInputs.client_identity_platform;
+    delete localInputs.azure_responses_version;
+    delete localInputs.full_request_url;
+    delete localInputs.max_input_tokens;
     // 排队预热临时字段不发送给后端（已合并进 setting.queue）
     Object.keys(QUEUE_FORM_DEFAULTS).forEach((field) => {
       delete localInputs[field];
@@ -2177,6 +2180,7 @@ const EditChannelModal = (props) => {
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
     localInputs.models = localInputs.models.join(',');
     localInputs.group = (localInputs.groups || []).join(',');
+    delete localInputs.groups;
 
     let mode = 'single';
     if (batch) {
