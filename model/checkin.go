@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"math"
 	"math/rand"
 	"time"
 
@@ -139,11 +140,19 @@ func checkinQuotaAwarded(setting operation_setting.CheckinSetting, balance int) 
 	return quotaAwarded, nil
 }
 
+// canAddCheckinQuota 判断签到奖励能否安全地加到当前余额上。
+// users.quota 是 bigint 钱包列，安全上限是 common.MaxWalletQuota（JS 安全整数），
+// 而不是单次请求额度的 common.MaxQuota（int32）。余额本身已经超过钱包上限时
+// （管理员手工设置或历史遗留数据），签到奖励相对余额可以忽略，此时只拦截真正的
+// int64 溢出，否则这类用户会永久卡在“额度超出安全范围”。
 func canAddCheckinQuota(balance, reward int) bool {
-	if balance < common.MinQuota || balance > common.MaxQuota || reward < 0 || reward > common.MaxQuota {
+	if reward < 0 || reward > common.MaxQuota {
 		return false
 	}
-	return int64(balance)+int64(reward) <= int64(common.MaxQuota)
+	if int64(balance) > int64(common.MaxWalletQuota) {
+		return int64(balance) <= math.MaxInt64-int64(reward)
+	}
+	return int64(balance)+int64(reward) <= int64(common.MaxWalletQuota)
 }
 
 func newCheckin(userId int, date string, createdAt int64, quotaAwarded int) *Checkin {

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/shopspring/decimal"
@@ -13,6 +14,11 @@ var (
 	ErrInvalidUserQuotaAdjustment = errors.New("invalid user quota adjustment")
 	ErrUserQuotaPermission        = errors.New("cannot adjust quota for this user role")
 )
+
+// beforeBound 是"同步缓存用的 After-Before 增量不溢出 int64"所允许的 Before 上界。
+// After 被限制在 ±MaxWalletQuota 内，所以 Before 只要落在 ±(MaxInt64-MaxWalletQuota)
+// 内，差值就一定能用 int64 表示；该范围同时覆盖正常余额与历史遗留的超范围余额。
+const beforeBound = math.MaxInt64 - common.MaxWalletQuota
 
 // UserQuotaAdjustment is the immutable database snapshot of a committed manual
 // adjustment. Pending relay deductions in the quota cache are not part of it.
@@ -43,7 +49,11 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		if operatorRole != common.RoleRootUser && operatorRole <= user.Role {
 			return ErrUserQuotaPermission
 		}
-		if user.Quota > common.MaxWalletQuota || user.Quota < -common.MaxWalletQuota {
+		// 这里不要求 Before 本身落在钱包范围内：历史遗留的超范围余额（早期版本
+		// 允许 override 到上限之外）必须能改回正常值，否则账号会被永久冻结。
+		// After 仍由 WalletQuotaFromDecimalStrict 严格限制在范围内；这里只保证
+		// 下面同步缓存用的 After-Before 不会溢出 int64。
+		if int64(user.Quota) > beforeBound || int64(user.Quota) < -beforeBound {
 			return ErrWalletQuotaLimitExceeded
 		}
 		quota := decimal.NewFromInt(int64(value))
@@ -86,7 +96,8 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 	}
 
 	// Apply only the committed difference, preserving outstanding reservations.
-	// Both balances are bounded above, so their difference fits in int64.
+	// After is bounded by ±MaxWalletQuota and Before by ±beforeBound, so their
+	// difference fits in int64.
 	delta := int64(adjustment.After) - int64(adjustment.Before)
 	if delta != 0 {
 		if err := cacheIncrUserQuota(userID, delta); err != nil {

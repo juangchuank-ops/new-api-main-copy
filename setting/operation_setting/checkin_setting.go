@@ -100,8 +100,10 @@ func ValidateCheckinBalanceTiers(tiers []CheckinBalanceTier) error {
 
 	seenBalances := make(map[int]struct{}, len(tiers))
 	for index, tier := range tiers {
-		if tier.MinBalance < 0 || tier.MinBalance > common.MaxQuota {
-			return fmt.Errorf("balance_tiers[%d].min_balance must be between 0 and %d", index, common.MaxQuota)
+		// min_balance 是用户钱包余额的下界，属于 64 位钱包取值域，
+		// 因此按 MaxWalletQuota 而不是单次请求的 common.MaxQuota 校验。
+		if tier.MinBalance < 0 || tier.MinBalance > common.MaxWalletQuota {
+			return fmt.Errorf("balance_tiers[%d].min_balance must be between 0 and %d", index, common.MaxWalletQuota)
 		}
 		if _, exists := seenBalances[tier.MinBalance]; exists {
 			return fmt.Errorf("balance_tiers[%d].min_balance is duplicated", index)

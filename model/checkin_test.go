@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -97,7 +98,7 @@ func TestUserCheckinRejectsQuotaOverflowWithoutRecordingAward(t *testing.T) {
 		Username: "checkin-overflow-user",
 		Password: "password",
 		Status:   common.UserStatusEnabled,
-		Quota:    common.MaxQuota,
+		Quota:    math.MaxInt64,
 	}
 	require.NoError(t, db.Create(&user).Error)
 
@@ -108,4 +109,38 @@ func TestUserCheckinRejectsQuotaOverflowWithoutRecordingAward(t *testing.T) {
 	var checkinCount int64
 	require.NoError(t, db.Model(&Checkin{}).Where("user_id = ?", user.Id).Count(&checkinCount).Error)
 	assert.Zero(t, checkinCount)
+}
+
+// users.quota 是 bigint 钱包列，余额可以远超 int32 上限；签到安全边界必须按
+// 钱包上限判断，而不是单次请求的 common.MaxQuota。
+func TestUserCheckinAllowsWalletBalanceAboveInt32Limit(t *testing.T) {
+	db := useCheckinDB(t)
+	checkinSetting := operation_setting.GetCheckinSetting()
+	previousSetting := *checkinSetting
+	t.Cleanup(func() { *checkinSetting = previousSetting })
+	*checkinSetting = operation_setting.CheckinSetting{
+		Enabled:  true,
+		MinQuota: 7,
+		MaxQuota: 7,
+	}
+
+	const walletBalance = int64(5_002_738_497_443_898_217)
+	require.Greater(t, walletBalance, int64(common.MaxQuota))
+	user := User{
+		Id:       3,
+		Username: "checkin-wallet-user",
+		Password: "password",
+		Status:   common.UserStatusEnabled,
+		Quota:    int(walletBalance),
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	checkin, err := UserCheckin(user.Id)
+	require.NoError(t, err)
+	require.NotNil(t, checkin)
+	assert.Equal(t, 7, checkin.QuotaAwarded)
+
+	var afterCheckin User
+	require.NoError(t, db.Select("quota").First(&afterCheckin, user.Id).Error)
+	assert.Equal(t, walletBalance+7, int64(afterCheckin.Quota))
 }
